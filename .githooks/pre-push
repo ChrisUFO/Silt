@@ -1,0 +1,80 @@
+#!/bin/sh
+echo "Running pre-push hooks..."
+
+# Read local and remote refs/SHAs from stdin (sent by git push)
+read local_ref local_sha remote_ref remote_sha
+
+# 1. Exempt branch deletions
+if [ "$local_sha" = "0000000000000000000000000000000000000000" ] || [ -z "$local_sha" ]; then
+  echo "Branch deletion detected. Exempting pre-push hooks."
+  exit 0
+fi
+
+# 2. Exempt merge-only pushes
+if [ -n "$remote_sha" ] && [ "$remote_sha" != "0000000000000000000000000000000000000000" ]; then
+  NON_MERGES=$(git log --no-merges --oneline $remote_sha..$local_sha)
+  if [ -z "$NON_MERGES" ]; then
+    echo "Only merge commits detected in push. Exempting pre-push hooks."
+    exit 0
+  fi
+fi
+
+# Detect files changed in this push
+if [ "$remote_sha" = "0000000000000000000000000000000000000000" ] || [ -z "$remote_sha" ]; then
+  # New branch push: check diff against origin/main base branch
+  CHANGED_FILES=$(git diff --name-only origin/main...$local_sha)
+else
+  # Existing branch: check diff between remote SHA and local SHA
+  CHANGED_FILES=$(git diff --name-only $remote_sha..$local_sha)
+fi
+
+# 3. Exempt documentation and text-only pushes
+CODE_CHANGED=$(echo "$CHANGED_FILES" | grep -v -E '\.(md|txt|png|jpg|jpeg|gif|svg)$')
+if [ -n "$CHANGED_FILES" ] && [ -z "$CODE_CHANGED" ]; then
+  echo "Only documentation, text, or asset changes in this push. Exempting pre-push hooks."
+  exit 0
+fi
+
+# Check for specific component changes
+GO_CHANGED=$(echo "$CHANGED_FILES" | grep -E '\.go$')
+FE_CHANGED=$(echo "$CHANGED_FILES" | grep -E '^frontend/')
+
+RUN_GO=0
+RUN_FE=0
+
+if [ -n "$GO_CHANGED" ]; then
+  RUN_GO=1
+fi
+if [ -n "$FE_CHANGED" ]; then
+  RUN_FE=1
+fi
+
+# Run Go backend unit tests if Go files changed
+if [ $RUN_GO -eq 1 ]; then
+  echo "Go files changed. Running backend unit tests..."
+  go test -v ./...
+  if [ $? -ne 0 ]; then
+    echo "ERROR: Go tests failed! Push aborted."
+    exit 1
+  fi
+else
+  echo "No Go files changed. Skipping Go unit tests."
+fi
+
+# Compile frontend if Svelte/typescript/assets changed
+if [ $RUN_FE -eq 1 ]; then
+  echo "Frontend files changed. Compiling frontend..."
+  cd frontend
+  npm run build
+  RESULT=$?
+  cd ..
+  if [ $RESULT -ne 0 ]; then
+    echo "ERROR: Frontend compilation failed! Push aborted."
+    exit 1
+  fi
+else
+  echo "No frontend files changed. Skipping Svelte/Vite compilation check."
+fi
+
+echo "Pre-push checks passed successfully!"
+exit 0

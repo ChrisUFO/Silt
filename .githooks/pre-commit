@@ -1,0 +1,49 @@
+#!/bin/sh
+echo "Running pre-commit hooks (Prettier check)..."
+
+# 1. Exempt if a merge commit is in progress
+if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+  echo "Merge commit in progress. Exempting pre-commit hooks."
+  exit 0
+fi
+
+# Get all staged files
+ALL_STAGED=$(git diff --cached --name-only)
+
+# If no files are staged, exit early
+if [ -z "$ALL_STAGED" ]; then
+  exit 0
+fi
+
+# Filter out documentation and image files to check if any code files are staged
+CODE_STAGED=$(echo "$ALL_STAGED" | grep -v -E '\.(md|txt|png|jpg|jpeg|gif|svg)$')
+
+if [ -z "$CODE_STAGED" ]; then
+  echo "Only documentation, text, or asset changes detected. Exempting pre-commit hooks."
+  exit 0
+fi
+
+# Find staged files matching frontend/src/ for Prettier check
+STAGED_FILES=$(echo "$ALL_STAGED" | grep -E '^frontend/src/.*\.(ts|svelte|css)$')
+
+if [ -z "$STAGED_FILES" ]; then
+  echo "No staged frontend code files to check. Skipping Prettier check."
+  exit 0
+fi
+
+echo "Checking formatting of staged files:"
+for file in $STAGED_FILES; do
+  echo "  - $file"
+done
+
+# Run Prettier check on the staged files
+npx prettier --check $STAGED_FILES
+RESULT=$?
+
+if [ $RESULT -ne 0 ]; then
+  echo "ERROR: Prettier check failed on staged files! Please format them before committing."
+  exit 1
+fi
+
+echo "Pre-commit checks passed!"
+exit 0
