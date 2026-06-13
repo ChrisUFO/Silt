@@ -6,7 +6,7 @@ A lightweight, local-first hybrid note-taking and task-lifecycle engine built fo
 [![Storage Schema](https://img.shields.io/badge/Storage-Plaintext%20Markdown%20%2B%20SQLite%20Cache-blue)](SPECS.md)
 [![License](https://img.shields.io/badge/License-MIT-green)](#)
 
-**Silt** bridges the gap between structured namespace notebooks (like OneNote) and chronological block-based daily streams (like Logseq). It treats human-readable plaintext files as the absolute database of record, while utilizing a native desktop runtime cache to project your logs into fully interactive **Agenda**, **Calendar**, and **Kanban** board interfaces.
+**Silt** bridges the gap between structured namespace notebooks and chronological block-based daily streams. It treats human-readable plaintext files as the absolute database of record, while utilizing a native desktop runtime cache to project your logs into fully interactive **Agenda**, **Calendar**, and **Kanban** board interfaces.
 
 ---
 
