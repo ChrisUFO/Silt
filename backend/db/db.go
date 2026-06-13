@@ -289,36 +289,42 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, fileDate string, b
 	return tx.Commit()
 }
 
-// IndexScanResults inserts multiple scan results into the database in a single transaction.
-func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, error) {
+// IndexScanResults inserts multiple scan results into the database in a single
+// transaction. It returns the count of files that were successfully indexed,
+// plus a slice describing files that were skipped because the scanner
+// reported a per-file error. Callers should surface the skipped set so
+// users can distinguish a fully-loaded vault from one with unreadable files.
+func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, []string, error) {
 	tx, err := dm.db.Begin()
 	if err != nil {
-		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+		return 0, nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
 	stmtBlock, err := tx.Prepare("INSERT INTO blocks (id, parent_id, notebook, section, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	defer stmtBlock.Close()
 
 	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority) VALUES (?, ?, ?, ?, ?, ?)")
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	defer stmtTask.Close()
 
 	stmtTag, err := tx.Prepare("INSERT INTO tags (block_id, raw_path, level_0, level_1, level_2) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	defer stmtTag.Close()
 
 	indexedCount := 0
+	var skipped []string
 
 	for _, res := range results {
 		if res.Err != nil {
+			skipped = append(skipped, fmt.Sprintf("%s: %v", res.Path, res.Err))
 			continue
 		}
 
@@ -334,13 +340,13 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, e
 			}
 			query := "DELETE FROM blocks WHERE id IN (" + strings.Join(placeholders, ",") + ")"
 			if _, err := tx.Exec(query, args...); err != nil {
-				return 0, fmt.Errorf("failed to clear blocks by id for %s: %w", res.Path, err)
+				return 0, skipped, fmt.Errorf("failed to clear blocks by id for %s: %w", res.Path, err)
 			}
 		}
 
 		// Also clear by metadata to catch blocks the user removed from the file.
 		if err := dm.ClearFileBlocks(tx, res.Notebook, res.Section, res.Date); err != nil {
-			return 0, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
+			return 0, skipped, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
 		}
 
 		for blockIdx, block := range res.Blocks {
@@ -350,7 +356,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, e
 			}
 			_, err = stmtBlock.Exec(block.ID, parentID, res.Notebook, res.Section, res.Date, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
 			if err != nil {
-				return 0, fmt.Errorf("failed to insert block %s: %w", block.ID, err)
+				return 0, skipped, fmt.Errorf("failed to insert block %s: %w", block.ID, err)
 			}
 
 			if block.Type == parser.BlockTask {
@@ -366,7 +372,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, e
 				}
 				_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority)
 				if err != nil {
-					return 0, fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
+					return 0, skipped, fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
 				}
 			}
 
@@ -413,10 +419,10 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, e
 	}
 
 	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("failed to commit transaction: %w", err)
+		return 0, skipped, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	return indexedCount, nil
+	return indexedCount, skipped, nil
 }
 
 // FetchTimelineDays fetches day-grouped blocks for infinite virtualization.

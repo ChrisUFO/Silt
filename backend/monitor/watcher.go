@@ -3,6 +3,7 @@ package monitor
 import (
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -152,7 +153,7 @@ func (dw *DirectoryWatcher) listenLoop() {
 			if !ok {
 				return
 			}
-			fmt.Printf("DirectoryWatcher error: %v\n", err)
+			log.Printf("DirectoryWatcher error: %v", err)
 
 		case <-dw.closeChan:
 			return

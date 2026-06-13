@@ -264,7 +264,11 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultDa
 		}
 	}
 
-	var activeIDs [100]string
+	// activeIDs tracks the most recent block ID at each indent level so we
+	// can wire parent_id for nested blocks. We grow it dynamically instead
+	// of fixing the size at 100, which previously caused silent parent_id
+	// loss for any block past depth 99.
+	activeIDs := []string{}
 	inCodeBlock := false
 
 	for i := startIndex; i < len(lines); i++ {
@@ -299,12 +303,15 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultDa
 		if block.ID != "" {
 			// Resolve Parent ID
 			depth := block.Depth
-			if depth > 0 && depth < len(activeIDs) {
+			if depth > 0 && depth-1 < len(activeIDs) {
 				block.ParentID = activeIDs[depth-1]
 			}
 
-			// Store current ID in stack
-			if depth >= 0 && depth < len(activeIDs) {
+			// Grow the stack so depth is always a valid index.
+			if depth >= 0 {
+				for len(activeIDs) <= depth {
+					activeIDs = append(activeIDs, "")
+				}
 				activeIDs[depth] = block.ID
 				// Clear deeper active IDs
 				for d := depth + 1; d < len(activeIDs); d++ {

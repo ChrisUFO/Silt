@@ -80,10 +80,16 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		return fmt.Errorf("failed to scan workspace: %w", err)
 	}
 	if len(results) > 0 {
-		_, err = dbMgr.IndexScanResults(results)
+		_, skipped, err := dbMgr.IndexScanResults(results)
 		if err != nil {
 			_ = dbMgr.Close()
 			return fmt.Errorf("failed to index scan results: %w", err)
+		}
+		// Per-file failures (unreadable, parse errors) are non-fatal: the
+		// rest of the vault is still usable, but the user must be informed
+		// so they know some notes didn't make it into the index.
+		if len(skipped) > 0 && a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "vault:init-warnings", skipped)
 		}
 	}
 
@@ -188,7 +194,21 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 		return fmt.Errorf("block %s is not a task", blockID)
 	}
 
-	filePath := filepath.Join(a.vaultPath, notebook, section, fileDate+".md")
+	// Defense-in-depth against path traversal: notebook/section originate
+	// from user-editable YAML frontmatter and date is a filename, so any of
+	// them could contain `..`, `/`, or `\`. Strip the dangerous characters
+	// and then verify the resolved path is still inside the vault before
+	// touching the filesystem.
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection := sanitizePathSegment(section)
+	safeFileDate := sanitizePathSegment(fileDate)
+	if safeNotebook == "" || safeSection == "" || safeFileDate == "" {
+		return fmt.Errorf("invalid file metadata for block %s: notebook=%q section=%q date=%q", blockID, notebook, section, fileDate)
+	}
+	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safeFileDate+".md")
+	if !isPathWithinVault(filePath, a.vaultPath) {
+		return fmt.Errorf("resolved file path %q escapes vault %q", filePath, a.vaultPath)
+	}
 
 	// 2. Acquire per-file write lock. Re-locate target line by UUID inside the
 	//    lock so the operation is self-healing even if the watcher re-indexed
@@ -281,4 +301,42 @@ func findLineByBlockID(lines []string, blockID string) int {
 		}
 	}
 	return -1
+}
+
+// sanitizePathSegment strips path-traversal characters from a single path
+// component: directory separators, NUL, and `..` sequences. The intent is to
+// safely fold untrusted frontmatter strings into file paths.
+func sanitizePathSegment(s string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == 0 {
+			return -1
+		}
+		return r
+	}, s)
+	// Defang `..` so it can never climb out of the joined path.
+	for strings.Contains(cleaned, "..") {
+		cleaned = strings.ReplaceAll(cleaned, "..", "")
+	}
+	return strings.TrimSpace(cleaned)
+}
+
+// isPathWithinVault reports whether target is the same as or a descendant of
+// vaultRoot. Both paths are cleaned and made absolute before comparison so
+// that `..` segments in the joined path are resolved before the check.
+func isPathWithinVault(target, vaultRoot string) bool {
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		return false
+	}
+	absRoot, err := filepath.Abs(vaultRoot)
+	if err != nil {
+		return false
+	}
+	absTarget = filepath.Clean(absTarget)
+	absRoot = filepath.Clean(absRoot)
+	if absTarget == absRoot {
+		return true
+	}
+	prefix := absRoot + string(os.PathSeparator)
+	return strings.HasPrefix(absTarget, prefix)
 }

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"notes-sharp/backend/parser"
 )
 
 type AppSettings struct {
@@ -51,7 +53,11 @@ func SaveSettings(settings *AppSettings) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, bytes, 0644)
+	// Use the same atomic write protocol as note files: write to a sibling
+	// temp file, fsync, and rename. This guarantees the settings.json on
+	// disk is either the previous version or the new one in full, never a
+	// half-written file truncated by power loss.
+	return parser.WriteFileAtomic(path, bytes)
 }
 
 func ScaffoldVault(vaultPath string) error {
