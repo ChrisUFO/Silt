@@ -384,24 +384,26 @@ Backend Hooking Structure: Plugins communicate with the Go backend via standard 
 
 8.2 Host-Plugin API Specification (Frontend)
 
-Every plugin must export a default Svelte component conforming to the following initialization lifecycle:
+Plugins run as native ES modules. First-party plugins ship as compiled Svelte components bundled with the app; third-party plugins live in `.system/plugins/<id>/index.js` and are loaded at boot (native ESM via a blob URL so Vite does not resolve them at build time). Both kinds receive the same PluginContext:
 
+```ts
 export interface PluginContext {
   activeNotebook: string;
   activeSection: string;
-  sqliteQuery: (query: string, params?: any[]) => Promise<any[]>;
+  activePage: string;
+  // Read-only SQL against the in-memory index (SELECT / WITH only).
+  sqliteQuery: (sql: string, params?: unknown[]) => Promise<Record<string, unknown>[]>;
   mutateBlock: (id: string, text: string) => Promise<boolean>;
   updateBlockState: (id: string, status: 'TODO' | 'DOING' | 'DONE') => Promise<boolean>;
 }
 
 export interface SiltPlugin {
-  id: string;          // e.g. "silt-kanban"
-  name: string;        // e.g. "Kanban Board"
-  version: string;
-  icon: string;        // Inline SVG path
-  init: (ctx: PluginContext) => void;
+  manifest: { id: string; name: string; version: string; icon?: string };
+  init?: (ctx: PluginContext) => void;
 }
+```
 
+The active `notebook/section/page` from the navigator is bound into the context; `sqliteQuery` is read-only (anything other than SELECT/WITH is rejected). See `docs/PLUGIN_DEVELOPMENT.md` for the full author guide.
 
 8.3 Core Feature Decoupling
 
@@ -412,6 +414,22 @@ Kanban Plugin: Uses the sqliteQuery context hook to pull records: SELECT * FROM 
 Calendar Plugin: Pulls dates using range constraints and exposes interactive timeline components.
 
 Agenda Plugin: Filters overdue, current-day, and upcoming milestones, rolling unfinished tasks into the active day view dynamically.
+
+8.4 Plugin Packaging & Distribution (.silt-plugin)
+
+Third-party plugins are distributed as `.silt-plugin` archives — a **ZIP with a custom extension** containing `plugin.json` + the entry module (`index.js`) + optional assets, all at the archive root:
+
+```
+plugin.json   { "id": "my-plugin", "name": "My Plugin", "version": "1.0.0", "main": "index.js" }
+index.js      native ESM exporting { manifest, init(ctx) }
+```
+
+- **Validation:** on install, the manifest schema is checked (`id` must match `^[a-z0-9-]+$`, required name/version, entry module present); absolute paths, `..`, and zip-slip entries are rejected.
+- **Install:** atomic extract into `.system/plugins/<id>/` (staged in a temp sibling dir, then renamed); refuses to overwrite an existing id. Emits `plugins:changed` so the loader re-runs.
+- **Enable/Disable:** a `.disabled` sentinel file inside the plugin folder (the loader skips disabled plugins) — avoids fragile config.yaml edits. Discovery is folder-based, so install "just works" without editing config.
+- **Uninstall:** removes the plugin folder (id sanitized + within-vault check).
+- The in-app **Plugin Manager** (titlebar extension icon) drives validate → preview → install, plus per-plugin enable/disable and uninstall.
+- First-party plugins (Agenda, Calendar) are always available (bundled) regardless of `.system/plugins/` contents.
 
 9. System Configuration Engine
 

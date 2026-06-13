@@ -8,14 +8,18 @@ A lightweight, local-first hybrid note-taking and task-lifecycle engine built fo
 
 **Silt** bridges the gap between structured namespace notebooks and chronological block-based daily streams. It treats human-readable plaintext files as the absolute database of record, while utilizing a native desktop runtime cache to project your logs into fully interactive **Agenda**, **Calendar**, and **Kanban** board interfaces.
 
+Notes are organized **Notebook › Section › Page** (OneNote-style): each Page is a streaming timeline of daily Markdown files stitched into one continuous document. Silt starts blank — you create or open notebooks and build your own hierarchy.
+
 ---
 
 ## Key Highlights
 
+- **Notebook › Section › Page hierarchy** — OneNote-style folders on disk; a Page streams its daily files into one infinite-scroll timeline.
+- **Smart Graph** — slash-delimited hierarchical tags (`#work/sogav/milestone-one`), global block references (`((uuid))`) with hover previews, and live dual-bound embeds (`{{embed:uuid}}`).
+- **Plugin SDK + first-party plugins** — Agenda (rolling task timeline) and Calendar (month/week grids) are built on the same `PluginContext` SDK as third-party plugins. Install community plugins from `.silt-plugin` archives via the in-app Plugin Manager.
 - **No File Lock-In** — Your data lives in flat directories of basic Markdown `.md` files.
 - **Zero-Bloat Performance** — No Electron. Idle allocation sits below 65MB RAM with sub-16ms input rendering.
 - **Inline Task Machine** — Turn any block bullet into a state-managed task using dense, human-writable shorthand.
-- **Composable Views** — Flip between document scroll, Agenda, Calendar, and Kanban board.
 - **Fail-Safe Design** — Atomic staging protocol prevents file corruption on power loss or crash.
 
 ---
@@ -27,8 +31,9 @@ Each concern has a single source of truth. Refer to the file that owns the topic
 | Document | Scope |
 | :--- | :--- |
 | [**SPECS.md**](SPECS.md) | Product specification: philosophy, file format, AST grammar, plugin architecture, system configuration. |
-| [**ARCHITECTURE.md**](ARCHITECTURE.md) | Engineering blueprint: process topology, Go backend internals, SQLite schema, IPC API contract, concurrency model. |
+| [**ARCHITECTURE.md**](ARCHITECTURE.md) | Engineering blueprint: process topology, Go backend internals, SQLite schema, IPC API contract, concurrency model, plugin loader. |
 | [**DESIGN.md**](DESIGN.md) | Design system: Refined Cyber-Ink vision, color tokens, typography, component specs, motion, accessibility. |
+| [**docs/PLUGIN_DEVELOPMENT.md**](docs/PLUGIN_DEVELOPMENT.md) | How to author, package (`.silt-plugin`), and install Silt plugins — with the full PluginContext SDK reference. |
 | [**TESTING.md**](TESTING.md) | Test coverage matrix, benchmarks, manual verification checklist, known gaps. |
 
 ---

@@ -400,3 +400,42 @@ Mitigation Plan:
 Focus Locking: While Svelte has focus on an active text field, the backend monitor pauses external sync operations for that specific block file.
 
 Deterministic Diff Verification: Instead of overwriting entire files when external changes occur, Go computes a diff patch based on block IDs to preserve uncommitted cursor inputs.
+
+
+7. Plugin Subsystem & Smart Graph Events
+
+7.1 Plugin Loader Pipeline (Frontend)
+
+The Svelte shell discovers and renders plugins at boot:
+
+config.yaml (optional active whitelist)
+        │
+        ▼
+ListPlugins() → .system/plugins/<id>/ folders (skip .disabled sentinel)
+        │
+        ▼
+resolve each id:
+   first-party registry (bundled Svelte component)  ──► always available
+   on-disk → ReadPluginSource(id) → Blob URL → import(/* @vite-ignore */)
+        │
+        ▼
+plugin.init(ctx: PluginContext)   ←   sqliteQuery (SELECT/WITH-only),
+                                      mutateBlock, updateBlockState
+        │
+        ▼
+App view router renders plugin:<id> via PluginView (or Agenda/Calendar slots)
+
+Per-plugin load failures are collected and surfaced (PluginView shows a load-error notice) without aborting boot. The `plugins:changed` Wails event (emitted after install/uninstall/enable/disable) re-runs discovery.
+
+7.2 PluginContext → Go Bindings
+
+PluginContext is a thin frontend wrapper over four Wails bindings on App:
+
+- PluginRawQuery(sql, params) — read-only; rejects anything not starting with SELECT/WITH; routed through ExecutionCoordinator.WithDBRead; returns row maps.
+- PluginMutateBlock(id, text) / PluginUpdateBlockState(id, status) — wrap MutateBlock / UpdateBlockState (same atomic-write + re-index + lock path as the core editor).
+- GetPluginRegistry() / ListPlugins() / ReadPluginSource(id) — discovery.
+- ValidatePluginArchive / PickPluginArchive / InstallPlugin / UninstallPlugin / EnablePlugin / DisablePlugin — `.silt-plugin` distribution (see backend/plugins package; zip-slip + traversal guarded, atomic extract).
+
+7.3 Smart Graph Events
+
+Block mutations broadcast a `block:changed` Wails event (BlockChangedEvent {ID, Notebook, Section, Page, FileDate}) so live embeds (`{{embed:uuid}}`) and references (`((uuid))`) refresh in real time. Emitted from MutateBlock, UpdateBlockState, and the post-write path of SaveFileBlocks; emission no-ops when ctx is nil (tests). The frontend EmbedPortal subscribes via EventsOn and re-fetches its source block when the event matches its uuid (a module-scoped render-stack guard stops recursive embed loops).
