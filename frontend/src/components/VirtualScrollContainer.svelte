@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import { FetchSectionTimeline } from '../../wailsjs/go/main/App.js'
   import BlockRenderer from './BlockRenderer.svelte'
 
@@ -30,13 +30,21 @@
   let limit = 5 // Page size (number of day groups to load per batch)
   let loading = $state(false)
   let hasMore = $state(true)
+  let loadError = $state('')
   let containerEl = $state<HTMLDivElement | null>(null)
   let handledTargetKey = $state('')
 
-  // Reload timeline when notebook or section changes
+  // Reload timeline when notebook or section changes.
+  //
+  // resetTimeline() is async and, through loadMoreDays(), reads reactive state
+  // (loading/hasMore) synchronously. Running it inside the effect's tracking
+  // scope would make those reads effect dependencies, re-triggering the effect
+  // on every loading/hasMore flip and producing an infinite reset/refetch loop
+  // (the "Loading logs..." hang). untrack() limits the effect to only
+  // notebook/section.
   $effect(() => {
     if (notebook && section) {
-      resetTimeline()
+      untrack(() => resetTimeline())
     }
   })
 
@@ -50,13 +58,16 @@
     visibleGroups = []
     offset = 0
     hasMore = true
+    loadError = ''
     await loadMoreDays()
   }
 
   async function loadMoreDays(): Promise<number> {
     if (loading || !hasMore) return 0
     loading = true
+    loadError = ''
     let loadedCount = 0
+    let succeeded = false
 
     try {
       const newDays = await FetchSectionTimeline(
@@ -65,6 +76,7 @@
         offset,
         limit
       )
+      succeeded = true
       if (!newDays || newDays.length === 0) {
         hasMore = false
       } else {
@@ -76,11 +88,18 @@
         }
       }
     } catch (e) {
-      console.error('Failed to load timeline:', e)
+      // Surface the failure to the user instead of swallowing it. Halt
+      // pagination so a persistent backend error cannot drive an unbounded
+      // retry loop via the viewport-fill recursion below.
+      loadError = e instanceof Error ? e.message : String(e)
+      hasMore = false
     } finally {
       loading = false
       await tick()
+      // Only keep filling the viewport after a successful load with more
+      // data available. Errors must not trigger a retry cascade.
       if (
+        succeeded &&
         containerEl &&
         containerEl.scrollHeight <= containerEl.clientHeight &&
         hasMore
@@ -176,12 +195,24 @@
   </header>
 
   <div class="max-w-4xl w-full flex-1 flex flex-col gap-8">
-    {#if visibleGroups.length === 0 && !loading}
+    {#if loadError}
+      <div
+        class="text-error py-8 text-center font-body-md border border-error-border bg-error-bg rounded-lg flex flex-col items-center gap-3"
+      >
+        <div>Failed to load logs: {loadError}</div>
+        <button
+          onclick={() => resetTimeline()}
+          class="px-4 py-1.5 rounded-lg bg-error/20 border border-error-border text-error font-label-sm-bold hover:brightness-110 transition-all cursor-pointer"
+        >
+          Retry
+        </button>
+      </div>
+    {:else if visibleGroups.length === 0 && !loading}
       <div
         class="text-text-muted py-12 text-center font-body-md border border-dashed border-border-muted rounded-lg"
       >
-        No logs recorded for this section. Click "New Section" in the sidebar to
-        start!
+        No logs recorded for this section yet. Start typing below to add your
+        first note!
       </div>
     {:else}
       {#each visibleGroups as group (group.date)}
