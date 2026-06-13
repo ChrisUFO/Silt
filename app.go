@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -312,7 +313,13 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 		// uses the same cleaned values that went into the file path.
 		blocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safeFileDate, a.spacesPerTab)
 		if err == nil {
-			_ = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...)
+			var idxErr error
+			a.coordinator.WithDBWrite(func() {
+				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...)
+			})
+			if idxErr != nil {
+				log.Printf("UpdateBlockState: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Date, idxErr)
+			}
 		}
 	})
 
@@ -428,6 +435,9 @@ func (a *App) AcquireFocusLock(notebook, section, fileDate string) error {
 	if a.watcher == nil {
 		return fmt.Errorf("watcher not running")
 	}
+	a.wg.Add(1)
+	defer a.wg.Done()
+
 	safeNotebook := sanitizePathSegment(notebook)
 	safeSection := sanitizePathSegment(section)
 	safeFileDate := sanitizePathSegment(fileDate)
@@ -435,6 +445,9 @@ func (a *App) AcquireFocusLock(notebook, section, fileDate string) error {
 		return fmt.Errorf("invalid path metadata")
 	}
 	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safeFileDate+".md")
+	if !isPathWithinVault(filePath, a.vaultPath) {
+		return fmt.Errorf("path escapes vault")
+	}
 	a.watcher.LockFocus(filePath)
 	return nil
 }
@@ -444,6 +457,9 @@ func (a *App) ReleaseFocusLock(notebook, section, fileDate string) error {
 	if a.watcher == nil {
 		return fmt.Errorf("watcher not running")
 	}
+	a.wg.Add(1)
+	defer a.wg.Done()
+
 	safeNotebook := sanitizePathSegment(notebook)
 	safeSection := sanitizePathSegment(section)
 	safeFileDate := sanitizePathSegment(fileDate)
@@ -451,6 +467,9 @@ func (a *App) ReleaseFocusLock(notebook, section, fileDate string) error {
 		return fmt.Errorf("invalid path metadata")
 	}
 	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safeFileDate+".md")
+	if !isPathWithinVault(filePath, a.vaultPath) {
+		return fmt.Errorf("path escapes vault")
+	}
 	a.watcher.UnlockFocus(filePath)
 	return nil
 }
@@ -512,7 +531,13 @@ tags: []
 
 		blocks, meta, _, _, err := parser.ParseFileContent(scaffoldContent, safeNotebook, safeSection, safeDate, a.spacesPerTab)
 		if err == nil {
-			_ = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...)
+			var idxErr error
+			a.coordinator.WithDBWrite(func() {
+				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...)
+			})
+			if idxErr != nil {
+				log.Printf("CreateNewSection: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Date, idxErr)
+			}
 		}
 	})
 
@@ -639,7 +664,13 @@ func (a *App) SaveFileBlocks(notebook, section, fileDate string, blocks []parser
 
 		parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safeFileDate, a.spacesPerTab)
 		if err == nil {
-			_ = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, parsedBlocks, meta.Tags, meta.Warnings...)
+			var idxErr error
+			a.coordinator.WithDBWrite(func() {
+				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, parsedBlocks, meta.Tags, meta.Warnings...)
+			})
+			if idxErr != nil {
+				log.Printf("SaveFileBlocks: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Date, idxErr)
+			}
 		}
 	})
 

@@ -344,7 +344,7 @@
 
   // Update clean content
   function handleInput(e: any) {
-    const text = e.target.innerText
+    const text = e.target.innerText.replace(/[\r\n]+/g, ' ')
     block.clean_text = text
     if (text === '/') {
       showSlashMenu = true

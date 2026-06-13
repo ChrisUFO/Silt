@@ -372,7 +372,8 @@ func FormatBlockToLine(block ParsedBlock, spacesPerTab int) string {
 
 		// - [checkbox] STATUS TASK [owner](dates)#priority description <!-- id: id -->
 		return fmt.Sprintf("%s- [%s] %s TASK%s%s%s %s%s",
-			indent, checkbox, block.Status, ownerStr, dateStr, priorityStr, block.CleanText, idSuffix)
+			indent, checkbox, block.Status, ownerStr, dateStr, priorityStr,
+			strings.ReplaceAll(block.CleanText, "\n", " "), idSuffix)
 	} else if block.Type == BlockHeader {
 		hashes := strings.Repeat("#", block.Depth)
 		if hashes == "" {
@@ -396,7 +397,8 @@ func FormatBlockToLine(block ParsedBlock, spacesPerTab int) string {
 				prefix = ""
 			}
 		}
-		return fmt.Sprintf("%s%s%s%s", indent, prefix, block.CleanText, idSuffix)
+		return fmt.Sprintf("%s%s%s%s", indent, prefix,
+			strings.ReplaceAll(block.CleanText, "\n", " "), idSuffix)
 	}
 }
 

@@ -156,6 +156,18 @@ func TestUpdateBlockState_RejectsNonTaskBlock(t *testing.T) {
 	}
 }
 
+func TestUpdateBlockState_RejectsInvalidStatus(t *testing.T) {
+	app := newTestApp(t)
+
+	err := app.UpdateBlockState("any-block-id", "INVALID")
+	if err == nil {
+		t.Fatalf("expected error for invalid status")
+	}
+	if !strings.Contains(err.Error(), "invalid target status") {
+		t.Errorf("expected error to mention 'invalid target status', got: %v", err)
+	}
+}
+
 func TestFetchSectionTimeline_GroupsAndPaginates(t *testing.T) {
 	app := newTestApp(t)
 
@@ -490,5 +502,23 @@ func TestSanitizePathSegment_StripsControlChars(t *testing.T) {
 	result = sanitizePathSegment("clean")
 	if result != "clean" {
 		t.Errorf("expected 'clean' unchanged, got %q", result)
+	}
+}
+
+func TestAcquireFocusLock_RejectsTraversalMetadata(t *testing.T) {
+	app := newTestApp(t)
+
+	watcher, err := monitor.NewDirectoryWatcher(app.vaultPath, app.db, app.tracker, app.coordinator, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher failed: %v", err)
+	}
+	app.watcher = watcher
+
+	err = app.AcquireFocusLock("../../..", "etc", "passwd")
+	if err == nil {
+		t.Fatalf("expected AcquireFocusLock to reject traversal metadata")
+	}
+	if !strings.Contains(err.Error(), "invalid path metadata") && !strings.Contains(err.Error(), "escapes vault") {
+		t.Errorf("expected path-sanitization error, got: %v", err)
 	}
 }

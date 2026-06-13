@@ -241,12 +241,15 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 		}
 
 		if modified {
-			// Register write before modifying the file to prevent loop triggers
 			dw.tracker.RegisterWrite(path)
 			_ = parser.WriteFileAtomic(path, []byte(newContent))
 		}
 
-		_ = dw.dm.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...)
+		dw.coordinator.WithDBWrite(func() {
+			if err := dw.dm.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...); err != nil {
+				log.Printf("reindexFile: IndexFileBlocks failed for %s: %v", path, err)
+			}
+		})
 	})
 }
 
