@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,11 +31,12 @@ func newTestApp(t *testing.T) *App {
 	tracker := monitor.NewWriteTracker()
 
 	return &App{
-		ctx:          context.Background(),
-		db:           dm,
-		coordinator:  coord,
-		tracker:      tracker,
-		vaultPath:    vaultPath,
+		// ctx intentionally nil: tests have no Wails lifecycle context, so
+		// block:changed event emission is skipped (see emitBlockChanged).
+		db:          dm,
+		coordinator: coord,
+		tracker:     tracker,
+		vaultPath:   vaultPath,
 		spacesPerTab: 4,
 	}
 }
@@ -580,5 +580,189 @@ func TestAcquireFocusLock_RejectsTraversalMetadata(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid path metadata") {
 		t.Errorf("expected 'invalid path metadata' from sanitization, got: %v", err)
+	}
+}
+
+// ---- Smart Graph backend (Phase 4) ----
+
+func writeSamplePage(t *testing.T, app *App, notebook, section, page, fileDate, taskID, taskText string) {
+	t.Helper()
+	filePath := filepath.Join(app.vaultPath, notebook, section, page, fileDate+".md")
+	content := "# Title <!-- id: 11111111-1111-1111-1111-111111111111 -->\n\n" +
+		"- [ ] TODO TASK [Alice] " + taskText + " <!-- id: " + taskID + " -->\n"
+	writeFile(t, filePath, content)
+	blocks, meta, _, _, err := parser.ParseFileContent(content, notebook, section, page, fileDate, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, meta.Date, blocks, meta.Tags); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+}
+
+func TestResolveBlockReference_FoundAndMissing(t *testing.T) {
+	app := newTestApp(t)
+	taskID := "22222222-2222-2222-2222-222222222222"
+	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", taskID, "ship the feature")
+
+	ref, err := app.ResolveBlockReference(taskID)
+	if err != nil {
+		t.Fatalf("ResolveBlockReference: %v", err)
+	}
+	if !ref.Exists {
+		t.Fatalf("expected reference to exist")
+	}
+	if ref.Notebook != "Work" || ref.Section != "Journal" || ref.Page != "Daily" {
+		t.Errorf("unexpected location: %+v", ref)
+	}
+
+	missing, err := app.ResolveBlockReference("00000000-0000-0000-0000-000000000000")
+	if err != nil {
+		t.Fatalf("ResolveBlockReference missing: %v", err)
+	}
+	if missing.Exists {
+		t.Errorf("expected missing reference to report Exists=false")
+	}
+}
+
+func TestMutateBlock_PreservesTaskSyntaxAndUUID(t *testing.T) {
+	app := newTestApp(t)
+	taskID := "33333333-3333-3333-3333-333333333333"
+	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", taskID, "original text")
+
+	if err := app.MutateBlock(taskID, "updated body"); err != nil {
+		t.Fatalf("MutateBlock: %v", err)
+	}
+
+	filePath := filepath.Join(app.vaultPath, "Work", "Journal", "Daily", "2026-06-13.md")
+	content, _ := os.ReadFile(filePath)
+	s := string(content)
+	// Task syntax and UUID comment must survive.
+	if !strings.Contains(s, "- [ ] TODO TASK [Alice] updated body") {
+		t.Errorf("expected updated task line, got:\n%s", s)
+	}
+	if !strings.Contains(s, "<!-- id: "+taskID+" -->") {
+		t.Errorf("expected UUID comment preserved, got:\n%s", s)
+	}
+	// Index reflects the new text.
+	var clean string
+	_ = app.db.SQLDB().QueryRow("SELECT clean_content FROM blocks WHERE id = ?", taskID).Scan(&clean)
+	if clean != "updated body" {
+		t.Errorf("expected indexed clean_content 'updated body', got %q", clean)
+	}
+}
+
+func TestMutateBlock_UnknownIDErrors(t *testing.T) {
+	app := newTestApp(t)
+	err := app.MutateBlock("00000000-0000-0000-0000-000000000000", "x")
+	if err == nil {
+		t.Fatalf("expected error for unknown block id")
+	}
+}
+
+func TestPluginRawQuery_AllowsSelectRejectsWrite(t *testing.T) {
+	app := newTestApp(t)
+	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", "44444444-4444-4444-4444-444444444444", "query me")
+
+	rows, err := app.PluginRawQuery("SELECT id, clean_content FROM blocks WHERE type = ?", []any{"TASK"})
+	if err != nil {
+		t.Fatalf("PluginRawQuery SELECT: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Errorf("expected 1 row, got %d", len(rows))
+	}
+
+	if _, err := app.PluginRawQuery("DELETE FROM blocks", nil); err == nil {
+		t.Errorf("expected PluginRawQuery to reject non-SELECT statements")
+	}
+}
+
+func TestPluginUpdateBlockState_WrapsUpdate(t *testing.T) {
+	app := newTestApp(t)
+	taskID := "55555555-5555-5555-5555-555555555555"
+	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", taskID, "do it")
+
+	ok, err := app.PluginUpdateBlockState(taskID, "DONE")
+	if err != nil || !ok {
+		t.Fatalf("PluginUpdateBlockState: ok=%v err=%v", ok, err)
+	}
+	var status string
+	_ = app.db.SQLDB().QueryRow("SELECT status FROM tasks WHERE block_id = ?", taskID).Scan(&status)
+	if status != "DONE" {
+		t.Errorf("expected status DONE, got %q", status)
+	}
+}
+
+func TestGetPluginRegistry_ParsesConfig(t *testing.T) {
+	app := newTestApp(t)
+	configPath := filepath.Join(app.vaultPath, ".system", "config.yaml")
+	writeFile(t, configPath, "plugins:\n  active:\n    - silt-agenda\n    - silt-calendar\n  disabled: []\n  plugin_settings:\n    silt-agenda:\n      window: 7\n")
+	registry, err := app.GetPluginRegistry()
+	if err != nil {
+		t.Fatalf("GetPluginRegistry: %v", err)
+	}
+	if len(registry.Active) != 2 || registry.Active[0] != "silt-agenda" {
+		t.Errorf("expected 2 active plugins, got %v", registry.Active)
+	}
+	if _, ok := registry.Settings["silt-agenda"]; !ok {
+		t.Errorf("expected silt-agenda settings parsed, got %v", registry.Settings)
+	}
+}
+
+func TestReadPluginSource_ReadsIndexAndRejectsTraversal(t *testing.T) {
+	app := newTestApp(t)
+	pluginDir := filepath.Join(app.vaultPath, ".system", "plugins", "demo")
+	writeFile(t, filepath.Join(pluginDir, "index.js"), "export default { id: 'demo' };\n")
+
+	src, err := app.ReadPluginSource("demo")
+	if err != nil {
+		t.Fatalf("ReadPluginSource: %v", err)
+	}
+	if !strings.Contains(src, "demo") {
+		t.Errorf("unexpected source: %s", src)
+	}
+
+	if _, err := app.ReadPluginSource("../escape"); err == nil {
+		t.Errorf("expected traversal plugin id to be rejected")
+	}
+}
+
+func TestQueryBlocksByTag_PrefixSemantics(t *testing.T) {
+	app := newTestApp(t)
+	blocks := []parser.ParsedBlock{
+		sampleTaskBlockWithText("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1, "leaf #work/sogav/milestone-one"),
+		sampleTaskBlockWithText("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 2, "mid #work/sogav"),
+		sampleTaskBlockWithText("cccccccc-cccc-cccc-cccc-cccccccccccc", 3, "root #work"),
+	}
+	if err := app.db.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	res, err := app.db.QueryBlocksByTag("work")
+	if err != nil {
+		t.Fatalf("QueryBlocksByTag work: %v", err)
+	}
+	if len(res) != 3 {
+		t.Errorf("expected #work to match all 3 (prefix), got %d", len(res))
+	}
+
+	res2, err := app.db.QueryBlocksByTag("work/sogav/milestone-one")
+	if err != nil {
+		t.Fatalf("QueryBlocksByTag leaf: %v", err)
+	}
+	if len(res2) != 1 {
+		t.Errorf("expected leaf to match 1, got %d", len(res2))
+	}
+}
+
+func sampleTaskBlockWithText(id string, line int, text string) parser.ParsedBlock {
+	return parser.ParsedBlock{
+		ID:         id,
+		Type:       parser.BlockTask,
+		Depth:      0,
+		RawText:    "- [ ] TODO TASK " + text + " <!-- id: " + id + " -->",
+		CleanText:  text,
+		Status:     "TODO",
+		LineNumber: line,
 	}
 }

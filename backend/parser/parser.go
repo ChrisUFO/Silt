@@ -22,6 +22,14 @@ var TaskRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s(TODO|DOING|DONE)\sT
 
 var IDRegex = regexp.MustCompile(`<!-- id: ([a-f0-9\-]{36}) -->\s*$`)
 
+// BlockRefRegex matches a global block reference ((uuid)). Read-only detector
+// used by the resolver; it never injects IDs (code-fence protection in
+// ParseFileContent already prevents ID injection inside ``` blocks).
+var BlockRefRegex = regexp.MustCompile(`\(\(([a-f0-9\-]{36})\)\)`)
+
+// EmbedRegex matches a live block embed {{embed:uuid}}.
+var EmbedRegex = regexp.MustCompile(`\{\{embed:([a-f0-9\-]{36})\}\}`)
+
 func generateUUIDv4() string {
 	return uuid.New().String()
 }

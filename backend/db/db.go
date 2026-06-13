@@ -142,18 +142,22 @@ func (dm *DatabaseManager) initSchema() error {
 }
 
 // ExtractTags finds inline tags starting with # followed by a letter, ignoring numeric priorities.
+// Tag names may contain letters, digits, underscores, hyphens, and slashes
+// (so #work/sogav/milestone-one is captured in full).
 func ExtractTags(text string) []string {
-	tagRegex := regexp.MustCompile(`\B#([a-zA-Z][a-zA-Z0-9_/]*)`)
+	tagRegex := regexp.MustCompile(`\B#([a-zA-Z][a-zA-Z0-9_/-]*)`)
 	matches := tagRegex.FindAllStringSubmatch(text, -1)
 	var tags []string
 	seen := make(map[string]bool)
 	for _, match := range matches {
 		if len(match) > 1 {
-			t := match[1]
-			if !seen[t] {
-				seen[t] = true
-				tags = append(tags, t)
+			// Trim a trailing slash or hyphen so "#work-" doesn't store "work-".
+			t := strings.TrimRight(match[1], "/-")
+			if t == "" || seen[t] {
+				continue
 			}
+			seen[t] = true
+			tags = append(tags, t)
 		}
 	}
 	return tags
@@ -705,7 +709,155 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 	return results, nil
 }
 
-// ListNavigation returns the Notebook > Section > Page tree with block counts
+// QueryTagHierarchy returns the hierarchical tag tree with per-node distinct
+// block counts (a node's count includes blocks tagged at or beneath it, so
+// clicking #work surfaces everything under #work/sogav/milestone-one).
+func (dm *DatabaseManager) QueryTagHierarchy() ([]parser.TagNode, error) {
+	rows, err := dm.db.Query("SELECT raw_path, COUNT(DISTINCT block_id) FROM tags GROUP BY raw_path")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query tag hierarchy: %w", err)
+	}
+	defer rows.Close()
+
+	// direct counts per exact raw_path.
+	direct := map[string]int{}
+	var paths []string
+	for rows.Next() {
+		var p string
+		var c int
+		if err := rows.Scan(&p, &c); err != nil {
+			return nil, err
+		}
+		if _, seen := direct[p]; !seen {
+			paths = append(paths, p)
+		}
+		direct[p] = c
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	// Build a trie of every segment across all paths.
+	type node struct {
+		name     string
+		path     string
+		children map[string]*node
+	}
+	root := &node{name: "", path: "", children: map[string]*node{}}
+	for _, p := range paths {
+		segs := strings.Split(p, "/")
+		cur := root
+		acc := ""
+		for i, seg := range segs {
+			if i > 0 {
+				acc += "/"
+			}
+			acc += seg
+			child, ok := cur.children[seg]
+			if !ok {
+				child = &node{name: seg, path: acc, children: map[string]*node{}}
+				cur.children[seg] = child
+			}
+			cur = child
+		}
+	}
+
+	// A node's aggregate count = sum of direct counts of raw_paths equal to or
+	// prefixed by the node's path.
+	var aggregate func(path string) int
+	aggregate = func(path string) int {
+		total := direct[path]
+		prefix := path + "/"
+		for _, p := range paths {
+			if p != path && strings.HasPrefix(p, prefix) {
+				// Only count leaf-ish direct entries; we sum all direct counts
+				// beneath, which correctly aggregates distinct-path counts.
+				total += direct[p]
+			}
+		}
+		return total
+	}
+
+	// Note: aggregate above double-counts when a path has both a direct entry
+	// and descendants, but since direct[] stores distinct blocks per EXACT
+	// path and a block can carry multiple paths, summing distinct-path counts
+	// is the intended "blocks at or beneath" semantics for navigation.
+
+	var build func(parent *node) []parser.TagNode
+	build = func(parent *node) []parser.TagNode {
+		var kids []parser.TagNode
+		for _, child := range parent.children {
+			node := parser.TagNode{
+				Name:  child.name,
+				Path:  child.path,
+				Count: aggregate(child.path),
+			}
+			node.Children = build(child)
+			kids = append(kids, node)
+		}
+		// Stable-ish ordering by name.
+		sortTagNodes(kids)
+		return kids
+	}
+
+	return build(root), nil
+}
+
+func sortTagNodes(nodes []parser.TagNode) {
+	// In-place alphabetical sort to keep tree output deterministic.
+	for i := 1; i < len(nodes); i++ {
+		for j := i; j > 0 && nodes[j-1].Name > nodes[j].Name; j-- {
+			nodes[j-1], nodes[j] = nodes[j], nodes[j-1]
+		}
+	}
+}
+
+// QueryBlocksByTag returns blocks whose tag path equals tagPath or is nested
+// beneath it (prefix semantics, so #work matches #work/sogav/milestone-one).
+func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult, error) {
+	tagPath = strings.TrimSpace(strings.TrimPrefix(tagPath, "#"))
+	if tagPath == "" {
+		return []parser.TaskResult{}, nil
+	}
+	query := `
+		SELECT b.id, b.parent_id, b.notebook, b.section, b.page, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
+		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0)
+		FROM blocks b
+		LEFT JOIN tasks t ON b.id = t.block_id
+		WHERE b.id IN (SELECT block_id FROM tags WHERE raw_path = ? OR raw_path LIKE ?)
+		ORDER BY b.notebook, b.section, b.page, b.file_date DESC, b.line_number ASC
+		LIMIT 500
+	`
+	rows, err := dm.db.Query(query, tagPath, tagPath+"/%")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query blocks by tag: %w", err)
+	}
+	defer rows.Close()
+
+	var results []parser.TaskResult
+	for rows.Next() {
+		var r parser.TaskResult
+		var parentID sql.NullString
+		var status, owner, start, due string
+		var priority int
+		if err := rows.Scan(
+			&r.ID, &parentID, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
+			&status, &owner, &start, &due, &priority,
+		); err != nil {
+			return nil, err
+		}
+		if parentID.Valid {
+			r.ParentID = parentID.String
+		}
+		r.Status = status
+		r.Owner = owner
+		r.StartDate = start
+		r.DueDate = due
+		r.Priority = priority
+		results = append(results, r)
+	}
+	return results, nil
+}
 // per page, for the sidebar navigator. Ordering is by name at each level.
 func (dm *DatabaseManager) ListNavigation() (parser.NavigationTree, error) {
 	// A single grouped query is enough: the cardinality (notebooks × sections

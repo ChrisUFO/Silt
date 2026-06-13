@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -325,7 +326,11 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 		}
 	})
 
-	return writeErr
+	if writeErr != nil {
+		return writeErr
+	}
+	a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, safeFileDate)
+	return nil
 }
 
 // QueryTasks retrieves indexed items matching the active filters.
@@ -344,6 +349,136 @@ func (a *App) QueryTasks(filter parser.TaskQueryFilter) ([]parser.TaskResult, er
 	})
 
 	return res, err
+}
+
+// emitBlockChanged broadcasts a block:changed event so live embeds/references
+// refresh whenever a block is mutated through any code path.
+func (a *App) emitBlockChanged(id, notebook, section, page, fileDate string) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, "block:changed", parser.BlockChangedEvent{
+		ID: id, Notebook: notebook, Section: section, Page: page, FileDate: fileDate,
+	})
+}
+
+// ResolveBlockReference looks up a ((uuid)) reference, returning its content
+// and location for hover previews and scroll-to-source navigation. Missing
+// UUIDs return Exists=false (no error) so the UI can render a broken-link chip.
+func (a *App) ResolveBlockReference(blockID string) (parser.BlockReference, error) {
+	ref := parser.BlockReference{ID: blockID}
+	if a.db == nil {
+		return ref, fmt.Errorf("vault database not loaded")
+	}
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	err := a.coordinator.WithDBReadResult(func() error {
+		row := a.db.SQLDB().QueryRow(
+			"SELECT type, raw_content, clean_content, notebook, section, page, file_date, line_number FROM blocks WHERE id = ?",
+			blockID,
+		)
+		var bType, raw, clean, notebook, section, page, fileDate string
+		var ln int
+		if err := row.Scan(&bType, &raw, &clean, &notebook, &section, &page, &fileDate, &ln); err != nil {
+			return nil // not found → Exists stays false
+		}
+		ref.Exists = true
+		ref.Type = bType
+		ref.RawText = raw
+		ref.CleanText = clean
+		ref.Notebook = notebook
+		ref.Section = section
+		ref.Page = page
+		ref.FileDate = fileDate
+		ref.LineNumber = ln
+		return nil
+	})
+	return ref, err
+}
+
+// MutateBlock rewrites the body text of a block (identified by UUID) in its
+// source file, preserving the leading task/header/bullet syntax and the
+// trailing <!-- id --> comment. It re-indexes the file and emits block:changed
+// so live embeds/references stay in sync.
+func (a *App) MutateBlock(blockID, newText string) error {
+	if a.db == nil {
+		return fmt.Errorf("vault database not loaded")
+	}
+	// Block text is single-line; collapse any newlines to spaces.
+	cleanText := strings.ReplaceAll(newText, "\n", " ")
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var notebook, section, page, fileDate string
+	err := a.coordinator.WithDBReadResult(func() error {
+		row := a.db.SQLDB().QueryRow("SELECT notebook, section, page, file_date FROM blocks WHERE id = ?", blockID)
+		return row.Scan(&notebook, &section, &page, &fileDate)
+	})
+	if err != nil {
+		return fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
+	}
+
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection := sanitizePathSegment(section)
+	safePage := sanitizePathSegment(page)
+	safeFileDate := sanitizePathSegment(fileDate)
+	if safeNotebook == "" || safeSection == "" || safePage == "" || safeFileDate == "" {
+		return fmt.Errorf("invalid file metadata for block %s", blockID)
+	}
+	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage, safeFileDate+".md")
+	if !isPathWithinVault(filePath, a.vaultPath) {
+		return fmt.Errorf("resolved file path %q escapes vault %q", filePath, a.vaultPath)
+	}
+
+	var writeErr error
+	a.coordinator.LockFileWrite(filePath, func() {
+		contentBytes, err := os.ReadFile(filePath)
+		if err != nil {
+			writeErr = err
+			return
+		}
+		lines := strings.Split(string(contentBytes), "\n")
+		lineIdx := findLineByBlockID(lines, blockID)
+		if lineIdx < 0 {
+			writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
+			return
+		}
+
+		// Round-trip through parse→format to preserve type/indent/status/metadata.
+		block, _, _ := parser.ParseLine(lines[lineIdx], lineIdx+1, a.spacesPerTab)
+		if block.ID == "" {
+			writeErr = fmt.Errorf("could not parse target line for block %s", blockID)
+			return
+		}
+		block.CleanText = cleanText
+		lines[lineIdx] = parser.FormatBlockToLine(block, a.spacesPerTab)
+		newContent := strings.Join(lines, "\n")
+
+		a.tracker.RegisterWrite(filePath)
+		if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+			writeErr = err
+			return
+		}
+
+		blocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safePage, safeFileDate, a.spacesPerTab)
+		if err == nil {
+			var idxErr error
+			a.coordinator.WithDBWrite(func() {
+				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, meta.Date, blocks, meta.Tags, meta.Warnings...)
+			})
+			if idxErr != nil {
+				log.Printf("MutateBlock: IndexFileBlocks failed for %s/%s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, meta.Date, idxErr)
+			}
+		}
+	})
+	if writeErr != nil {
+		return writeErr
+	}
+
+	a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, safeFileDate)
+	return nil
 }
 
 // findLineByBlockID returns the 0-based index of the line in `lines` whose
@@ -792,5 +927,178 @@ func (a *App) SaveFileBlocks(notebook, section, page, fileDate string, blocks []
 		}
 	})
 
-	return writeErr
+	if writeErr != nil {
+		return writeErr
+	}
+	// Notify live embeds/references that the saved blocks changed.
+	for _, b := range blocks {
+		if b.ID != "" {
+			a.emitBlockChanged(b.ID, safeNotebook, safeSection, safePage, safeFileDate)
+		}
+	}
+	return nil
+}
+
+// --- Plugin SDK bindings -------------------------------------------------
+
+// PluginRawQuery runs a read-only SQL query against the in-memory index.
+// Only SELECT / WITH statements are permitted; anything else is rejected so a
+// plugin can never mutate the index or schema through this hook. Results are
+// returned as a slice of column→value maps.
+func (a *App) PluginRawQuery(sqlText string, params []any) ([]map[string]any, error) {
+	if a.db == nil {
+		return nil, fmt.Errorf("vault database not loaded")
+	}
+	trimmed := strings.TrimSpace(sqlText)
+	// Strip a leading SQL line comment if present.
+	for strings.HasPrefix(trimmed, "--") {
+		if idx := strings.IndexByte(trimmed, '\n'); idx >= 0 {
+			trimmed = strings.TrimSpace(trimmed[idx+1:])
+		} else {
+			trimmed = ""
+		}
+	}
+	upper := strings.ToUpper(trimmed)
+	if !strings.HasPrefix(upper, "SELECT") && !strings.HasPrefix(upper, "WITH") {
+		return nil, fmt.Errorf("PluginRawQuery permits only SELECT/WITH statements")
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var out []map[string]any
+	err := a.coordinator.WithDBReadResult(func() error {
+		rows, err := a.db.SQLDB().Query(trimmed, params...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		cols, err := rows.Columns()
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			values := make([]any, len(cols))
+			ptrs := make([]any, len(cols))
+			for i := range values {
+				ptrs[i] = &values[i]
+			}
+			if err := rows.Scan(ptrs...); err != nil {
+				return err
+			}
+			row := make(map[string]any, len(cols))
+			for i, c := range cols {
+				row[c] = values[i]
+			}
+			out = append(out, row)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+// PluginMutateBlock wraps MutateBlock for the plugin SDK, returning success.
+func (a *App) PluginMutateBlock(blockID, newText string) (bool, error) {
+	if err := a.MutateBlock(blockID, newText); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// PluginUpdateBlockState wraps UpdateBlockState for the plugin SDK.
+func (a *App) PluginUpdateBlockState(blockID, status string) (bool, error) {
+	if err := a.UpdateBlockState(blockID, status); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// pluginConfigSchema mirrors the relevant fields of .system/config.yaml.
+type pluginConfigSchema struct {
+	Plugins struct {
+		Active   []string              `yaml:"active"`
+		Disabled []string              `yaml:"disabled"`
+		Settings map[string]any        `yaml:"plugin_settings"`
+	} `yaml:"plugins"`
+}
+
+// GetPluginRegistry parses the `plugins:` block of .system/config.yaml.
+func (a *App) GetPluginRegistry() (parser.PluginRegistry, error) {
+	registry := parser.PluginRegistry{Active: []string{}, Disabled: []string{}}
+	if a.vaultPath == "" {
+		return registry, fmt.Errorf("vault not loaded")
+	}
+	configPath := filepath.Join(a.vaultPath, ".system", "config.yaml")
+	bytes, err := os.ReadFile(configPath)
+	if err != nil {
+		// No config file → empty registry (no plugins active).
+		return registry, nil
+	}
+	var schema pluginConfigSchema
+	if err := yaml.Unmarshal(bytes, &schema); err != nil {
+		return registry, fmt.Errorf("failed to parse config.yaml: %w", err)
+	}
+	registry.Active = schema.Plugins.Active
+	registry.Disabled = schema.Plugins.Disabled
+	registry.Settings = schema.Plugins.Settings
+	if registry.Active == nil {
+		registry.Active = []string{}
+	}
+	if registry.Disabled == nil {
+		registry.Disabled = []string{}
+	}
+	return registry, nil
+}
+
+// ListPlugins enumerates plugin folders under .system/plugins/.
+func (a *App) ListPlugins() ([]parser.PluginInfo, error) {
+	if a.vaultPath == "" {
+		return nil, fmt.Errorf("vault not loaded")
+	}
+	pluginsDir := filepath.Join(a.vaultPath, ".system", "plugins")
+	entries, err := os.ReadDir(pluginsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []parser.PluginInfo{}, nil
+		}
+		return nil, fmt.Errorf("failed to read plugins dir: %w", err)
+	}
+	var infos []parser.PluginInfo
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		dir := filepath.Join(pluginsDir, name)
+		info := parser.PluginInfo{ID: name}
+		if _, err := os.Stat(filepath.Join(dir, "plugin.json")); err == nil {
+			info.HasManifest = true
+		}
+		if _, err := os.Stat(filepath.Join(dir, "index.js")); err == nil {
+			info.HasIndex = true
+		}
+		infos = append(infos, info)
+	}
+	return infos, nil
+}
+
+// ReadPluginSource returns the ESM source of a plugin's index.js for the
+// dynamic loader.
+func (a *App) ReadPluginSource(pluginID string) (string, error) {
+	safeID := sanitizePathSegment(pluginID)
+	if safeID == "" {
+		return "", fmt.Errorf("invalid plugin id")
+	}
+	srcPath := filepath.Join(a.vaultPath, ".system", "plugins", safeID, "index.js")
+	if !isPathWithinVault(srcPath, a.vaultPath) {
+		return "", fmt.Errorf("path escapes vault")
+	}
+	bytes, err := os.ReadFile(srcPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read plugin source: %w", err)
+	}
+	return string(bytes), nil
 }

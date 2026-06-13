@@ -72,6 +72,53 @@ type NavigationTree struct {
 	Notebooks []NavigationNotebook `json:"notebooks"`
 }
 
+// BlockReference is the resolved location+content of a ((uuid)) block
+// reference, used for hover previews and scroll-to-source navigation.
+type BlockReference struct {
+	ID         string `json:"id"`
+	Exists     bool   `json:"exists"`
+	CleanText  string `json:"clean_text"`
+	RawText    string `json:"raw_text"`
+	Type       string `json:"type"`
+	Notebook   string `json:"notebook"`
+	Section    string `json:"section"`
+	Page       string `json:"page"`
+	FileDate   string `json:"file_date"`
+	LineNumber int    `json:"line_number"`
+}
+
+// BlockChangedEvent is the payload of the "block:changed" Wails event,
+// broadcast after any block mutation so live embeds/references can refresh.
+type BlockChangedEvent struct {
+	ID       string `json:"id"`
+	Notebook string `json:"notebook"`
+	Section  string `json:"section"`
+	Page     string `json:"page"`
+	FileDate string `json:"file_date"`
+}
+
+// TagNode is one node of the hierarchical tag tree returned by QueryTagHierarchy.
+type TagNode struct {
+	Name     string    `json:"name"`
+	Path     string    `json:"path"` // full slash path to this node
+	Count    int       `json:"count"` // distinct blocks at or beneath this node
+	Children []TagNode `json:"children"`
+}
+
+// PluginRegistry mirrors the `plugins:` block of .system/config.yaml.
+type PluginRegistry struct {
+	Active   []string                `json:"active"`
+	Disabled []string                `json:"disabled"`
+	Settings map[string]any          `json:"settings"`
+}
+
+// PluginInfo describes a discovered plugin folder under .system/plugins/.
+type PluginInfo struct {
+	ID          string `json:"id"`
+	HasManifest bool   `json:"has_manifest"`
+	HasIndex    bool   `json:"has_index"`
+}
+
 type TaskResult struct {
 	ID           string    `json:"id"`
 	ParentID     string    `json:"parent_id"`
