@@ -1,0 +1,80 @@
+<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .bg-shape {
+      fill: #161619;
+      stroke: #27272a;
+      stroke-width: 1.5;
+    }
+    .hash-stroke {
+      stroke: url(#hash-grad);
+    }
+    .check-stroke {
+      stroke: url(#check-grad);
+    }
+    @media (prefers-color-scheme: light) {
+      .bg-shape {
+        fill: #f4f4f5;
+        stroke: #e4e4e7;
+      }
+      .hash-stroke {
+        stroke: url(#hash-grad-light);
+      }
+      .check-stroke {
+        stroke: url(#check-grad-light);
+      }
+    }
+    @media (max-width: 24px) {
+      .bg-shape {
+        display: none;
+      }
+      .hash-stroke {
+        stroke: #6366f1;
+        opacity: 0.35;
+      }
+      .check-stroke {
+        stroke: #38bdf8;
+        opacity: 1.0;
+      }
+    }
+    @media (max-width: 24px) and (prefers-color-scheme: light) {
+      .hash-stroke {
+        stroke: #4f46e5;
+      }
+      .check-stroke {
+        stroke: #0284c7;
+      }
+    }
+  </style>
+  <defs>
+    <!-- Dark Mode Gradients: Deep Indigo-Violet & Cyber Teal-Blue -->
+    <linearGradient id="hash-grad" x1="0%" y1="0%" x2="100%" y2="100%" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#a855f7" />
+    </linearGradient>
+    <linearGradient id="check-grad" x1="0%" y1="0%" x2="100%" y2="100%" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#06b6d4" />
+    </linearGradient>
+
+    <!-- Light Mode Gradients: Indigo-Purple & Emerald-Teal -->
+    <linearGradient id="hash-grad-light" x1="0%" y1="0%" x2="100%" y2="100%" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="100%" stop-color="#7c3aed" />
+    </linearGradient>
+    <linearGradient id="check-grad-light" x1="0%" y1="0%" x2="100%" y2="100%" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0284c7" />
+      <stop offset="100%" stop-color="#0891b2" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Outer Rounded Card Boundary -->
+  <rect class="bg-shape" x="2" y="2" width="60" height="60" rx="16" />
+  
+  <!-- Base Hash Marks -->
+  <path class="hash-stroke" stroke-width="5.5" stroke-linecap="round" d="M 28,14 L 20,50" />
+  <path class="hash-stroke" stroke-width="5.5" stroke-linecap="round" d="M 14,23 L 48,23" />
+  <path class="hash-stroke" stroke-width="5.5" stroke-linecap="round" d="M 18,39 L 52,39" />
+  
+  <!-- Overlapping Task Checkmark completing the Hash Geometry -->
+  <path class="check-stroke" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" d="M 27,37 L 35,46 L 46,14" />
+</svg>
