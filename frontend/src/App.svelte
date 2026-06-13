@@ -149,32 +149,26 @@
       onToggleSidebar={() => (sidebarCollapsed = !sidebarCollapsed)}
     />
 
-    <div class="flex flex-1 pt-14 h-full w-full relative">
-      <div
-        class="transition-all duration-200 ease-out flex-shrink-0"
-        class:w-0={sidebarCollapsed}
-        class:w-64={!sidebarCollapsed}
-        class:overflow-hidden={sidebarCollapsed}
-      >
-        <Sidebar
-          bind:activeNotebook
-          bind:activeSection
-          bind:activePage
-          bind:activeView
-          onSelectNotebook={(nb) => (activeNotebook = nb)}
-          onSelectSection={(sec) => (activeSection = sec)}
-          onSelectPage={(nb, sec, pg) => {
-            activeNotebook = nb
-            activeSection = sec
-            activePage = pg
-          }}
-          onSelectView={(v) => (activeView = v)}
-        />
-      </div>
+    <div class="flex mt-14 h-[calc(100vh-56px)] w-full relative">
+      <Sidebar
+        bind:activeNotebook
+        bind:activeSection
+        bind:activePage
+        bind:activeView
+        collapsed={sidebarCollapsed}
+        onSelectNotebook={(nb) => (activeNotebook = nb)}
+        onSelectSection={(sec) => (activeSection = sec)}
+        onSelectPage={(nb, sec, pg) => {
+          activeNotebook = nb
+          activeSection = sec
+          activePage = pg
+        }}
+        onSelectView={(v) => (activeView = v)}
+      />
 
       <!-- Content viewport -->
       <div
-        class="flex-1 h-[calc(100vh-56px)] flex flex-col overflow-hidden bg-bg-void"
+        class="flex-1 h-full min-w-0 flex flex-col overflow-hidden bg-bg-void"
       >
         {#if activeView === 'notes'}
           {#if notesReady}

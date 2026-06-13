@@ -1,5 +1,12 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import logo from '../assets/logo.svg'
+  import {
+    WindowMinimise,
+    WindowToggleMaximise,
+    WindowIsMaximised,
+    Quit
+  } from '../../wailsjs/runtime/runtime.js'
 
   interface Props {
     activeView: string
@@ -23,39 +30,71 @@
     { id: 'kanban', label: 'Kanban', icon: 'view_kanban' }
   ]
 
+  let maximised = $state(false)
+
+  async function syncMaximised() {
+    try {
+      maximised = await WindowIsMaximised()
+    } catch {
+      // runtime not ready (e.g. during SSR/check); leave as-is
+    }
+  }
+
+  onMount(() => {
+    syncMaximised()
+    // Maximize/restore triggers a viewport resize; re-sync the icon then.
+    const onResize = () => syncMaximised()
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  })
+
   function selectView(id: string) {
     activeView = id
+  }
+
+  function handleToggleMax() {
+    WindowToggleMaximise()
+    // Optimistic flip; resize listener will correct it if the platform
+    // refuses the toggle.
+    maximised = !maximised
   }
 </script>
 
 <header
-  class="bg-void flex justify-between items-center px-3 h-14 w-full z-50 fixed top-0 border-b border-border-muted select-none gap-4"
+  class="drag-region bg-void flex justify-between items-center h-14 w-full z-50 fixed top-0 border-b border-border-muted select-none"
 >
-  <!-- Left: brand + sidebar toggle + view switcher -->
-  <div class="flex items-center gap-3 min-w-0">
+  <!-- Left: brand zone (matches sidebar width) + sidebar toggle at the boundary -->
+  <div class="flex items-center min-w-0 h-full">
+    <!-- Brand strip aligns over the sidebar; collapses when sidebar does -->
+    <div
+      class="flex items-center gap-2 h-full flex-shrink-0 transition-all duration-200 ease-out"
+      class:w-64={!sidebarCollapsed}
+      class:px-4={!sidebarCollapsed}
+      class:px-3={sidebarCollapsed}
+    >
+      <img src={logo} alt="Silt" class="w-6 h-6 flex-shrink-0" />
+      <span
+        class="font-headline-md text-headline-md text-accent-teal-start font-bold tracking-tight whitespace-nowrap"
+        >Silt</span
+      >
+    </div>
+
+    <!-- Sidebar toggle: rides the sidebar's inner edge (attached to sidebar) -->
     <button
       onclick={onToggleSidebar}
       aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
       title="Toggle sidebar (Ctrl+B)"
-      class="text-text-muted hover:text-accent-teal-start transition-colors border-none bg-transparent cursor-pointer p-1.5 rounded focus:outline-none flex-shrink-0"
+      class="h-full px-3 flex items-center justify-center text-text-muted hover:text-accent-teal-start hover:bg-bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none flex-shrink-0"
     >
       <span class="material-symbols-outlined text-[20px]"
         >{sidebarCollapsed ? 'left_panel_open' : 'left_panel_close'}</span
       >
     </button>
 
-    <div
-      class="flex items-center gap-2 pr-2 mr-1 border-r border-border-muted flex-shrink-0"
-    >
-      <img src={logo} alt="Silt" class="w-6 h-6" />
-      <span
-        class="font-headline-md text-headline-md text-accent-teal-start font-bold tracking-tight"
-        >Silt</span
-      >
-    </div>
+    <div class="w-px h-6 bg-border-muted mx-1 flex-shrink-0"></div>
 
     <!-- View switcher (segmented control) -->
-    <nav class="flex items-center gap-0.5 min-w-0">
+    <nav class="flex items-center gap-0.5 min-w-0 px-1">
       {#each views as v (v.id)}
         <button
           onclick={() => selectView(v.id)}
@@ -72,16 +111,59 @@
     </nav>
   </div>
 
-  <!-- Right: search -->
-  <div class="flex items-center gap-2 flex-shrink-0">
+  <!-- Right: search + window controls -->
+  <div class="flex items-center gap-2 flex-shrink-0 h-full pr-2">
     <button
       onclick={onSearchClick}
-      class="bg-bg-surface border border-border-muted rounded-lg pl-3 pr-8 py-1.5 flex items-center gap-2 cursor-pointer text-text-muted hover:border-accent-teal-start transition-all duration-200"
+      class="bg-bg-surface border border-border-muted rounded-lg pl-3 pr-8 py-1.5 items-center gap-2 cursor-pointer text-text-muted hover:border-accent-teal-start transition-all duration-200 hidden sm:flex"
     >
       <span class="material-symbols-outlined text-[18px]">search</span>
-      <span class="text-[12px] font-label-sm hidden md:inline"
-        >Search... (Ctrl+P)</span
-      >
+      <span class="text-[12px] font-label-sm">Search… (Ctrl+P)</span>
     </button>
+
+    <div class="w-px h-6 bg-border-muted mx-1"></div>
+
+    <!-- Window controls (no-drag zone) -->
+    <div class="flex items-center h-full">
+      <button
+        onclick={() => WindowMinimise()}
+        aria-label="Minimize"
+        title="Minimize"
+        class="h-full w-11 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
+      >
+        <span class="material-symbols-outlined text-[18px]">remove</span>
+      </button>
+      <button
+        onclick={handleToggleMax}
+        aria-label={maximised ? 'Restore' : 'Maximize'}
+        title={maximised ? 'Restore' : 'Maximize'}
+        class="h-full w-11 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
+      >
+        <span class="material-symbols-outlined text-[18px]"
+          >{maximised ? 'fullscreen_exit' : 'crop_square'}</span
+        >
+      </button>
+      <button
+        onclick={() => Quit()}
+        aria-label="Close"
+        title="Close"
+        class="h-full w-11 flex items-center justify-center text-text-muted hover:bg-error hover:text-white transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
+      >
+        <span class="material-symbols-outlined text-[18px]">close</span>
+      </button>
+    </div>
   </div>
 </header>
+
+<style>
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+  /* Interactive children stay clickable while empty header space drags the window. */
+  .drag-region :global(button),
+  .drag-region :global(nav),
+  .drag-region :global(input),
+  .drag-region :global(a) {
+    -webkit-app-region: no-drag;
+  }
+</style>

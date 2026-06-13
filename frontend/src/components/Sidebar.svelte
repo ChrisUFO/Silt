@@ -29,6 +29,7 @@
     activeSection: string
     activePage: string
     activeView: string
+    collapsed: boolean
     onSelectNotebook: (notebook: string) => void
     onSelectSection: (section: string) => void
     onSelectPage: (notebook: string, section: string, page: string) => void
@@ -40,6 +41,7 @@
     activeSection = $bindable(),
     activePage = $bindable(),
     activeView = $bindable(),
+    collapsed = $bindable(),
     onSelectNotebook,
     onSelectSection,
     onSelectPage,
@@ -223,7 +225,11 @@
 </script>
 
 <aside
-  class="bg-bg-surface border-r border-border-muted w-64 flex flex-col py-[4px] fixed left-0 top-14 h-[calc(100vh-56px)] select-none z-40"
+  class="bg-bg-surface border-r border-border-muted flex flex-col py-[4px] h-full transition-all duration-200 ease-out flex-shrink-0 select-none z-40"
+  class:w-64={!collapsed}
+  class:w-0={collapsed}
+  class:overflow-hidden={collapsed}
+  class:border-r-0={collapsed}
 >
   <div
     class="px-3 py-3 flex flex-col gap-1 relative flex-1 overflow-hidden flex"
