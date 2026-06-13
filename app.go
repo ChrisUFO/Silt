@@ -552,6 +552,32 @@ func (a *App) ListNavigation() (parser.NavigationTree, error) {
 	return res, err
 }
 
+// QueryTagHierarchy returns the hierarchical tag tree for the Tags Explorer.
+func (a *App) QueryTagHierarchy() ([]parser.TagNode, error) {
+	if a.db == nil {
+		return nil, fmt.Errorf("vault database not loaded")
+	}
+	a.wg.Add(1)
+	defer a.wg.Done()
+	var res []parser.TagNode
+	var err error
+	a.coordinator.WithDBRead(func() { res, err = a.db.QueryTagHierarchy() })
+	return res, err
+}
+
+// QueryBlocksByTag returns blocks tagged at or beneath tagPath (prefix match).
+func (a *App) QueryBlocksByTag(tagPath string) ([]parser.TaskResult, error) {
+	if a.db == nil {
+		return nil, fmt.Errorf("vault database not loaded")
+	}
+	a.wg.Add(1)
+	defer a.wg.Done()
+	var res []parser.TaskResult
+	var err error
+	a.coordinator.WithDBRead(func() { res, err = a.db.QueryBlocksByTag(tagPath) })
+	return res, err
+}
+
 // SearchBlocks fuzzy searches blocks and headings matching the query.
 func (a *App) SearchBlocks(query string) ([]parser.TaskResult, error) {
 	if a.db == nil {

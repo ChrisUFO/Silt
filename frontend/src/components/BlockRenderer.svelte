@@ -6,6 +6,8 @@
     ReleaseFocusLock
   } from '../../wailsjs/go/main/App.js'
   import CommandPalette from './CommandPalette.svelte'
+  import RichText from './RichText.svelte'
+  import BlockPickerModal from './BlockPickerModal.svelte'
 
   interface Block {
     id: string
@@ -54,7 +56,17 @@
   let isFocused = $state(false)
   let saveTimeout = $state<any>(null)
   let showSlashMenu = $state(false)
+  let showBlockPicker = $state(false)
   let hasFocusLock = false
+
+  // Enter write mode: swap the read view (RichText) for the contenteditable
+  // and move focus into it.
+  async function beginEdit() {
+    if (isFocused) return
+    isFocused = true
+    await tick()
+    editableEl?.focus()
+  }
 
   async function handleCommandSelect(commandId: string) {
     showSlashMenu = false
@@ -75,16 +87,26 @@
       block.clean_text = ''
       window.dispatchEvent(new CustomEvent('switch-view', { detail: 'kanban' }))
     } else if (commandId === 'embed') {
-      block.clean_text = '{{embed:placeholder}}'
+      // Open the block picker; insert {{embed:<id>}} once a block is chosen.
+      showBlockPicker = true
     }
 
-    if (editableEl) {
+    if (editableEl && commandId !== 'embed') {
       editableEl.innerText = block.clean_text
       editableEl.focus()
     }
     const updated = [...siblings]
     triggerAutoSave(updated)
     onUpdate(updated)
+  }
+
+  function handleEmbedPick(blockId: string) {
+    block.clean_text = `{{embed:${blockId}}}`
+    const updated = [...siblings]
+    triggerAutoSave(updated)
+    onUpdate(updated)
+    // Enter edit mode so the user sees/adjusts the embed immediately.
+    beginEdit()
   }
 
   // Find ancestor chain for a block
@@ -423,30 +445,65 @@
     {/if}
   {/if}
 
-  <!-- Content editable text segment -->
+  <!-- Content text segment: read mode (RichText) vs write mode (contenteditable) -->
   <div class="flex-1 flex flex-wrap items-center gap-2 min-w-0 relative">
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      id="editable-{block.id}"
-      bind:this={editableEl}
-      contenteditable="true"
-      role="textbox"
-      tabindex="0"
-      onfocus={handleFocus}
-      onblur={handleBlur}
-      onkeydown={handleKeyDown}
-      oninput={handleInput}
-      class="flex-1 focus:outline-none text-on-surface leading-relaxed whitespace-pre-wrap break-words min-h-[22px] min-w-[150px]"
-      class:text-text-muted={block.status === 'DONE'}
-      class:line-through={block.status === 'DONE'}
-    >
-      {block.clean_text}
-    </div>
+    {#if isFocused}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        id="editable-{block.id}"
+        bind:this={editableEl}
+        contenteditable="true"
+        role="textbox"
+        tabindex="0"
+        onfocus={handleFocus}
+        onblur={handleBlur}
+        onkeydown={handleKeyDown}
+        oninput={handleInput}
+        class="flex-1 focus:outline-none text-on-surface leading-relaxed whitespace-pre-wrap break-words min-h-[22px] min-w-[150px]"
+        class:text-text-muted={block.status === 'DONE'}
+        class:line-through={block.status === 'DONE'}
+      >
+        {block.clean_text}
+      </div>
+    {:else}
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div
+        id="editable-{block.id}"
+        role="textbox"
+        tabindex="0"
+        onfocus={beginEdit}
+        onclick={beginEdit}
+        class="flex-1 text-on-surface leading-relaxed whitespace-pre-wrap break-words min-h-[22px] min-w-[150px] cursor-text rounded"
+        class:text-text-muted={block.status === 'DONE'}
+        class:line-through={block.status === 'DONE'}
+      >
+        {#if block.clean_text && block.clean_text.trim() !== ''}
+          <RichText
+            text={block.clean_text}
+            {notebook}
+            {section}
+            {page}
+            {fileDate}
+          />
+        {:else}
+          <span class="text-text-muted/50 italic"
+            >Type '/' for commands, or start writing…</span
+          >
+        {/if}
+      </div>
+    {/if}
 
     {#if showSlashMenu}
       <CommandPalette
         onSelect={handleCommandSelect}
         onClose={() => (showSlashMenu = false)}
+      />
+    {/if}
+
+    {#if showBlockPicker}
+      <BlockPickerModal
+        onPick={handleEmbedPick}
+        onClose={() => (showBlockPicker = false)}
       />
     {/if}
 

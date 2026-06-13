@@ -9,6 +9,7 @@
   import Sidebar from './components/Sidebar.svelte'
   import VirtualScrollContainer from './components/VirtualScrollContainer.svelte'
   import SearchModal from './components/SearchModal.svelte'
+  import TagsExplorer from './components/TagsExplorer.svelte'
   import logo from './assets/logo.svg'
 
   let isInitialized = $state(false)
@@ -55,9 +56,27 @@
       }
     }
 
+    // Smart Graph navigation: refs/embeds/tag-pills dispatch these.
+    function handleNavigateToBlock(e: Event) {
+      const d = (e as CustomEvent).detail
+      if (d) {
+        handleSearchJump(d.notebook, d.section, d.page, d.date, d.blockId)
+      }
+    }
+    function handleNavigateToTag(e: Event) {
+      const tagPath = (e as CustomEvent).detail
+      if (tagPath) {
+        activeView = 'tags'
+      }
+    }
+
     window.addEventListener('keydown', handleGlobalKeyDown)
+    window.addEventListener('navigate-to-block', handleNavigateToBlock)
+    window.addEventListener('navigate-to-tag', handleNavigateToTag)
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
+      window.removeEventListener('navigate-to-block', handleNavigateToBlock)
+      window.removeEventListener('navigate-to-tag', handleNavigateToTag)
     }
   })
 
@@ -224,8 +243,10 @@
               </p>
             </div>
           {/if}
+        {:else if activeView === 'tags'}
+          <TagsExplorer />
         {:else}
-          <!-- Placeholder views: Agenda/Tags/Calendar/Kanban arrive in later phases -->
+          <!-- Placeholder views: Agenda/Calendar/Kanban arrive in later phases -->
           <div class="flex-1 p-8 flex flex-col select-none">
             <h1
               class="font-headline-lg text-headline-lg text-text-primary mb-2 capitalize"
