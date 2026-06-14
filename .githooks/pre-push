@@ -56,53 +56,26 @@ if [ -n "$CHANGED_FILES" ] && [ -z "$CODE_CHANGED" ]; then
   exit 0
 fi
 
-# Check for specific component changes
+# Fast local Go regression gate. CI (.github/workflows/ci.yml) is the
+# authoritative gate: it runs the FULL pipeline (go test -race, npm build,
+# svelte-check, binding regeneration) on Linux — including the cross-platform
+# signal (symlink + fsnotify tests that skip on Windows, where you develop).
+# This local hook only catches Go regressions in seconds so you don't push
+# broken code and wait minutes for CI. Frontend validation is left entirely
+# to CI: your IDE + `wails dev` cover the live-editing path, and CI
+# re-validates the build + type-check authoritatively on push.
 GO_CHANGED=$(echo "$CHANGED_FILES" | grep -E '\.go$')
-FE_CHANGED=$(echo "$CHANGED_FILES" | grep -E '^frontend/')
-
-RUN_GO=0
-RUN_FE=0
 
 if [ -n "$GO_CHANGED" ]; then
-  RUN_GO=1
-fi
-if [ -n "$FE_CHANGED" ]; then
-  RUN_FE=1
-fi
-
-# Run Go backend unit tests if Go files changed
-if [ $RUN_GO -eq 1 ]; then
-  echo "Go files changed. Running backend unit tests..."
-  go test -v ./...
+  echo "Go files changed. Running Go tests (-race, fast local gate)..."
+  go test -race -count=1 ./...
   if [ $? -ne 0 ]; then
     echo "ERROR: Go tests failed! Push aborted."
     exit 1
   fi
 else
-  echo "No Go files changed. Skipping Go unit tests."
+  echo "No Go files changed. Skipping Go tests (CI handles the full pipeline)."
 fi
-
-# Compile frontend if Svelte/typescript/assets changed
-if [ $RUN_FE -eq 1 ]; then
-  echo "Frontend files changed. Compiling frontend..."
-  # Use a subshell so a failed `cd frontend` cannot leak into the outer
-  # hook's working directory and corrupt subsequent commands.
-  (cd frontend && npm run build)
-  RESULT=$?
-  if [ $RESULT -ne 0 ]; then
-    echo "ERROR: Frontend compilation failed! Push aborted."
-    exit 1
-  fi
-else
-  echo "No frontend files changed. Skipping Svelte/Vite compilation check."
-fi
-
-# NOTE on Wails bindings: `frontend/wailsjs/` is gitignored (a build artifact,
-# not committed), so there is no committed state to detect drift against.
-# CI (`.github/workflows/ci.yml`) regenerates the bindings fresh on every run
-# and verifies the frontend still type-checks/builds against them — that is
-# the real Go↔binding consistency guarantee. Developers run `npm run generate`
-# locally (documented in CONTRIBUTING.md) to refresh their own working tree.
 
 echo "Pre-push checks passed successfully!"
 exit 0

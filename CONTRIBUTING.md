@@ -56,15 +56,21 @@ import went stale, the type-check fails the build).
 
 ## Pre-push hook
 
-`git config core.hooksPath .githooks` enables two gates on every push:
+`git config core.hooksPath .githooks` enables a fast local Go gate on every
+push:
 
-1. **Go tests** (`go test -race -count=1 ./...`) when any `.go` file changed.
-2. **Frontend build** (`npm run build` in `frontend/`) when any `frontend/`
-   file changed.
+- **`go test -race -count=1 ./...`** when any `.go` file changed.
 
-Documentation-only / asset-only pushes are exempt automatically. (There is no
-binding-drift gate in the hook because `frontend/wailsjs/` is gitignored and
-therefore has no committed state to compare against; CI regenerates it instead.)
+This is intentionally a *fast local gate* — it catches Go regressions in
+seconds before you push, so you're not waiting on CI for a broken build.
+**CI (`.github/workflows/ci.yml`) is the authoritative gate** and runs the
+full pipeline on Linux (go test -race, npm build, svelte-check, binding
+regeneration), including the cross-platform signal the local Windows hook
+can't give (symlink + fsnotify tests that skip on Windows). Frontend
+validation is left to CI: your IDE + `wails dev` cover live editing, and CI
+re-validates authoritatively on push.
+
+Documentation-only / asset-only pushes are exempt automatically.
 
 ## Testing
 
