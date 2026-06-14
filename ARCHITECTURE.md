@@ -162,6 +162,9 @@ Concurrency: WAL allows unlimited readers alongside a single writer; readers nev
 Caveat: WAL relies on shared memory and therefore does **not** work on network filesystems (NFS/SMB). Local-first single-user desktop is the supported deployment; a vault on a network mount will fail to open the index with a clear error rather than silently corrupt.
 
 -- Blocks Table
+-- file_date is per-block (stored inline in the trailing comment
+-- <!-- id: uuid @ YYYY-MM-DD -->), not file-level. A page is a single .md
+-- file; blocks from different dates coexist in the same page file.
 CREATE TABLE blocks (
     id TEXT PRIMARY KEY,
     parent_id TEXT,
@@ -304,66 +307,18 @@ Launch background: main.go resolves BackgroundColour from the embedded default t
 
 5. Svelte 5 Frontend Architecture
 
-The frontend uses Svelte 5’s fine-grained compiler to handle rapid content editing and real-time drag-and-drop operations without triggering bulk UI re-renders.
+The frontend uses Svelte 5's fine-grained compiler. The editor surface is built on TipTap v3 (ProseMirror engine) via the `svelte-tiptap` adapter, replacing the former per-block contenteditable. The TipTap editor provides native cross-block selection (the core capability the per-block approach could not support), eliminates the text-duplication bug, and delegates IME/selection edge cases to the framework.
 
-5.1 Infinite Timeline Virtualizer
+5.1 TipTap Editor Surface (one editor per page)
 
-To render sections containing years of logs without degrading memory, the Svelte layer virtualizes scrolling lists.
+Each page renders a single TipTap editor instance (`TipTapEditor.svelte`) containing all of the page's blocks. The editor's transaction lifecycle is wired to the Go backend:
+- **Load:** `FetchPageBlocks(notebook, section, page)` returns a flat `[]ParsedBlock`; `blocksToDoc(blocks)` converts to ProseMirror doc JSON; `editor.commands.setContent(doc)` populates the editor.
+- **Save:** `editor.on('update')` (debounced via `editor.auto_save_delay_ms`) → `docToBlocks(editor.getJSON())` → `SaveFileBlocks(notebook, section, page, blocks)`. Go's `RenderFileContent` remains the single on-disk serializer.
+- **Focus lock (#38):** the editor's `onFocus`/`onBlur` events drive `Acquire/ReleaseFocusLock`; a 20s heartbeat (`RefreshFocusLock`) keeps the lease alive while focused.
 
-<!-- VirtualScrollContainer.svelte -->
-<script lang="ts">
-  import { onMount } from 'svelte';
-  
-  let { notebook, section, page } = $props();
-  
-  let visibleGroups = $state<DayGroup[]>([]);
-  let listContainer: HTMLDivElement;
-  let offset = $state(0);
-  let loading = $state(false);
+The ProseMirror schema defines three block node types (`taskBlock`, `noteBlock`, `headerBlock`) that map 1:1 to `parser.ParsedBlock`. Each carries a UUID `id` attr and a per-block `file_date`. A `UniqueBlockIds` extension (`appendTransaction`) mints fresh UUIDs for pasted/duplicated blocks to prevent `blocks`-table PK collisions.
 
-  async function loadMoreDays(direction: 'top' | 'bottom') {
-    if (loading) return;
-    loading = true;
-    
-    const newDays = await window.go.main.App.FetchPageTimeline(
-      notebook, 
-      section,
-      page,
-      offset, 
-      15
-    );
-    
-    if (direction === 'bottom') {
-      visibleGroups = [...visibleGroups, ...newDays];
-      offset += 15;
-    } else {
-      visibleGroups = [...newDays, ...visibleGroups];
-    }
-    
-    loading = false;
-  }
-
-  function handleScroll() {
-    const { scrollTop, scrollHeight, clientHeight } = listContainer;
-    // Load next block when scrolled within 200px of container bottom
-    if (scrollHeight - scrollTop - clientHeight < 200) {
-      loadMoreDays('bottom');
-    }
-  }
-</script>
-
-<div bind:this={listContainer} onscroll={handleScroll} class="overflow-y-auto h-screen pr-2">
-  {#each visibleGroups as group (group.date)}
-    <section class="mb-8 border-l border-zinc-800 pl-4 relative group">
-      <h2 class="text-sky-400 font-bold mb-4 sticky top-0 bg-[#121214] py-2 z-10">{group.formattedDate}</h2>
-      
-      {#each group.blocks as block (block.id)}
-        <BlockRenderer {block} />
-      {/each}
-    </section>
-  {/each}
-</div>
-
+NodeView components (`TaskBlockView`, `NoteBlockView`, `HeaderBlockView`) render the Svelte UI for each block type — checkbox cycle for tasks, drag handles, meta badges. The slash menu (`/` at block start) surfaces commands to change block types.
 
 5.2 Responsive Drag-and-Drop Kanban Store
 
@@ -457,7 +412,7 @@ If you edit a markdown file in VS Code while the Silt dashboard is open, the fil
 
 Mitigation Plan:
 
-Focus Locking (TTL leases): While Svelte has focus on an active text field, the backend monitor holds a time-limited lease on that file and pauses external sync operations for it. The Svelte editor acquires the lease on focus, refreshes it on a 20s heartbeat while focused (and on every save), and releases on blur. The Go side runs a background sweeper (`monitor.DirectoryWatcher.startLeaseSweeper`) that drops expired leases every `TTL/2` (default TTL 60s), so if a component unmounts without releasing — route change, crash, hot-reload — fsnotify suppression self-heals within a minute instead of leaking forever (#38). `RefreshFocusLock` is a no-op on an already-expired lease (the editor must re-acquire), so a stale heartbeat can't resurrect suppression. On shutdown / `CloseVault`, `ReleaseAllFocus` clears every outstanding lease so a clean exit can't strand a file. The `WriteTracker` self-write cooldown is unaffected.
+Focus Locking (TTL leases): While the TipTap editor has focus on a page, the backend monitor holds a time-limited lease on that page's file and pauses external sync operations for it. The editor acquires the lease on focus (`AcquireFocusLock`), refreshes it on a 20s heartbeat while focused (`RefreshFocusLock`), and releases on blur (`ReleaseFocusLock`). One editor per page = one lease per file. The Go side runs a background sweeper (`monitor.DirectoryWatcher.startLeaseSweeper`) that drops expired leases every `TTL/2` (default TTL 60s), so if a component unmounts without releasing — route change, crash, hot-reload — fsnotify suppression self-heals within a minute instead of leaking forever (#38). `RefreshFocusLock` is a no-op on an already-expired lease (the editor must re-acquire), so a stale heartbeat can't resurrect suppression. On shutdown / `CloseVault`, `ReleaseAllFocus` clears every outstanding lease so a clean exit can't strand a file. The `WriteTracker` self-write cooldown is unaffected.
 
 Deterministic Diff Verification: Instead of overwriting entire files when external changes occur, Go computes a diff patch based on block IDs to preserve uncommitted cursor inputs.
 

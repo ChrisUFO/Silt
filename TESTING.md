@@ -57,10 +57,7 @@ unavoidable (the markdown stays the source of truth).
 | `backend/monitor` | `FocusLease_AcquireThenLocked`, `..._ExpiryRecoversSuppression`, `..._RefreshKeepsItAlive`, `..._RefreshNoOpWhenExpired`, `..._ReleaseAllClearsEverything`, `..._ConcurrentAccessIsRaceClean` | #38 TTL focus leases + sweeper + shutdown release |
 | `backend/parser` | `RenderFileContent_RoundTripIdentity` (task/note/header, nested, code-fence + body preservation), `RenderFileContent_DeletedBlockDropped`, `RenderFileContent_ScaffoldSnapshot`, `WalkMarkdown_SelfReferencingSymlinkDoesNotLoop`, `..._MutualSymlinkCycleIsSkipped`, `..._OneHopSymlinkIsSkippedWithWarning`, `ScanWorkspace_NoCrashOnSymlinkLoop` | #40 single-serializer round-trip; #32 symlink loop handling |
 
-Frontend: `npm run check` reports **0 errors**. SearchModal.svelte now renders
-sanitized FTS5 snippets (`<mark>` highlights), scroll-to-load-more pagination,
-and a result-count footer. BlockRenderer.svelte adds the 20s focus-lease
-heartbeat (#38). Sidebar.svelte adds the "Change Vault" affordance (#33).
+Frontend: `npm run check` reports **0 errors**. The TipTap editor (`TipTapEditor.svelte`) replaces the former per-block contenteditable with a single ProseMirror editor per page. `npm test` runs Vitest (20 tests: 3 TipTap smoke + 17 converter/schema/uniqueId round-trip identity). SearchModal.svelte renders sanitized FTS5 snippets (`<mark>` highlights), scroll-to-load-more pagination, and a result-count footer. Sidebar.svelte adds the "Change Vault" affordance (#33).
 
 ## Manual Verification
 
