@@ -100,3 +100,13 @@ func InvalidateThemeCache(ids ...string) {
 		delete(globalThemeCache.entries, id)
 	}
 }
+
+// ResetCacheForTests clears the entire cache. Test-only (exported so
+// test files in the same package can call it from beforeEach); not
+// used by production code. Mirrors the _resetForTests pattern in the
+// frontend theme store.
+func ResetCacheForTests() {
+	globalThemeCache.mu.Lock()
+	defer globalThemeCache.mu.Unlock()
+	globalThemeCache.entries = map[string]themeCacheEntry{}
+}

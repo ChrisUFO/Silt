@@ -16,13 +16,13 @@ vi.mock('../../wailsjs/go/main/App.js', () => ({
   ListThemes: listThemesMock,
   ExportActiveTheme: vi.fn(),
   ImportTheme: vi.fn(),
+  PickExportPath: vi.fn(),
   PickThemeFile: vi.fn()
 }))
 vi.mock('../../wailsjs/runtime/runtime.js', () => ({
   EventsOn: eventsOnMock,
   EventsOff: vi.fn(),
-  EventsEmit: vi.fn(),
-  SaveFileDialog: vi.fn()
+  EventsEmit: vi.fn()
 }))
 vi.mock('./inject', () => ({
   injectTokens: injectTokensMock
@@ -102,11 +102,17 @@ describe('theme listing store', () => {
     expect(listThemesMock).toHaveBeenCalledTimes(1)
 
     // Extract the handler that initThemes passed to EventsOn and
-    // invoke it manually; the handler should call loadThemes again.
+    // invoke it manually; the handler is debounced (100ms trailing
+    // edge) so advance fake timers past the debounce window.
+    vi.useFakeTimers()
     const calls = eventsOnMock.mock.calls as unknown as Array<[string, () => void]>
     const handler = calls[0]?.[1]
     expect(typeof handler).toBe('function')
     handler()
+    // The debounce delays the actual loadThemes call by 100ms.
+    vi.advanceTimersByTime(150)
+    vi.useRealTimers()
+    // Allow the async loadThemes promise to settle.
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(listThemesMock).toHaveBeenCalledTimes(2)
   })

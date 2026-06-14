@@ -690,6 +690,7 @@ func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
 	}
 
 	res := buildThemeResult(t, mode)
+	log.Printf("themes: ApplyTheme(id=%q mode=%q) → resolved %q", id, mode, t.ID)
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "theme:changed", map[string]string{
 			"id": t.ID, "mode": mode,
@@ -740,16 +741,37 @@ func (a *App) ImportTheme(srcPath string) (*themes.ImportResult, error) {
 	}
 	res, err := themes.ImportThemeFromPath(a.themesDir(), srcPath)
 	if err != nil {
+		log.Printf("themes: ImportTheme(%q) failed: %v", filepath.Base(srcPath), err)
 		return nil, err
 	}
 	if len(res.ValidationErrors) > 0 {
+		log.Printf("themes: ImportTheme(%q) rejected: %d validation error(s)", filepath.Base(srcPath), len(res.ValidationErrors))
 		return res, nil
 	}
+	log.Printf("themes: ImportTheme(%q) → imported as %q (renamed=%v)", filepath.Base(srcPath), res.Info.ID, res.Renamed)
 	themes.InvalidateThemeCache(res.Info.ID)
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "themes:changed", struct{}{})
 	}
 	return res, nil
+}
+
+// PickExportPath opens the native save-file dialog (filtered to *.json)
+// and returns the chosen path. The empty string means the user
+// cancelled. The frontend feeds the returned path to ExportActiveTheme.
+// defaultFilename is offered as the initial file name (e.g.
+// "<theme-id>.json"); pass "" to let the OS pick a default.
+func (a *App) PickExportPath(defaultFilename string) (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("application context not ready")
+	}
+	return runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:            "Export active theme",
+		DefaultFilename:  defaultFilename,
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Silt Theme (*.json)", Pattern: "*.json"},
+		},
+	})
 }
 
 // ExportActiveTheme writes the currently active theme verbatim to

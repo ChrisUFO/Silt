@@ -230,7 +230,7 @@
           role="radio"
           aria-checked={active}
           onclick={() => setMode(m.id)}
-          class="flex items-center gap-1.5 px-3 py-1.5 rounded-md font-label-sm text-label-sm transition-colors border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+          class="flex items-center gap-1.5 px-3 py-1.5 rounded-md font-label-sm text-label-sm motion-reduce:transition-none transition-colors border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
           class:bg-bg-hover={active}
           class:text-accent-primary-start={active}
           class:text-text-muted={!active}
@@ -278,12 +278,18 @@
           >Failed to load themes: {themesState.loadError}</span
         >
       </div>
+    {:else if themesState.items.length === 0}
+      <div
+        class="text-text-muted text-[12px] font-body-md py-8 text-center"
+      >
+        No themes available. Import a theme .json to get started.
+      </div>
     {:else}
       <div
         role="listbox"
         aria-label="Available themes"
         aria-activedescendant={focusIndex !== null
-          ? `theme-row-${focusIndex}`
+          ? `theme-row-${themesState.items[focusIndex]?.id ?? ''}`
           : undefined}
         class="space-y-2"
       >
@@ -291,7 +297,7 @@
           {@const active = isActive(theme)}
           <button
             type="button"
-            id={`theme-row-${i}`}
+            id={`theme-row-${theme.id}`}
             role="option"
             aria-selected={active}
             tabindex={focusIndex === i || (focusIndex === null && i === 0)
@@ -307,13 +313,14 @@
             }}
             onblur={onRowLeave}
             onkeydown={(e) => onRowKey(e, i)}
-            class="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 cursor-pointer"
+            class="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg border motion-reduce:transition-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 cursor-pointer"
             class:bg-bg-surface={!active}
             class:border-border-muted={!active}
             class:hover:border-border-active={!active}
-            class:bg-accent-primary-start={false}
-            class:border-accent-primary-start={active}
+            class:border-l-4={active}
+            class:border-l-accent-primary-start={active}
             class:bg-accent-primary-glow={active}
+            class:border-accent-primary-start={active}
           >
             <!-- Swatches: data-driven from theme.Swatches; no per-theme branching. -->
             <div class="flex items-center gap-1.5 flex-shrink-0">
@@ -376,7 +383,7 @@
       <button
         type="button"
         onclick={handleImport}
-        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start font-label-sm-bold hover:brightness-110 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start font-label-sm-bold hover:brightness-110 motion-reduce:transition-none transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
       >
         <span class="material-symbols-outlined text-[18px]">upload</span>
         Import .json
@@ -385,7 +392,7 @@
         type="button"
         onclick={handleExport}
         disabled={!themeState.id}
-        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-bg-surface border border-border-muted text-text-primary font-label-sm-bold hover:border-accent-primary-start transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:opacity-40 disabled:cursor-not-allowed"
+        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-bg-surface border border-border-muted text-text-primary font-label-sm-bold hover:border-accent-primary-start motion-reduce:transition-none transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         <span class="material-symbols-outlined text-[18px]">download</span>
         Export active

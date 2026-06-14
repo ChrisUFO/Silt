@@ -1,12 +1,24 @@
 package themes
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
+// TestMain provides test isolation for the process-local cache: clear
+// it before and after the suite so pointer-identity assertions and
+// entry-count checks are deterministic regardless of execution order.
+func TestMain(m *testing.M) {
+	ResetCacheForTests()
+	code := m.Run()
+	ResetCacheForTests()
+	os.Exit(code)
+}
+
 func TestCachedThemeByID_EmptyIDFallsBackToDefault(t *testing.T) {
+	ResetCacheForTests()
 	th, err := CachedThemeByID(t.TempDir(), "")
 	if err != nil {
 		t.Fatalf("CachedThemeByID: %v", err)

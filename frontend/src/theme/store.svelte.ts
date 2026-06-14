@@ -10,9 +10,10 @@ import {
   GetActiveTheme,
   ImportTheme,
   ListThemes,
+  PickExportPath,
   PickThemeFile
 } from '../../wailsjs/go/main/App.js'
-import { EventsOn, SaveFileDialog } from '../../wailsjs/runtime/runtime.js'
+import { EventsOn } from '../../wailsjs/runtime/runtime.js'
 import type { themes } from '../../wailsjs/go/models'
 import { injectTokens } from './inject'
 
@@ -94,13 +95,33 @@ export function setStatus(s: ThemeStatus): void {
   themeStatus.kind = s.kind
   themeStatus.message = s.message
   themeStatus.fields = s.fields
+  // Auto-dismiss non-error messages after 5 seconds so screen-reader
+  // users don't get a stale live-region announcement lingering after
+  // the action is long past. Errors stay until the user dismisses them
+  // (they need attention). The previous timeout (if any) is cleared.
+  if (statusTimeout !== null) {
+    clearTimeout(statusTimeout)
+    statusTimeout = null
+  }
+  if (s.kind !== 'error' && s.message) {
+    statusTimeout = setTimeout(() => {
+      clearStatus()
+      statusTimeout = null
+    }, 5000)
+  }
 }
 
 export function clearStatus(): void {
+  if (statusTimeout !== null) {
+    clearTimeout(statusTimeout)
+    statusTimeout = null
+  }
   themeStatus.kind = 'info'
   themeStatus.message = ''
   themeStatus.fields = []
 }
+
+let statusTimeout: ReturnType<typeof setTimeout> | null = null
 
 let schemeMedia: MediaQueryList | null = null
 let started = false
@@ -228,7 +249,9 @@ function applyResult(res: {
 
 /**
  * Switch to a theme/mode, persist it via the backend, and inject the result.
- * Returns true on success.
+ * Returns true on success. Errors are surfaced through `themeStatus` (the
+ * picker's live region) in addition to `themeState.error`, so a failed
+ * switch is never silently swallowed.
  */
 export async function applyTheme(
   id: string,
@@ -237,10 +260,21 @@ export async function applyTheme(
   try {
     const res = await ApplyTheme(id, mode)
     applyResult(res)
+    setStatus({
+      kind: 'success',
+      message: `Theme "${res.name}" applied.`,
+      fields: []
+    })
     return true
   } catch (err) {
     console.error('theme: ApplyTheme failed:', err)
-    themeState.error = err instanceof Error ? err.message : String(err)
+    const msg = err instanceof Error ? err.message : String(err)
+    themeState.error = msg
+    setStatus({
+      kind: 'error',
+      message: `Failed to apply theme: ${msg}`,
+      fields: []
+    })
     return false
   }
 }
@@ -343,11 +377,7 @@ export async function exportActiveTheme(): Promise<boolean> {
   }
   let dst: string
   try {
-    dst = await SaveFileDialog({
-      title: 'Export active theme',
-      defaultFilename: `${themeState.id}.json`,
-      filters: [{ displayName: 'Silt Theme (*.json)', pattern: '*.json' }]
-    })
+    dst = await PickExportPath(`${themeState.id}.json`)
   } catch (err) {
     setStatus({
       kind: 'error',
@@ -393,10 +423,23 @@ export function initThemes(): () => void {
   if (themesStarted) return () => {}
   themesStarted = true
   void loadThemes()
+  // Debounce the re-fetch so a rapid burst of imports (e.g. drag-drop
+  // of multiple files) coalesces into a single ListThemes call rather
+  // than N concurrent round-trips whose responses may arrive
+  // out-of-order.
+  let reloadTimer: ReturnType<typeof setTimeout> | null = null
   offThemesChanged = EventsOn('themes:changed', () => {
-    void loadThemes()
+    if (reloadTimer !== null) clearTimeout(reloadTimer)
+    reloadTimer = setTimeout(() => {
+      reloadTimer = null
+      void loadThemes()
+    }, 100)
   })
   return () => {
+    if (reloadTimer !== null) {
+      clearTimeout(reloadTimer)
+      reloadTimer = null
+    }
     offThemesChanged?.()
     offThemesChanged = null
     themesStarted = false
