@@ -64,31 +64,36 @@ func ListThemes(themesDir string) (*ListThemesResult, error) {
 
 	seenIDs := map[string]bool{}
 
-	entries, err := os.ReadDir(themesDir)
-	if err == nil {
-		for _, e := range entries {
-			if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".json") {
-				continue
+	// An empty themesDir means no vault is open yet. Skip the directory read
+	// entirely rather than relying on platform-dependent os.ReadDir("")
+	// behavior; the embedded-default append below still guarantees a result.
+	if themesDir != "" {
+		entries, err := os.ReadDir(themesDir)
+		if err == nil {
+			for _, e := range entries {
+				if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".json") {
+					continue
+				}
+				full := filepath.Join(themesDir, e.Name())
+				t, loadErr := LoadTheme(full)
+				if loadErr != nil {
+					res.Errors = append(res.Errors, ThemeLoadError{
+						File:    e.Name(),
+						Message: loadErr.Error(),
+					})
+					continue
+				}
+				if seenIDs[t.ID] {
+					continue // first valid definition of an id wins
+				}
+				seenIDs[t.ID] = true
+				res.Themes = append(res.Themes, t.AsInfo("disk"))
 			}
-			full := filepath.Join(themesDir, e.Name())
-			t, loadErr := LoadTheme(full)
-			if loadErr != nil {
-				res.Errors = append(res.Errors, ThemeLoadError{
-					File:    e.Name(),
-					Message: loadErr.Error(),
-				})
-				continue
-			}
-			if seenIDs[t.ID] {
-				continue // first valid definition of an id wins
-			}
-			seenIDs[t.ID] = true
-			res.Themes = append(res.Themes, t.AsInfo("disk"))
+		} else if !os.IsNotExist(err) {
+			// A real I/O error (permissions, etc.) — surface it. A missing dir
+			// is expected (fresh/empty vault) and is not an error.
+			return nil, fmt.Errorf("failed to read themes directory %s: %w", themesDir, err)
 		}
-	} else if !os.IsNotExist(err) {
-		// A real I/O error (permissions, etc.) — surface it. A missing dir
-		// is expected (fresh/empty vault) and is not an error.
-		return nil, fmt.Errorf("failed to read themes directory %s: %w", themesDir, err)
 	}
 
 	// Always guarantee the embedded default is selectable. If a user's
@@ -133,6 +138,11 @@ func ResolveActive(themesDir, activeID, mode string) (*Theme, error) {
 // loadThemeByID scans themesDir for the first valid theme whose id matches.
 // It intentionally does not assume the filename equals the id.
 func loadThemeByID(themesDir, id string) (*Theme, error) {
+	if themesDir == "" {
+		// No vault open → nothing to scan. The caller (ResolveActive) falls
+		// back to the embedded default.
+		return nil, fmt.Errorf("themes directory is empty")
+	}
 	entries, err := os.ReadDir(themesDir)
 	if err != nil {
 		return nil, err

@@ -25,10 +25,10 @@ export function injectTokens(tokens: Record<string, string>): void {
 
   // Build ":root{--name:value;…}". Values are taken verbatim from the
   // validated theme JSON (hex/rgb/rgba), so no escaping beyond the
-  // property declaration is required.
+  // property declaration is required. Object.entries iterates only own
+  // enumerable string-keyed properties, avoiding any prototype pollution.
   let css = ':root{'
-  for (const name in tokens) {
-    const value = tokens[name]
+  for (const [name, value] of Object.entries(tokens)) {
     if (value === undefined || value === null || value === '') continue
     css += `${name}:${value};`
   }

@@ -212,6 +212,21 @@ func TestListThemes_MissingDir(t *testing.T) {
 	}
 }
 
+func TestListThemes_EmptyPath(t *testing.T) {
+	// An empty themesDir (no vault open yet) must not call os.ReadDir("") and
+	// must still yield the embedded default rather than erroring.
+	res, err := ListThemes("")
+	if err != nil {
+		t.Fatalf("ListThemes empty path: %v", err)
+	}
+	if len(res.Themes) != 1 || res.Themes[0].ID != DefaultThemeID {
+		t.Fatalf("expected embedded default only for empty path, got %+v", res.Themes)
+	}
+	if res.Themes[0].Source != "default" {
+		t.Errorf("expected source=default, got %q", res.Themes[0].Source)
+	}
+}
+
 func TestListThemes_OnDiskPlusMalformed(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteTheme(t, dir, "custom.json", minimalValidJSON)
@@ -276,6 +291,8 @@ func TestHexToRGB(t *testing.T) {
 	}{
 		{"#0c0c0e", 12, 12, 14, true},
 		{"#ffffff", 255, 255, 255, true},
+		{"#ffffffff", 255, 255, 255, true}, // 8-digit (alpha ignored)
+		{"#0c0c0eff", 12, 12, 14, true},    // 8-digit w/ alpha → matches #0c0c0e
 		{"#fff", 255, 255, 255, true},
 		{"#000", 0, 0, 0, true},
 		{" #0c0c0e ", 12, 12, 14, true},

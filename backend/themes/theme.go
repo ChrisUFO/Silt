@@ -122,10 +122,13 @@ func (t *Theme) BGVoid(mode string) string {
 	return t.Modes.Dark.BG.Void
 }
 
-// HexToRGB parses a #rgb / #rrggbb hex color into its 8-bit components. It
-// is used at launch to turn the active theme's bg.void into the native
-// webview BackgroundColour before the webview renders. Non-hex inputs return
-// ok=false so the caller can keep a safe default.
+// HexToRGB parses a #rgb / #rrggbb / #rrggbbaa hex color into its 8-bit
+// components. The 8-digit form (with alpha) is accepted but the alpha
+// channel is ignored, mirroring isValidColor so any color that passes
+// validation can also seed the native webview BackgroundColour. It is used
+// at launch to turn the active theme's bg.void into that BackgroundColour
+// before the webview renders. Non-hex inputs return ok=false so the caller
+// can keep a safe default.
 func HexToRGB(s string) (r, g, b uint8, ok bool) {
 	s = trimSpace(s)
 	if len(s) == 0 || s[0] != '#' {
@@ -139,6 +142,9 @@ func HexToRGB(s string) (r, g, b uint8, ok bool) {
 		full = string([]byte{hex[0], hex[0], hex[1], hex[1], hex[2], hex[2]})
 	case 6:
 		full = hex
+	case 8:
+		// #rrggbbaa → drop the alpha channel (webview bg has no alpha).
+		full = hex[0:6]
 	default:
 		return 0, 0, 0, false
 	}
