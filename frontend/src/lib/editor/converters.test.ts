@@ -27,6 +27,7 @@ function mkBlock(
     due_date: '',
     priority: 3,
     line_number: 1,
+    file_date: '2026-06-14',
     ...overrides
   }
 }
@@ -71,7 +72,8 @@ const SEMANTIC_FIELDS = [
   'start_date',
   'due_date',
   'priority',
-  'clean_text'
+  'clean_text',
+  'file_date'
 ] as const
 
 function expectSemanticEqual(a: ParsedBlock, b: ParsedBlock): void {

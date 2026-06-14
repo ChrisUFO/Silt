@@ -71,6 +71,12 @@ export const TaskBlock = Node.create({
         default: 3,
         parseHTML: (el) => Number(el.getAttribute('data-priority') || 3),
         renderHTML: (attrs) => ({ 'data-priority': String(attrs.priority) })
+      },
+      file_date: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-file-date') || '',
+        renderHTML: (attrs) =>
+          attrs.file_date ? { 'data-file-date': attrs.file_date } : {}
       }
     }
   },
@@ -110,6 +116,12 @@ export const NoteBlock = Node.create({
         default: '- ',
         parseHTML: (el) => el.getAttribute('data-bullet') || '- ',
         renderHTML: (attrs) => ({ 'data-bullet': attrs.bullet })
+      },
+      file_date: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-file-date') || '',
+        renderHTML: (attrs) =>
+          attrs.file_date ? { 'data-file-date': attrs.file_date } : {}
       }
     }
   },
@@ -144,6 +156,12 @@ export const HeaderBlock = Node.create({
         default: 1,
         parseHTML: (el) => Number(el.getAttribute('data-depth') || 1),
         renderHTML: (attrs) => ({ 'data-depth': String(attrs.depth) })
+      },
+      file_date: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-file-date') || '',
+        renderHTML: (attrs) =>
+          attrs.file_date ? { 'data-file-date': attrs.file_date } : {}
       }
     }
   },

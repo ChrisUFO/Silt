@@ -20,6 +20,7 @@ export interface ParsedBlock {
   due_date: string
   priority: number
   line_number: number
+  file_date: string
 }
 
 // ProseMirror / TipTap node JSON shape (the subset we produce/consume).

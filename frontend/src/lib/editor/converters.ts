@@ -77,7 +77,8 @@ function blockToNode(block: ParsedBlock): NodeJSON {
           owner: block.owner || '',
           start_date: block.start_date || '',
           due_date: block.due_date || '',
-          priority: block.priority || 3
+          priority: block.priority || 3,
+          file_date: block.file_date || ''
         },
         content
       }
@@ -86,7 +87,8 @@ function blockToNode(block: ParsedBlock): NodeJSON {
         type: 'headerBlock',
         attrs: {
           id: block.id,
-          depth: block.depth || 1
+          depth: block.depth || 1,
+          file_date: block.file_date || ''
         },
         content
       }
@@ -99,7 +101,8 @@ function blockToNode(block: ParsedBlock): NodeJSON {
         attrs: {
           id: block.id,
           depth: block.depth,
-          bullet: detectBullet(block.raw_text)
+          bullet: detectBullet(block.raw_text),
+          file_date: block.file_date || ''
         },
         content
       }
@@ -166,7 +169,8 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
       start_date: '',
       due_date: '',
       priority: 3,
-      line_number: lineNumber
+      line_number: lineNumber,
+      file_date: (attrs.file_date as string) || ''
     }
 
     if (type === 'TASK') {
