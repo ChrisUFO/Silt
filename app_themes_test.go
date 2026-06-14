@@ -244,3 +244,74 @@ func TestEmbeddedDefaultAvailable(t *testing.T) {
 	// Avoid unused-import warnings if the file evolves.
 	_ = os.Stat
 }
+
+func TestEffectiveMode(t *testing.T) {
+	cases := map[string]string{
+		"dark":   "dark",
+		"light":  "light",
+		"system": "dark", // system resolves to dark for the first paint
+		"":       "dark",
+		"neon":   "dark", // unknown normalizes to dark
+	}
+	for in, want := range cases {
+		if got := effectiveMode(in); got != want {
+			t.Errorf("effectiveMode(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestBuildThemeResult_DarkFirstPaint(t *testing.T) {
+	th, err := themes.ParseDefault()
+	if err != nil {
+		t.Fatalf("ParseDefault: %v", err)
+	}
+	// system mode: effective tokens are dark (first paint) but both maps ship.
+	res := buildThemeResult(th, "system")
+	if res.Mode != "system" {
+		t.Errorf("mode = %q, want system", res.Mode)
+	}
+	if res.Tokens["--bg-void"] != "#0c0c0e" {
+		t.Errorf("system first-paint should be dark bg.void, got %q", res.Tokens["--bg-void"])
+	}
+	if res.DarkTokens["--accent-primary-start"] != "#2dd4bf" {
+		t.Errorf("dark primary-start wrong: %q", res.DarkTokens["--accent-primary-start"])
+	}
+	if res.LightTokens["--accent-primary-start"] != "#0d9488" {
+		t.Errorf("light primary-start wrong: %q", res.LightTokens["--accent-primary-start"])
+	}
+	if res.BGVoid != "#0c0c0e" {
+		t.Errorf("BGVoid wrong: %q", res.BGVoid)
+	}
+	// light mode: effective tokens are light.
+	lightRes := buildThemeResult(th, "light")
+	if lightRes.Tokens["--bg-void"] != "#f8fafc" {
+		t.Errorf("light effective bg.void wrong: %q", lightRes.Tokens["--bg-void"])
+	}
+	if lightRes.BGVoid != "#f8fafc" {
+		t.Errorf("light BGVoid wrong: %q", lightRes.BGVoid)
+	}
+}
+
+func TestApplyTheme_BadModeNotPersisted(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+	before, err := vault.LoadSettings()
+	if err != nil {
+		t.Fatalf("LoadSettings before: %v", err)
+	}
+	beforeMode := before.ThemeMode
+	beforeTheme := before.ActiveTheme
+
+	// Invalid mode is rejected and NOT persisted.
+	if _, err := app.ApplyTheme(themes.DefaultThemeID, "neon"); err == nil {
+		t.Fatal("expected error for invalid mode")
+	}
+	after, err := vault.LoadSettings()
+	if err != nil {
+		t.Fatalf("LoadSettings after: %v", err)
+	}
+	if after.ThemeMode != beforeMode || after.ActiveTheme != beforeTheme {
+		t.Errorf("invalid ApplyTheme mutated settings: mode %q->%q theme %q->%q",
+			beforeMode, after.ThemeMode, beforeTheme, after.ActiveTheme)
+	}
+}
