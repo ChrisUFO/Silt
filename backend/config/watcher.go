@@ -148,6 +148,11 @@ func (cw *ConfigWatcher) loop() {
 			}
 			// (Re)start the debounce so a burst of events for one logical
 			// write coalesces into a single reload of the settled file.
+			//
+			// Ordering invariant: the isSelfWrite guard above MUST stay before
+			// this point. Events reaching here are EXTERNAL Create/Writes
+			// (self-writes were already continued above). Reordering the
+			// guards would make self-saves reset the debounce pointlessly.
 			debounce = time.After(reloadDebounce)
 		case <-debounce:
 			debounce = nil
