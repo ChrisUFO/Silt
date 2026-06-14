@@ -109,6 +109,7 @@ func TestParseFileContent(t *testing.T) {
 	doc := `---
 notebook: Engineering
 section: Architecture
+page: DailyLog
 date: 2026-06-13
 tags: [work/sogav, systems/specs]
 ---
@@ -119,12 +120,12 @@ tags: [work/sogav, systems/specs]
     - [/] DOING TASK [Jenny]#2 Research subtasks <!-- id: 3a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8d -->
 - A general note <!-- id: 4a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8e -->`
 
-	blocks, meta, newContent, modified, err := ParseFileContent(doc, "DefaultNB", "DefaultSec", "2026-06-01", 4)
+	blocks, meta, newContent, modified, err := ParseFileContent(doc, "DefaultNB", "DefaultSec", "DefaultPage", "2026-06-01", 4)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if meta.Notebook != "Engineering" || meta.Section != "Architecture" || meta.Date != "2026-06-13" {
+	if meta.Notebook != "Engineering" || meta.Section != "Architecture" || meta.Page != "DailyLog" || meta.Date != "2026-06-13" {
 		t.Errorf("Metadata mismatch: %+v", meta)
 	}
 	if len(meta.Tags) != 2 || meta.Tags[0] != "work/sogav" {
@@ -175,7 +176,7 @@ func TestParseFileContent_SkipsCodeBlockIDInjection(t *testing.T) {
 		"\n" +
 		"- A normal note line <!-- id: 5a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8b -->\n"
 
-	_, _, newContent, modified, err := ParseFileContent(doc, "NB", "Sec", "2026-06-13", 4)
+	_, _, newContent, modified, err := ParseFileContent(doc, "NB", "Sec", "P", "2026-06-13", 4)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -208,7 +209,7 @@ func TestParseFileContent_HandlesMultipleFencedCodeBlocks(t *testing.T) {
 		"```\n" +
 		"end <!-- id: cccc3333-cccc-cccc-cccc-cccccccccccc -->\n"
 
-	_, _, newContent, _, err := ParseFileContent(doc, "NB", "Sec", "2026-06-13", 4)
+	_, _, newContent, _, err := ParseFileContent(doc, "NB", "Sec", "P", "2026-06-13", 4)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -234,7 +235,7 @@ notebook: Engineering:
 ---
 # Header <!-- id: 11111111-1111-1111-1111-111111111111 -->`
 
-	_, meta, _, _, err := ParseFileContent(doc, "DefaultNB", "DefaultSec", "2026-06-01", 4)
+	_, meta, _, _, err := ParseFileContent(doc, "DefaultNB", "DefaultSec", "DefaultPage", "2026-06-01", 4)
 	if err != nil {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
@@ -296,15 +297,16 @@ func BenchmarkScanWorkspace_1000Files(b *testing.B) {
 }
 
 // Helper shared by the benchmark — writes N small daily-note files under
-// Work/Journal/ so the scanner has realistic structure to walk.
+// Work/Journal/Daily/ (notebook/section/page) so the scanner has realistic
+// 3-level structure to walk.
 func writeBenchVault(tb interface{ Fatal(args ...any) }, root string, n int) {
 	for i := range n {
 		dateStr := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format("2006-01-02")
-		dir := filepath.Join(root, "Work", "Journal")
+		dir := filepath.Join(root, "Work", "Journal", "Daily")
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			tb.Fatal(err)
 		}
-		day := fmt.Sprintf("---\nnotebook: Work\nsection: Journal\ndate: %s\ntags: [bench]\n---\n# Day %d <!-- id: %08x-1111-1111-1111-111111111111 -->\n\n- [ ] TODO TASK [Bench]#1 Item for day %d <!-- id: %08x-2222-2222-2222-222222222222 -->\n- A note for day %d <!-- id: %08x-3333-3333-3333-333333333333 -->\n", dateStr, i+1, i, i+1, i, i+1, i)
+		day := fmt.Sprintf("---\nnotebook: Work\nsection: Journal\npage: Daily\ndate: %s\ntags: [bench]\n---\n# Day %d <!-- id: %08x-1111-1111-1111-111111111111 -->\n\n- [ ] TODO TASK [Bench]#1 Item for day %d <!-- id: %08x-2222-2222-2222-222222222222 -->\n- A note for day %d <!-- id: %08x-3333-3333-3333-333333333333 -->\n", dateStr, i+1, i, i+1, i, i+1, i)
 		path := filepath.Join(dir, dateStr+".md")
 		if err := os.WriteFile(path, []byte(day), 0o644); err != nil {
 			tb.Fatal(err)

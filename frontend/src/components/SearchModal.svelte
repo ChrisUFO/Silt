@@ -4,12 +4,7 @@
 
   interface Props {
     onClose: () => void
-    onJump: (
-      notebook: string,
-      section: string,
-      date: string,
-      blockId: string
-    ) => void
+    onJump: (res: any) => void
   }
 
   let { onClose, onJump }: Props = $props()
@@ -79,7 +74,7 @@
   }
 
   function selectResult(res: any) {
-    onJump(res.notebook, res.section, res.file_date, res.id)
+    onJump(res)
     onClose()
   }
 

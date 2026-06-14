@@ -152,7 +152,8 @@ CREATE TABLE blocks (
     parent_id TEXT,
     notebook TEXT NOT NULL,
     section TEXT NOT NULL,
-    file_date TEXT NOT NULL, -- YYYY-MM-DD
+    page TEXT NOT NULL,       -- Page (streaming unit) inside the Section
+    file_date TEXT NOT NULL,  -- YYYY-MM-DD
     depth INTEGER DEFAULT 0,
     type TEXT NOT NULL,      -- 'TASK', 'NOTE', 'HEADER'
     raw_content TEXT NOT NULL,
@@ -184,7 +185,7 @@ CREATE TABLE tags (
 );
 
 -- Create covered indexes for dynamic query performance
-CREATE INDEX idx_blocks_file ON blocks(notebook, section, file_date);
+CREATE INDEX idx_blocks_file ON blocks(notebook, section, page, file_date);
 CREATE INDEX idx_tasks_dates ON tasks(start_date, due_date) WHERE start_date IS NOT NULL OR due_date IS NOT NULL;
 CREATE INDEX idx_tags_lookup ON tags(level_0, level_1, level_2);
 
@@ -220,14 +221,29 @@ type App struct {
 	db  *sql.DB
 }
 
-// FetchSectionTimeline returns day-grouped blocks for infinite virtualization scroll
-func (a *App) FetchSectionTimeline(notebook, section string, offset int, limit int) ([]DayGroup, error)
+// FetchPageTimeline returns day-grouped blocks for the streaming Page
+// (notebook/section/page), paged for infinite virtualization scroll.
+func (a *App) FetchPageTimeline(notebook, section, page string, offset int, limit int) ([]DayGroup, error)
 
 // UpdateBlockState transitions task checkbox and updates raw plaintext files atomically
 func (a *App) UpdateBlockState(blockID string, newState string) error
 
 // QueryTasks retrieves indexed items matching the active dashboard layout filters
 func (a *App) QueryTasks(filter TaskQueryFilter) ([]TaskResult, error)
+
+// Notebook/Section/Page lifecycle. Silt starts blank; the user opens an
+// existing notebook folder or creates one from the sidebar selector. The
+// Section layer is optional — a page may live directly under a notebook.
+func (a *App) CreateNotebook(name string) error
+func (a *App) OpenNotebook(folderPath string) (string, error)
+func (a *App) PickNotebookFolder() (string, error)
+func (a *App) CreateSection(notebook, section string) error
+func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error) // section may be ""
+
+// ListNavigation returns the Notebook > Section > Page tree for the sidebar,
+// enumerated from the on-disk folder structure (source of truth) with block
+// counts merged from the index. Section-less pages group under section "".
+func (a *App) ListNavigation() (NavigationTree, error)
 
 
 5. Svelte 5 Frontend Architecture
@@ -242,7 +258,7 @@ To render sections containing years of logs without degrading memory, the Svelte
 <script lang="ts">
   import { onMount } from 'svelte';
   
-  let { notebook, section } = $props();
+  let { notebook, section, page } = $props();
   
   let visibleGroups = $state<DayGroup[]>([]);
   let listContainer: HTMLDivElement;
@@ -253,9 +269,10 @@ To render sections containing years of logs without degrading memory, the Svelte
     if (loading) return;
     loading = true;
     
-    const newDays = await window.go.parser.App.FetchSectionTimeline(
+    const newDays = await window.go.main.App.FetchPageTimeline(
       notebook, 
-      section, 
+      section,
+      page,
       offset, 
       15
     );
@@ -387,3 +404,42 @@ Mitigation Plan:
 Focus Locking: While Svelte has focus on an active text field, the backend monitor pauses external sync operations for that specific block file.
 
 Deterministic Diff Verification: Instead of overwriting entire files when external changes occur, Go computes a diff patch based on block IDs to preserve uncommitted cursor inputs.
+
+
+7. Plugin Subsystem & Smart Graph Events
+
+7.1 Plugin Loader Pipeline (Frontend)
+
+The Svelte shell discovers and renders plugins at boot:
+
+config.yaml (optional active whitelist)
+        │
+        ▼
+ListPlugins() → .system/plugins/<id>/ folders (skip .disabled sentinel)
+        │
+        ▼
+resolve each id:
+   first-party registry (bundled Svelte component)  ──► always available
+   on-disk → ReadPluginSource(id) → Blob URL → import(/* @vite-ignore */)
+        │
+        ▼
+plugin.init(ctx: PluginContext)   ←   sqliteQuery (SELECT/WITH-only),
+                                      mutateBlock, updateBlockState
+        │
+        ▼
+App view router renders plugin:<id> via PluginView (or Agenda/Calendar slots)
+
+Per-plugin load failures are collected and surfaced (PluginView shows a load-error notice) without aborting boot. The `plugins:changed` Wails event (emitted after install/uninstall/enable/disable) re-runs discovery.
+
+7.2 PluginContext → Go Bindings
+
+PluginContext is a thin frontend wrapper over four Wails bindings on App:
+
+- PluginRawQuery(sql, params) — read-only; rejects anything not starting with SELECT/WITH; routed through ExecutionCoordinator.WithDBRead; returns row maps.
+- PluginMutateBlock(id, text) / PluginUpdateBlockState(id, status) — wrap MutateBlock / UpdateBlockState (same atomic-write + re-index + lock path as the core editor).
+- GetPluginRegistry() / ListPlugins() / ReadPluginSource(id) — discovery.
+- ValidatePluginArchive / PickPluginArchive / InstallPlugin / UninstallPlugin / EnablePlugin / DisablePlugin — `.silt-plugin` distribution (see backend/plugins package; zip-slip + traversal guarded, atomic extract).
+
+7.3 Smart Graph Events
+
+Block mutations broadcast a `block:changed` Wails event (BlockChangedEvent {ID, Notebook, Section, Page, FileDate}) so live embeds (`{{embed:uuid}}`) and references (`((uuid))`) refresh in real time. Emitted from MutateBlock, UpdateBlockState, and the post-write path of SaveFileBlocks; emission no-ops when ctx is nil (tests). The frontend EmbedPortal subscribes via EventsOn and re-fetches its source block when the event matches its uuid (a module-scoped render-stack guard stops recursive embed loops).

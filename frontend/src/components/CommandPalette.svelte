@@ -41,13 +41,6 @@
       shortcut: 'D'
     },
     {
-      id: 'kanban',
-      name: 'Kanban View',
-      description: 'Switch to Kanban board',
-      icon: 'view_kanban',
-      shortcut: 'K'
-    },
-    {
       id: 'embed',
       name: 'Embed Block',
       description: 'Insert a block embed',

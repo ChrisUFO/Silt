@@ -86,7 +86,14 @@ Solution: Daily files are serialized discretely to disk inside the structured no
 
 3.2 Physical Directory Layout
 
-Notebooks/
+Silt uses a OneNote-style three-level hierarchy — **Notebook > Section > Page** — mapped directly onto folders on disk, where the **Section layer is optional**:
+
+- A **Notebook** is a top-level folder directly under the vault root. Users open existing notebook folders or create new ones from the notebook selector. Multiple notebooks can be open at once.
+- A **Section** is an optional grouping folder within a Notebook. Sections are shown even when empty, so a freshly created section appears immediately.
+- A **Page** is a folder that directly contains `.md` files and is the **streaming unit**: the daily note files inside it are stitched into a single infinite-scroll timeline in the editor. A page may live directly under a Notebook (no section) or nested within a Section.
+
+```
+VaultRoot/
 ├── .system/
 │   ├── config.yaml
 │   ├── plugins/
@@ -95,27 +102,35 @@ Notebooks/
 │   │   └── kanban/
 │   └── themes/
 │       └── cyber_forest.json
-├── Personal/
-│   ├── Journal/
-│   │   ├── 2026-06-11.md
-│   │   ├── 2026-06-12.md
+├── Work/                          ← Notebook
+│   ├── Inbox/                     ← Page directly under the Notebook (no section)
 │   │   └── 2026-06-13.md
-│   └── Travel_Planning/
-│       └── 2026-05-10.md
-└── Work/
-    └── silt_project/
-        ├── 2026-06-11.md
-        ├── 2026-06-12.md
-        └── 2026-06-13.md
+│   └── Projects/                  ← Section
+│       ├── WebsiteRedesign/       ← Page (streams the .md files below)
+│       │   ├── 2026-06-11.md
+│       │   └── 2026-06-13.md
+│       └── MobileApp/
+│           └── 2026-06-13.md
+└── Personal/                      ← another Notebook
+    └── Journal/
+        └── Daily/
+            └── 2026-06-13.md
+```
+
+Path resolution: the **notebook** is the top folder under the vault; the **page** is the folder directly containing the `.md` file; the **section** is the path between them (`""` when the page sits directly under the notebook). Frontmatter values override path-derived defaults. Files at shallower depths (e.g. a stray `.md` directly in a Notebook folder) are skipped with a warning at startup (fail-loudly).
+
+Silt starts blank — no default notebook or section is created. The user creates or opens their first notebook from the sidebar's notebook selector.
 
 
 3.3 File Boundary Specification & Frontmatter Standard
 
 Every daily file contains a strict YAML metadata block bounded by triple dashes (---). This block allows indexers to map orphaned or moved files without reading the entire file directory tree:
 
+```
 ---
 notebook: Work
-section: silt_project
+section: Projects        # optional; omit (or leave empty) for a section-less page
+page: WebsiteRedesign
 date: 2026-06-13
 tags: [systems/specs, wails/go]
 ---
@@ -123,6 +138,7 @@ tags: [systems/specs, wails/go]
 
 ## Daily Standup Logging
 - [ ] TODO TASK [Chris](2026-06-13, 2026-06-20)#1 Implement parser tests <!-- id: f1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d -->
+```
 
 
 4. Custom AST Parser & Task Shorthand Grammar
@@ -369,24 +385,26 @@ Backend Hooking Structure: Plugins communicate with the Go backend via standard 
 
 8.2 Host-Plugin API Specification (Frontend)
 
-Every plugin must export a default Svelte component conforming to the following initialization lifecycle:
+Plugins run as native ES modules. First-party plugins ship as compiled Svelte components bundled with the app; third-party plugins live in `.system/plugins/<id>/index.js` and are loaded at boot (native ESM via a blob URL so Vite does not resolve them at build time). Both kinds receive the same PluginContext:
 
+```ts
 export interface PluginContext {
   activeNotebook: string;
   activeSection: string;
-  sqliteQuery: (query: string, params?: any[]) => Promise<any[]>;
+  activePage: string;
+  // Read-only SQL against the in-memory index (SELECT / WITH only).
+  sqliteQuery: (sql: string, params?: unknown[]) => Promise<Record<string, unknown>[]>;
   mutateBlock: (id: string, text: string) => Promise<boolean>;
   updateBlockState: (id: string, status: 'TODO' | 'DOING' | 'DONE') => Promise<boolean>;
 }
 
 export interface SiltPlugin {
-  id: string;          // e.g. "silt-kanban"
-  name: string;        // e.g. "Kanban Board"
-  version: string;
-  icon: string;        // Inline SVG path
-  init: (ctx: PluginContext) => void;
+  manifest: { id: string; name: string; version: string; icon?: string };
+  init?: (ctx: PluginContext) => void;
 }
+```
 
+The active `notebook/section/page` from the navigator is bound into the context; `sqliteQuery` is read-only (anything other than SELECT/WITH is rejected). See `docs/PLUGIN_DEVELOPMENT.md` for the full author guide.
 
 8.3 Core Feature Decoupling
 
@@ -397,6 +415,22 @@ Kanban Plugin: Uses the sqliteQuery context hook to pull records: SELECT * FROM 
 Calendar Plugin: Pulls dates using range constraints and exposes interactive timeline components.
 
 Agenda Plugin: Filters overdue, current-day, and upcoming milestones, rolling unfinished tasks into the active day view dynamically.
+
+8.4 Plugin Packaging & Distribution (.silt-plugin)
+
+Third-party plugins are distributed as `.silt-plugin` archives — a **ZIP with a custom extension** containing `plugin.json` + the entry module (`index.js`) + optional assets, all at the archive root:
+
+```
+plugin.json   { "id": "my-plugin", "name": "My Plugin", "version": "1.0.0", "main": "index.js" }
+index.js      native ESM exporting { manifest, init(ctx) }
+```
+
+- **Validation:** on install, the manifest schema is checked (`id` must match `^[a-z0-9-]+$`, required name/version, entry module present); absolute paths, `..`, and zip-slip entries are rejected.
+- **Install:** atomic extract into `.system/plugins/<id>/` (staged in a temp sibling dir, then renamed); refuses to overwrite an existing id. Emits `plugins:changed` so the loader re-runs.
+- **Enable/Disable:** a `.disabled` sentinel file inside the plugin folder (the loader skips disabled plugins) — avoids fragile config.yaml edits. Discovery is folder-based, so install "just works" without editing config.
+- **Uninstall:** removes the plugin folder (id sanitized + within-vault check).
+- The in-app **Plugin Manager** (titlebar extension icon) drives validate → preview → install, plus per-plugin enable/disable and uninstall.
+- First-party plugins (Agenda, Calendar) are always available (bundled) regardless of `.system/plugins/` contents.
 
 9. System Configuration Engine
 

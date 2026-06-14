@@ -18,6 +18,7 @@ type ScanResult struct {
 	Path     string
 	Notebook string
 	Section  string
+	Page     string
 	Date     string
 	Blocks   []ParsedBlock
 	Tags     []string
@@ -100,26 +101,41 @@ func ScanWorkspace(vaultPath string, spacesPerTab int) ([]ScanResult, error) {
 func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult {
 	res := ScanResult{Path: path}
 
-	// 1. Resolve default notebook, section, and date from file path
+	// 1. Resolve default notebook, section, page, and date from file path.
+	//
+	// Hierarchy (Section is optional, nesting can be deeper than one level):
+	//   <vault>/<notebook>/[<section>/...]<page>/<file>.md
+	//   - notebook = the top-level folder under the vault
+	//   - page     = the folder directly containing the file (streaming unit)
+	//   - section  = the path between notebook and page ("" when the page
+	//                lives directly under the notebook; one or more segments
+	//                otherwise, joined by "/")
 	relPath, err := filepath.Rel(vaultPath, path)
 	if err != nil {
 		res.Err = err
 		return res
 	}
 
-	// Clean path separators to forward slash
 	relPathClean := filepath.ToSlash(relPath)
 	parts := strings.Split(relPathClean, "/")
-
-	notebook := "General"
-	section := "General"
 	filename := parts[len(parts)-1]
 
-	if len(parts) >= 3 {
-		notebook = parts[0]
-		section = strings.Join(parts[1:len(parts)-1], "/")
-	} else if len(parts) == 2 {
-		notebook = parts[0]
+	var notebook, section, page string
+	// ancestors are the path segments excluding the filename itself.
+	ancestors := parts[:len(parts)-1]
+	if len(ancestors) >= 2 {
+		notebook = ancestors[0]
+		page = ancestors[len(ancestors)-1]
+		if len(ancestors) > 2 {
+			section = strings.Join(ancestors[1:len(ancestors)-1], "/")
+		}
+	} else {
+		// Files must live at least two levels beneath the vault root
+		// (vault/notebook/page/file.md); anything shallower (e.g. a stray
+		// .md directly inside a notebook folder) is a layout error we
+		// surface rather than silently mis-bucket.
+		res.Warnings = append(res.Warnings, fmt.Sprintf("skipped %q: expected to live under <vault>/<notebook>/[<section>/]<page>/", relPathClean))
+		return res
 	}
 
 	// Extract date from filename if possible, otherwise use modification date
@@ -143,7 +159,7 @@ func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult
 		return res
 	}
 
-	blocks, meta, newContent, modified, err := ParseFileContent(string(contentBytes), notebook, section, dateStr, spacesPerTab)
+	blocks, meta, newContent, modified, err := ParseFileContent(string(contentBytes), notebook, section, page, dateStr, spacesPerTab)
 	if err != nil {
 		res.Err = err
 		return res
@@ -160,6 +176,7 @@ func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult
 
 	res.Notebook = meta.Notebook
 	res.Section = meta.Section
+	res.Page = meta.Page
 	res.Date = meta.Date
 	res.Blocks = blocks
 	res.Tags = meta.Tags

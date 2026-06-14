@@ -7,8 +7,9 @@ if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
   exit 0
 fi
 
-# Get all staged files
-ALL_STAGED=$(git diff --cached --name-only)
+# Get all staged files (exclude deletions: a removed file has no content for
+# Prettier to check, and including it made the hook fail on normal removals).
+ALL_STAGED=$(git diff --cached --name-only --diff-filter=d)
 
 # If no files are staged, exit early
 if [ -z "$ALL_STAGED" ]; then

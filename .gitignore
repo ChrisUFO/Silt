@@ -41,8 +41,8 @@ distributions/
 # Local PR context / ad-hoc diffs
 *.diff
 
-# Local vaults
-vault/
+# Local vaults (root-level dev vault only; must not match backend/vault/)
+/vault/
 
 # Vite build cache timestamps
 frontend/vite.config.ts.timestamp-*.mjs

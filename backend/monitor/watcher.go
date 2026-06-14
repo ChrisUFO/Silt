@@ -123,27 +123,34 @@ func (dw *DirectoryWatcher) Start() error {
 	return nil
 }
 
-func (dw *DirectoryWatcher) resolveFileMetadata(path string) (string, string, string) {
+// resolveFileMetadata derives (notebook, section, page, date) for a markdown
+// file from its path relative to the vault root, mirroring the scanner:
+// notebook = top folder, page = the folder containing the file, section =
+// the path between them ("" when the page is directly under the notebook).
+// Files too shallow to resolve return empty notebook/section/page so callers
+// can skip them rather than indexing under empty strings.
+func (dw *DirectoryWatcher) resolveFileMetadata(path string) (notebook, section, page, dateStr string) {
 	relPath, err := filepath.Rel(dw.vaultPath, path)
 	if err != nil {
-		return "General", "General", time.Now().Format("2006-01-02")
+		return "", "", "", time.Now().Format("2006-01-02")
 	}
 
 	relPathClean := filepath.ToSlash(relPath)
 	parts := strings.Split(relPathClean, "/")
-
-	notebook := "General"
-	section := "General"
 	filename := parts[len(parts)-1]
+	ancestors := parts[:len(parts)-1]
 
-	if len(parts) >= 3 {
-		notebook = parts[0]
-		section = strings.Join(parts[1:len(parts)-1], "/")
-	} else if len(parts) == 2 {
-		notebook = parts[0]
+	if len(ancestors) >= 2 {
+		notebook = ancestors[0]
+		page = ancestors[len(ancestors)-1]
+		if len(ancestors) > 2 {
+			section = strings.Join(ancestors[1:len(ancestors)-1], "/")
+		}
+	} else {
+		notebook, section, page = "", "", ""
 	}
 
-	dateStr := ""
+	dateStr = ""
 	if matches := parser.DateFileRegex.FindStringSubmatch(filename); len(matches) > 1 {
 		dateStr = matches[1]
 	} else {
@@ -155,7 +162,7 @@ func (dw *DirectoryWatcher) resolveFileMetadata(path string) (string, string, st
 		}
 	}
 
-	return notebook, section, dateStr
+	return notebook, section, page, dateStr
 }
 
 func (dw *DirectoryWatcher) listenLoop() {
@@ -229,13 +236,19 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 			return
 		}
 
-		notebook, section, dateStr := dw.resolveFileMetadata(path)
+		notebook, section, page, dateStr := dw.resolveFileMetadata(path)
+		// Skip files that do not map to a notebook/section/page (e.g. living
+		// too shallow in the vault). They are surfaced as init-warnings on
+		// the full scan; here we just ignore them.
+		if notebook == "" {
+			return
+		}
 		contentBytes, err := os.ReadFile(path)
 		if err != nil {
 			return
 		}
 
-		blocks, meta, newContent, modified, err := parser.ParseFileContent(string(contentBytes), notebook, section, dateStr, dw.spacesPerTab)
+		blocks, meta, newContent, modified, err := parser.ParseFileContent(string(contentBytes), notebook, section, page, dateStr, dw.spacesPerTab)
 		if err != nil {
 			return
 		}
@@ -246,7 +259,7 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 		}
 
 		dw.coordinator.WithDBWrite(func() {
-			if err := dw.dm.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...); err != nil {
+			if err := dw.dm.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, meta.Date, blocks, meta.Tags, meta.Warnings...); err != nil {
 				log.Printf("reindexFile: IndexFileBlocks failed for %s: %v", path, err)
 			}
 		})
@@ -254,6 +267,14 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 }
 
 func (dw *DirectoryWatcher) clearIndexForFile(path string) {
-	notebook, section, dateStr := dw.resolveFileMetadata(path)
-	_ = dw.dm.ClearFileBlocks(nil, notebook, section, dateStr)
+	notebook, section, page, dateStr := dw.resolveFileMetadata(path)
+	if notebook == "" {
+		return
+	}
+	// Serialize the DB deletion through the coordinator, matching reindexFile
+	// and all other DB-touching paths. Without this, a concurrent file event
+	// can race an in-flight query and produce database-locked errors.
+	dw.coordinator.WithDBWrite(func() {
+		_ = dw.dm.ClearFileBlocks(nil, notebook, section, page, dateStr)
+	})
 }

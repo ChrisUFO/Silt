@@ -52,3 +52,41 @@ Per Phase 6 of `PLAN.md`:
 - No watcher e2e test against real fsnotify events
 - No symlink-loop detection in `ScanWorkspace` (see #32 follow-up)
 - No `ClearVault` / switch-workspace path (see #33)
+
+---
+
+# Sprint 3 — Smart Graph, Plugin SDK & OneNote-style Hierarchy
+
+## Automated Tests
+
+Run with: `go test -race -count=1 ./...` (Go) and `npm run check` (frontend, svelte-check).
+
+### Go coverage added/updated this sprint
+
+| Package | Tests | What is covered |
+|---|---|---|
+| `silt` (main) | 3-level model migration of all existing tests + `ResolveBlockReference` (found/dangling), `MutateBlock` (preserves UUID + task syntax, unknown id), `PluginRawQuery` (SELECT allowed, non-SELECT rejected), `PluginUpdateBlockState`, `GetPluginRegistry`, `ReadPluginSource` (+ traversal), `QueryBlocksByTag` (prefix semantics), `CreatePage` scaffolding, `CreateNotebook`/`OpenNotebook`/`PickNotebookFolder`/`CreateSection`, `FetchPageTimeline` | Wails API surface for the 3-level model + smart graph + plugin SDK |
+| `backend/plugins` (new) | `Validate`/`Install` happy path, bad-archive rejections (missing manifest, bad id, missing main, zip-slip, absolute path), duplicate-install refusal, `Uninstall` (+ traversal rejection), `Enable`/`Disable` sentinel toggle, `sanitizeID` | `.silt-plugin` packaging/install lifecycle |
+| `backend/db` | `QueryTagHierarchy` (prefix-count aggregation), `QueryBlocksByTag`, 3-level `FetchTimelineDays`/`IndexFileBlocks`/`ClearFileBlocks`/`ListNavigation`, `ExtractTags` now supports hyphenated tags | DatabaseManager + hierarchical tags |
+| `backend/parser` | `BlockRefRegex`/`EmbedRegex` detectors, `page` dimension in `ParseFileContent` + scanner 3-level resolution + depth warn/skip | AST parser + scanner |
+| `backend/monitor` | watcher 3-level `resolveFileMetadata` + reindex/focus-lock updated to the page model | DirectoryWatcher |
+| `backend/vault` | blank-start scaffolding (no default Work/Journal), plugins README written | Settings durability |
+
+Frontend: `npm run check` reports **0 errors** across the smart-graph components (RichText, BlockReferenceChip, EmbedPortal, BlockPickerModal, TagsExplorer, TagTreeNode), the plugin SDK (`frontend/src/plugins/*`), first-party Agenda/Calendar plugins, and the new titlebar/sidebar/App shell.
+
+## Manual Verification Matrix (`wails dev`)
+
+1. **Onboarding (blank start):** `wails dev` → Initialize Workspace → `.system/` only (no Work/Journal). Onboarding empty state prompts to create a notebook.
+2. **3-level navigation:** Create a Notebook → Section → Page via the sidebar tree; the page timeline loads; breadcrumb shows Notebook › Section › Page.
+3. **Sidebar collapse:** Collapse button (sidebar) hides the navigator; floating reopen button + Ctrl+B restore it; content reflows.
+4. **Custom titlebar (#41):** frameless window; drag the empty header to move; min/max-restore/close work; double-click header toggles maximize.
+5. **Smart Graph:** add `#work/sogav/milestone-one` to a block (renders as a pill, appears in Tags view); type `((uuid))` (renders as a link with hover preview, click scrolls to source); use `/embed` → picker → `{{embed:uuid}}` renders a live portal; edit the source block elsewhere and watch the embed update.
+6. **Agenda (#17):** Agenda view shows overdue/today/tomorrow/upcoming; mark-done works; click jumps to source.
+7. **Calendar (#18):** month + week grids with due-date tasks; prev/next/today navigation; click a task jumps to source.
+8. **Plugin install:** Plugin Manager → install a sample `.silt-plugin` → it appears + loads; enable/disable + uninstall work.
+
+## Sprint 3 Known Gaps
+
+- Third-party plugins get full SDK access but a dedicated rendered-UI surface for arbitrary third-party components ships in a follow-up (Silt cannot compile Svelte at runtime); first-party plugins are the rendered-view references.
+- Drag-to-reorder in the navigator/kanban deferred to a future sprint.
+- Real-time theme-swap reactivity of the titlebar depends on the not-yet-built theme-injector pipeline (DESIGN.md §7); the titlebar binds to the existing CSS tokens so it inherits themes automatically once that lands.

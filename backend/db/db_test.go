@@ -54,7 +54,7 @@ func TestIndexFileBlocks_InsertsBlocksTasksAndTags(t *testing.T) {
 		sampleTaskBlock("11111111-1111-1111-1111-111111111111", 1),
 		sampleNoteBlock("22222222-2222-2222-2222-222222222222", 2),
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-13", blocks, []string{"work/sogav"}); err != nil {
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", blocks, []string{"work/sogav"}); err != nil {
 		t.Fatalf("IndexFileBlocks failed: %v", err)
 	}
 
@@ -93,7 +93,7 @@ func TestIndexFileBlocks_InsertsBlocksTasksAndTags(t *testing.T) {
 			LineNumber: 1,
 		},
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-14", blocksWithInlineTag, nil); err != nil {
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-14", blocksWithInlineTag, nil); err != nil {
 		t.Fatalf("index inline tags: %v", err)
 	}
 	if err := dm.db.QueryRow("SELECT COUNT(*) FROM tags WHERE block_id = ?", "33333333-3333-3333-3333-333333333333").Scan(&tagCount); err != nil {
@@ -108,7 +108,7 @@ func TestIndexFileBlocks_ReplacesExistingRows(t *testing.T) {
 	dm := newTestDB(t)
 
 	first := []parser.ParsedBlock{sampleTaskBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)}
-	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-13", first, nil); err != nil {
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", first, nil); err != nil {
 		t.Fatalf("first IndexFileBlocks: %v", err)
 	}
 
@@ -116,7 +116,7 @@ func TestIndexFileBlocks_ReplacesExistingRows(t *testing.T) {
 		sampleTaskBlock("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 1),
 		sampleNoteBlock("cccccccc-cccc-cccc-cccc-cccccccccccc", 2),
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-13", second, nil); err != nil {
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", second, nil); err != nil {
 		t.Fatalf("second IndexFileBlocks: %v", err)
 	}
 
@@ -142,12 +142,12 @@ func TestIndexFileBlocks_EmptyBlocksCommits(t *testing.T) {
 	dm := newTestDB(t)
 
 	// Seed with a block first.
-	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-13", []parser.ParsedBlock{sampleTaskBlock("dddddddd-dddd-dddd-dddd-dddddddddddd", 1)}, nil); err != nil {
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", []parser.ParsedBlock{sampleTaskBlock("dddddddd-dddd-dddd-dddd-dddddddddddd", 1)}, nil); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
 	// Re-index with empty blocks should clear and commit successfully.
-	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-13", nil, nil); err != nil {
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", nil, nil); err != nil {
 		t.Fatalf("empty re-index: %v", err)
 	}
 
@@ -164,11 +164,11 @@ func TestClearFileBlocks_CascadesToTasksAndTags(t *testing.T) {
 	dm := newTestDB(t)
 
 	blocks := []parser.ParsedBlock{sampleTaskBlock("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", 1)}
-	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-13", blocks, []string{"cascade-tag"}); err != nil {
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", blocks, []string{"cascade-tag"}); err != nil {
 		t.Fatalf("index: %v", err)
 	}
 
-	if err := dm.ClearFileBlocks(nil, "Work", "Journal", "2026-06-13"); err != nil {
+	if err := dm.ClearFileBlocks(nil, "Work", "Journal", "Daily", "2026-06-13"); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
 
@@ -218,7 +218,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 			LineNumber: 1,
 		},
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-13", blocks, nil); err != nil {
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", blocks, nil); err != nil {
 		t.Fatalf("index: %v", err)
 	}
 
@@ -276,24 +276,24 @@ func TestFetchTimelineDays_GroupsByDateAndOrdersDesc(t *testing.T) {
 	dm := newTestDB(t)
 
 	// Two days with multiple blocks each, plus an unrelated section to verify filtering.
-	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-13", []parser.ParsedBlock{
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", []parser.ParsedBlock{
 		sampleTaskBlock("11111111-1111-1111-1111-111111111111", 1),
 		sampleNoteBlock("22222222-2222-2222-2222-222222222222", 2),
 	}, nil); err != nil {
 		t.Fatalf("index day1: %v", err)
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-12", []parser.ParsedBlock{
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-12", []parser.ParsedBlock{
 		sampleNoteBlock("33333333-3333-3333-3333-333333333333", 1),
 	}, nil); err != nil {
 		t.Fatalf("index day2: %v", err)
 	}
-	if err := dm.IndexFileBlocks("Work", "Other", "2026-06-13", []parser.ParsedBlock{
+	if err := dm.IndexFileBlocks("Work", "Other", "Daily", "2026-06-13", []parser.ParsedBlock{
 		sampleTaskBlock("44444444-4444-4444-4444-444444444444", 1),
 	}, nil); err != nil {
 		t.Fatalf("index other section: %v", err)
 	}
 
-	groups, err := dm.FetchTimelineDays("Work", "Journal", 10, 0)
+	groups, err := dm.FetchTimelineDays("Work", "Journal", "Daily", 10, 0)
 	if err != nil {
 		t.Fatalf("FetchTimelineDays: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestFetchTimelineDays_PaginationAndEmpty(t *testing.T) {
 	dm := newTestDB(t)
 
 	// Empty case.
-	groups, err := dm.FetchTimelineDays("Work", "Journal", 10, 0)
+	groups, err := dm.FetchTimelineDays("Work", "Journal", "Daily", 10, 0)
 	if err != nil {
 		t.Fatalf("empty FetchTimelineDays: %v", err)
 	}
@@ -332,13 +332,13 @@ func TestFetchTimelineDays_PaginationAndEmpty(t *testing.T) {
 	// Seed 3 distinct dates.
 	for i, d := range []string{"2026-06-13", "2026-06-12", "2026-06-11"} {
 		block := sampleNoteBlock("00000000-0000-0000-0000-00000000000"+string(rune('1'+i)), i+1)
-		if err := dm.IndexFileBlocks("Work", "Journal", d, []parser.ParsedBlock{block}, nil); err != nil {
+		if err := dm.IndexFileBlocks("Work", "Journal", "Daily", d, []parser.ParsedBlock{block}, nil); err != nil {
 			t.Fatalf("index %s: %v", d, err)
 		}
 	}
 
 	// First page: limit 2, offset 0.
-	first, err := dm.FetchTimelineDays("Work", "Journal", 2, 0)
+	first, err := dm.FetchTimelineDays("Work", "Journal", "Daily", 2, 0)
 	if err != nil {
 		t.Fatalf("first page: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestFetchTimelineDays_PaginationAndEmpty(t *testing.T) {
 	}
 
 	// Second page: limit 2, offset 2.
-	second, err := dm.FetchTimelineDays("Work", "Journal", 2, 2)
+	second, err := dm.FetchTimelineDays("Work", "Journal", "Daily", 2, 2)
 	if err != nil {
 		t.Fatalf("second page: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestIndexFileBlocks_AttachesFrontmatterTagsByLoopIndex(t *testing.T) {
 			LineNumber: 7,
 		},
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-13", blocks, []string{"welcome", "tutorial"}); err != nil {
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", blocks, []string{"welcome", "tutorial"}); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -446,7 +446,7 @@ func TestIndexFileBlocks_ReindexAfterFrontmatterMetadataChange(t *testing.T) {
 			LineNumber: 1,
 		},
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-13", original, nil); err != nil {
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", original, nil); err != nil {
 		t.Fatalf("first index: %v", err)
 	}
 
@@ -461,7 +461,7 @@ func TestIndexFileBlocks_ReindexAfterFrontmatterMetadataChange(t *testing.T) {
 			LineNumber: 1,
 		},
 	}
-	if err := dm.IndexFileBlocks("Personal", "Journal", "2026-06-13", updated, nil); err != nil {
+	if err := dm.IndexFileBlocks("Personal", "Journal", "Daily", "2026-06-13", updated, nil); err != nil {
 		t.Fatalf("re-index with new metadata: %v", err)
 	}
 
@@ -517,7 +517,7 @@ func TestQueryTasksWithFilters_PopulatesTags(t *testing.T) {
 			LineNumber: 2,
 		},
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-13", blocks, nil); err != nil {
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", blocks, nil); err != nil {
 		t.Fatalf("index: %v", err)
 	}
 
@@ -563,6 +563,7 @@ func TestIndexScanResults_ReturnsSkippedFiles(t *testing.T) {
 			Path:     "ok.md",
 			Notebook: "Work",
 			Section:  "Journal",
+			Page:     "Daily",
 			Date:     "2026-06-13",
 			Blocks:   []parser.ParsedBlock{sampleNoteBlock("11111111-1111-1111-1111-111111111111", 1)},
 		},
@@ -584,6 +585,90 @@ func TestIndexScanResults_ReturnsSkippedFiles(t *testing.T) {
 	}
 	if !strings.Contains(skipped[0], "bad.md") || !strings.Contains(skipped[0], "simulated parse failure") {
 		t.Errorf("expected skip message to mention bad.md and the error, got: %s", skipped[0])
+	}
+}
+
+func TestQueryTagHierarchy_DistinctCountsAtOrBeneath(t *testing.T) {
+	dm := newTestDB(t)
+
+	// Three blocks, indexed in a single file so they all share the
+	// (notebook, section, page, file_date) tuple and are not wiped by
+	// the per-file replace in IndexFileBlocks.
+	//
+	// Block A: tagged with the parent path only.
+	// Block B: tagged with both the parent path and a child path — this
+	//   is the case that previously double-counted: distinct-path
+	//   counts summed to 2 for #work even though there is only one
+	//   block B reachable at-or-beneath #work.
+	// Block C: tagged with a child of a child of the parent.
+	blocks := []parser.ParsedBlock{
+		{
+			ID:        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			Type:      parser.BlockNote,
+			RawText:   "#work alpha <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->",
+			CleanText: "alpha",
+			Depth:     0,
+			LineNumber: 1,
+		},
+		{
+			ID:        "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+			Type:      parser.BlockNote,
+			RawText:   "#work and #work/sogav beta <!-- id: bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->",
+			CleanText: "and beta",
+			Depth:     0,
+			LineNumber: 2,
+		},
+		{
+			ID:        "cccccccc-cccc-cccc-cccc-cccccccccccc",
+			Type:      parser.BlockNote,
+			RawText:   "#work/sogav/milestone-one gamma <!-- id: cccccccc-cccc-cccc-cccc-cccccccccccc -->",
+			CleanText: "gamma",
+			Depth:     0,
+			LineNumber: 3,
+		},
+	}
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", blocks, nil); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+
+	tree, err := dm.QueryTagHierarchy()
+	if err != nil {
+		t.Fatalf("QueryTagHierarchy: %v", err)
+	}
+
+	find := func(path string) *parser.TagNode {
+		var walk func([]parser.TagNode) *parser.TagNode
+		walk = func(nodes []parser.TagNode) *parser.TagNode {
+			for i := range nodes {
+				if nodes[i].Path == path {
+					return &nodes[i]
+				}
+				if found := walk(nodes[i].Children); found != nil {
+					return found
+				}
+			}
+			return nil
+		}
+		return walk(tree)
+	}
+
+	cases := []struct {
+		path string
+		want int
+	}{
+		{"work", 3},                     // A, B, C all reachable at or beneath
+		{"work/sogav", 2},               // B, C
+		{"work/sogav/milestone-one", 1}, // C
+	}
+	for _, c := range cases {
+		got := find(c.path)
+		if got == nil {
+			t.Errorf("path %q missing from hierarchy", c.path)
+			continue
+		}
+		if got.Count != c.want {
+			t.Errorf("path %q: got count %d, want %d", c.path, got.Count, c.want)
+		}
 	}
 }
 

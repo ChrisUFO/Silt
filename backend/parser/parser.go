@@ -22,6 +22,14 @@ var TaskRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s(TODO|DOING|DONE)\sT
 
 var IDRegex = regexp.MustCompile(`<!-- id: ([a-f0-9\-]{36}) -->\s*$`)
 
+// BlockRefRegex matches a global block reference ((uuid)). Read-only detector
+// used by the resolver; it never injects IDs (code-fence protection in
+// ParseFileContent already prevents ID injection inside ``` blocks).
+var BlockRefRegex = regexp.MustCompile(`\(\(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)\)`)
+
+// EmbedRegex matches a live block embed {{embed:uuid}}.
+var EmbedRegex = regexp.MustCompile(`\{\{embed:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}\}`)
+
 func generateUUIDv4() string {
 	return uuid.New().String()
 }
@@ -204,7 +212,7 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 	}, newLine, modified
 }
 
-func ParseFileContent(content string, defaultNotebook, defaultSection, defaultDate string, spacesPerTab int) ([]ParsedBlock, FileMetadata, string, bool, error) {
+func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPage, defaultDate string, spacesPerTab int) ([]ParsedBlock, FileMetadata, string, bool, error) {
 	if spacesPerTab <= 0 {
 		spacesPerTab = 4
 	}
@@ -213,6 +221,7 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultDa
 	var meta FileMetadata
 	meta.Notebook = defaultNotebook
 	meta.Section = defaultSection
+	meta.Page = defaultPage
 	meta.Date = defaultDate
 
 	hasFrontmatter := false
@@ -240,6 +249,9 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultDa
 				}
 				if parsedMeta.Section != "" {
 					meta.Section = parsedMeta.Section
+				}
+				if parsedMeta.Page != "" {
+					meta.Page = parsedMeta.Page
 				}
 				if parsedMeta.Date != "" {
 					meta.Date = normalizeDate(parsedMeta.Date)

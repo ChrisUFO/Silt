@@ -19,10 +19,14 @@ func main() {
 		Width:            1024,
 		Height:           768,
 		WindowStartState: options.Maximised,
+		Frameless:        true,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
+		// OS-level window paint colour shown before the webview renders. This is
+		// the RGB form of the --bg-void token (#0c0c0e); it cannot read the
+		// theme JSON here because the vault/theme path isn't known until startup.
+		BackgroundColour: &options.RGBA{R: 12, G: 12, B: 14, A: 1},
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,
 		Bind: []interface{}{

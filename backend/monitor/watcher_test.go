@@ -99,7 +99,7 @@ func TestDirectoryWatcher_ReindexFileIndexesFile(t *testing.T) {
 		t.Fatalf("NewDirectoryWatcher: %v", err)
 	}
 
-	filePath := filepath.Join(vaultPath, "Work", "Journal", "2026-06-13.md")
+	filePath := filepath.Join(vaultPath, "Work", "Journal", "Daily", "2026-06-13.md")
 	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -155,12 +155,17 @@ func TestDirectoryWatcher_FocusLockSuppressesReindex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDirectoryWatcher: %v", err)
 	}
+	// The file must live under <vault>/<notebook>/<section>/<page>/ to resolve
+	// in the 3-level model. Create the dir before Start so the watcher
+	// subscribes to it during AddRecursive.
+	filePath := filepath.Join(vaultPath, "Work", "Journal", "Daily", "test.md")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
 	if err := dw.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(func() { _ = dw.Close() })
-
-	filePath := filepath.Join(vaultPath, "test.md")
 
 	// Step 1: write a file and wait for the watcher to index it.
 	writeContent := func(text string) {
