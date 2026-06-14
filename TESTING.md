@@ -252,6 +252,88 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 ## Known Gaps (deferred to future sprints)
 
 - A visual palette editor (in-app) for custom themes — covered by `Sprint 8 — First-Class Themes` (#42 follow-up).
-- A user-facing authoring guide for custom themes — covered by the Sprint 7 docs work (#49).
+- ~~A user-facing authoring guide for custom themes~~ — **Resolved in Sprint 7** (#49): `docs/THEMING.md` is the authoritative authoring/import reference.
 - Theme marketplace / online sharing (out of scope per #48).
 - Per-note theming (out of scope per #47).
+
+---
+
+# Sprint 7 — Theme System: Docs & Tests (#49, #50)
+
+The engine shipped complete in Sprints 5–6; Sprint 7 consolidates the
+documentation (contributor architecture docs + the end-user authoring
+guide, #49) and hardens the test coverage into one auditable plan (#50),
+including a WCAG contrast harness that caught and fixed a real a11y bug
+in the shipped default.
+
+## Automated Tests
+
+Run with: `go test -race -count=1 ./...` (Go) and `npm run check` +
+`npm test` (frontend, vitest).
+
+### Go coverage added this sprint
+
+| Package | Tests | What is covered |
+|---|---|---|
+| `backend/themes` (`contrast.go` + `contrast_test.go`) | `TestContrastRatio_ReferencePairs` (black/white = 21:1; WCAG sample), `TestContrastRatio_AcceptedColorForms` (#hex / rgb / rgba / percent / alpha-dropped / rejected forms), `TestWCAG_DefaultTheme_PrimaryTextAAA` (≥7:1 both modes), `TestWCAG_DefaultTheme_AccentsNonTextAA` (≥3:1), `TestWCAG_DefaultTheme_MutedTextAA` (≥4.5:1), `TestWCAG_DefaultTheme_ReportsAllRatios` (logs every pair) | Reusable WCAG 2.x contrast harness + assertions for the shipped default |
+| `backend/themes` (`snapshot_test.go`) | `TestDefaultTheme_GoldenSnapshot` | Pins the ENTIRE dark+light flattened token map of the embedded `cyber_forest.json`; any token drift fails with a precise diff |
+| `backend/themes` (`themes_test.go`) | `TestValidate_SchemaVersionForwardCompat` (higher version still validates — informational), `TestValidate_UnknownSchemaVersionStillRequiresField`, `TestValidate_MissingLightMode` (dark-only theme flags every required light token) | schema_version handling + missing-modes edge case (#50) |
+| `silt` (main) | `TestMigrationInvariant_NoOldHueTokens` | CI-grade guard: walks tracked text files via `git ls-files`, fails loudly if any old hue-named token (`color-teal-*` / `--accent-teal-*` / `--accent-indigo-*`) reappears. Runs in the existing `go test` step + pre-push hook |
+
+### Frontend coverage added this sprint
+
+| File | Tests | What is covered |
+|---|---|---|
+| `frontend/src/theme/inject.test.ts` (+1) | `applying a new theme changes --bg-void WITHOUT remounting the style element` | The #50 no-remount contract: two injects → one reused `<style id="silt-theme">` node + `readToken('--bg-void')` reflects the latest value |
+| `frontend/src/components/settings/AppearanceTab.test.ts` (new, 7) | listbox/`aria-selected`, radiogroup/`aria-checked`, ArrowDown/Home/End roving tabindex, Enter/Space commit, mode-radio click | The #50 picker keyboard-navigable + correct-ARIA contract |
+
+`npm test` now runs **25 vitest tests** across 4 files (was 17 across 3). `npm run check` reports **0 errors**.
+
+### Pre-existing theme coverage (Sprint 5/6, re-verified intact)
+
+| Package | Tests | What is covered |
+|---|---|---|
+| `backend/themes` (`themes_test.go`) | Validate (valid/missing token/bad color/missing identity/unparseable), `isValidColor` forms, `HexToRGB`, `ParseDefault`, `Flatten` (dark/light differ + pixel-identity), `BGVoid`, `ListThemes` (empty/missing/on-disk+malformed), `ResolveActive` (known/unknown/empty), Typography (optional/valid/rejects-CSS-injection/partial/flatten-emit) | Canonical schema, embed fallback, loader, validator |
+| `backend/themes` (`importer_test.go`) | Import happy path / validation / sandbox rejection / built-in namespacing / duplicate rejection / id sanitization / atomic-write cleanliness / export round-trip / `LoadByID` / `ExistingOnDiskIDs` / `namespaceThemeID` | Import + export + namespace logic |
+| `backend/themes` (`cache_test.go`) | embedded-default fallbacks, disk load, cache hit (pointer identity), invalid-file fallback, mtime reload, invalidate-one/all | In-process launch cache |
+| `silt` (main) (`app_themes_test.go`) | `GetActiveTheme` (default/round-trip/pre-vault), `ListThemes` (scaffolded/malformed), `ApplyTheme` (switch/persist/invalid-mode/unknown-id/system/bad-mode-not-persisted), `ImportTheme` IPC (happy/validation/before-vault/namespace/duplicate/missing), `ExportActiveTheme` IPC (round-trip/before-vault/empty), `effectiveMode`, `buildThemeResult`, `ApplyTheme_ReadsListOnce` (#76) | Wails IPC surface |
+| `silt` (main) (`main_themes_test.go`) | `launchBackgroundColour` (tracks active custom / default when no settings / invalid-id fallback) (#73) | Pre-CSS paint color |
+| `backend/vault` | Settings round-trip (`ActiveTheme`/`ThemeMode`), legacy backward-compat, first-run defaults, `ThemeMode` normalization, corrupt-JSON error path | Settings durability + theme persistence |
+| `frontend/src/theme/{store,listing,inject}.test.ts` | store init/apply/error/event, listing load/error/idempotency/`themes:changed` re-fetch, inject single-style/emission/skip/same-tick contract | Frontend data pipeline |
+
+## WCAG Contrast — finding & fix
+
+The contrast harness (`backend/themes/contrast.go`) surfaced a real
+accessibility bug in the shipped default: `text.muted` rendered below
+the **AA 4.5:1** target that `DESIGN.md §8` already documents ("above
+4.5:1 for secondary tags"):
+
+| Token | Before | After | Ratio range (both modes) |
+|---|---|---|---|
+| `modes.dark.text.muted` | `#71717a` (3.74–4.04:1) | `#8b8b94` | 5.35–5.79:1 |
+| `modes.light.text.muted` | `#64748b` (4.34:1 on panel) | `#586478` | 5.46–5.98:1 |
+
+Primary text (13–18:1, AAA) and accents (≥3:1, AA non-text) already
+passed and are unchanged. The doc examples (`SPECS.md` §6.1/§6.4,
+`DESIGN.md` §2.1, `docs/THEMING.md`) and the `index.css :root` startup
+fallbacks were updated to match the corrected tokens. **WCAG matrix
+extensibility:** the harness asserts the shipped Default (cyber_forest)
+now; Sprint 8's Terra Noir / Linen (#42) plug into the same table when
+they land — no harness change required.
+
+## Manual Verification Matrix (`wails dev`) — theme deltas
+
+The Sprint 5 (§"Theme engine (Sprint 5)") and Sprint 6 (§"Sprint 6 —
+Theme Engine: UX & Extensibility") manual matrices remain authoritative
+for the engine + picker UX. Sprint 7 adds:
+
+1. **Authoring round-trip:** follow `docs/THEMING.md` §9 (blank
+   template) → fill tokens → import → export → re-import; the file
+   parses with the canonical validator at each step.
+2. **Muted-text contrast (post-fix):** in dark mode, sidebar metadata
+   and note tag labels (muted text) are visibly legible against panels;
+   a contrast-tool spot-check on any muted label reports ≥ 4.5:1.
+3. **Default-theme snapshot stability:** the shipped default looks
+   unchanged except the muted gray is one notch lighter (dark) / darker
+   (light); no other token moved.
+
