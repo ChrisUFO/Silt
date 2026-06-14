@@ -730,6 +730,10 @@ func (a *App) PickThemeFile() (string, error) {
 // subscribed frontend (the picker, future command palette, etc.)
 // re-fetches the listing immediately. The active theme is NOT changed:
 // a fresh import is unselected until the user picks it.
+//
+// The in-process theme cache (#73) is invalidated so a launch-time
+// background-color resolution that runs after the import will pick up
+// the new file instead of a stale parse.
 func (a *App) ImportTheme(srcPath string) (*themes.ImportResult, error) {
 	if a.vaultPath == "" {
 		return nil, fmt.Errorf("vault not loaded")
@@ -738,6 +742,7 @@ func (a *App) ImportTheme(srcPath string) (*themes.ImportResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	themes.InvalidateThemeCache(res.Info.ID)
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "themes:changed", struct{}{})
 	}
