@@ -24,7 +24,6 @@
     notebook: string
     section: string
     page: string
-    fileDate: string
     blocks: ParsedBlock[]
     activeFocusedBlockAncestors?: string[]
     onBlockFocus?: (blockId: string, ancestors: string[]) => void
@@ -36,7 +35,6 @@
     notebook,
     section,
     page,
-    fileDate,
     blocks,
     activeFocusedBlockAncestors = [],
     onBlockFocus,

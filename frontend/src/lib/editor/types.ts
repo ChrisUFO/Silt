@@ -10,17 +10,17 @@ export type TaskStatus = 'TODO' | 'DOING' | 'DONE' | ''
 export interface ParsedBlock {
   id: string
   parent_id: string
-  type: BlockType
+  type: string
   depth: number
   raw_text: string
   clean_text: string
-  status: string
-  owner: string
-  start_date: string
-  due_date: string
-  priority: number
+  status?: string
+  owner?: string
+  start_date?: string
+  due_date?: string
+  priority?: number
   line_number: number
-  file_date: string
+  file_date?: string
 }
 
 // ProseMirror / TipTap node JSON shape (the subset we produce/consume).

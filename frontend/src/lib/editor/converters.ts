@@ -159,7 +159,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
 
     const block: ParsedBlock = {
       id,
-      parent_id: '', // derived below
+      parent_id: '',
       type,
       depth: Number(attrs.depth ?? 0),
       raw_text: '',
