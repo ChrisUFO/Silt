@@ -2,6 +2,7 @@ package themes
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -121,10 +122,17 @@ func ListThemes(themesDir string) (*ListThemesResult, error) {
 func ResolveActive(themesDir, activeID, mode string) (*Theme, error) {
 	// 1. Try the user's selected id on disk.
 	if activeID != "" {
-		if t, err := loadThemeByID(themesDir, activeID); err == nil {
+		t, err := loadThemeByID(themesDir, activeID)
+		if err == nil {
 			return t, nil
 		}
-		// Fall through: missing/invalid selected id → default fallback.
+		// Surface why the selected theme didn't load so theme-file issues
+		// aren't invisible; still fall back to the default (never brick the
+		// app). Skipped pre-vault (themesDir=="") because the empty-dir
+		// "error" there is the normal first-run state, not a fault.
+		if themesDir != "" {
+			log.Printf("themes: active theme %q unavailable (%v); using default", activeID, err)
+		}
 	}
 
 	// 2. If the selected id IS the default and it is not on disk, use the

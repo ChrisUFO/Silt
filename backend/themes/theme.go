@@ -1,5 +1,7 @@
 package themes
 
+import "strings"
+
 // Theme is the parsed canonical theme. It mirrors the JSON schema in
 // DESIGN.md §2.1 / SPECS.md §6.4 exactly: a modes-based object with
 // hue-agnostic semantic accents. See themes/cyber_forest.json for the
@@ -130,7 +132,7 @@ func (t *Theme) BGVoid(mode string) string {
 // before the webview renders. Non-hex inputs return ok=false so the caller
 // can keep a safe default.
 func HexToRGB(s string) (r, g, b uint8, ok bool) {
-	s = trimSpace(s)
+	s = strings.TrimSpace(s)
 	if len(s) == 0 || s[0] != '#' {
 		return 0, 0, 0, false
 	}
@@ -176,17 +178,6 @@ func hexDigit(c byte) (uint8, bool) {
 		return c - 'A' + 10, true
 	}
 	return 0, false
-}
-
-func trimSpace(s string) string {
-	start, end := 0, len(s)
-	for start < end && (s[start] == ' ' || s[start] == '\t') {
-		start++
-	}
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
-		end--
-	}
-	return s[start:end]
 }
 
 // ThemeInfo is the lightweight metadata returned by ListThemes for the
