@@ -12,12 +12,14 @@
     activeView: string
     sidebarCollapsed: boolean
     onSearchClick: () => void
+    onOpenSettings: (tab?: string) => void
   }
 
   let {
     activeView = $bindable(),
     sidebarCollapsed = $bindable(),
-    onSearchClick
+    onSearchClick,
+    onOpenSettings
   }: Props = $props()
 
   const views: { id: string; label: string; icon: string }[] = [
@@ -107,6 +109,26 @@
       <span class="text-[12px] font-label-sm whitespace-nowrap"
         >Search… (Ctrl+P)</span
       >
+    </button>
+
+    <div class="w-px h-6 bg-border-muted mx-1"></div>
+
+    <!-- Settings + plugin manager shortcuts (open the settings shell) -->
+    <button
+      onclick={() => onOpenSettings('plugins')}
+      aria-label="Plugin manager"
+      title="Plugin manager"
+      class="h-9 w-9 flex items-center justify-center text-text-muted hover:text-accent-primary-start transition-colors border-none bg-transparent cursor-pointer focus:outline-none rounded-md hover:bg-bg-hover"
+    >
+      <span class="material-symbols-outlined text-[20px]">extension</span>
+    </button>
+    <button
+      onclick={() => onOpenSettings('general')}
+      aria-label="Settings"
+      title="Settings"
+      class="h-9 w-9 flex items-center justify-center text-text-muted hover:text-accent-primary-start transition-colors border-none bg-transparent cursor-pointer focus:outline-none rounded-md hover:bg-bg-hover"
+    >
+      <span class="material-symbols-outlined text-[20px]">settings</span>
     </button>
 
     <div class="w-px h-6 bg-border-muted mx-1"></div>

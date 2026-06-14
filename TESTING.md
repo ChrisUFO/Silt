@@ -134,3 +134,43 @@ Frontend: `npm run check` reports **0 errors** across the smart-graph components
 - Third-party plugins get full SDK access but a dedicated rendered-UI surface for arbitrary third-party components ships in a follow-up (Silt cannot compile Svelte at runtime); first-party plugins are the rendered-view references.
 - Drag-to-reorder in the navigator/kanban deferred to a future sprint.
 - ~~Real-time theme-swap reactivity of the titlebar depends on the not-yet-built theme-injector pipeline (DESIGN.md §7)~~ — **Resolved in Sprint 5**: the theme injector (frontend/src/theme) rewrites `:root` tokens same-tick, so every token-bound surface (including the titlebar) now re-themes live.
+
+---
+
+# Sprint 10 — Settings Menu & Plugin Manager
+
+## Automated Tests
+
+Run with: `go test -race -count=1 ./...` (Go) and `npm run check` (frontend, svelte-check).
+
+### Go coverage added this sprint
+
+| Package | Tests | What is covered |
+|---|---|---|
+| `backend/config` (new) | Defaults populated; Load happy-path overrides defaults; missing file → defaults (non-fatal); malformed YAML → error; Save round-trip; Save atomic (no leftover temp); normalize never nil | config.yaml parser + persistence |
+| `backend/config` (watcher) | external write triggers reload; self-write ignored (multi-event window); malformed write → onError; Close idempotent; missing .system dir constructs without error; external atomic rename triggers reload | Hot-reload watcher + self-loop prevention |
+| `silt` (main) | GetSystemConfig returns scaffolded defaults; SaveSystemConfig persists + applies (spacesPerTab) + round-trips through Get; SaveSystemConfig rejects invalid (tab_indent_spaces/font_size_px/line_height/auto_save_delay_ms); GetPluginRegistry now reads the in-memory config; GetAppVersion; ListPlugins manifest fields | Config + plugin-manager IPC surface |
+
+### Frontend
+
+`npm run check` reports **0 errors** across the new `settings/` store and components (`SettingsShell`, `GeneralTab`, `AppearanceTab`, `AboutTab`, `PluginsTab`), the updated `TitleBar`/`Sidebar`/`App` wiring, and the removed `PluginManagerModal`. New components use the canonical semantic accent tokens (`--accent-primary-*` / `--accent-secondary-*`, #43).
+
+## Manual Verification Matrix (`wails dev`)
+
+1. **Settings shell (#66/#35/#36):** TitleBar gear icon and Sidebar footer Settings button both open the overlay; tabs switch (General/Appearance/Plugins/About); Arrow keys move between tabs; Esc closes.
+2. **General tab round-trip (#20):** edit tab width / font / a hotkey → Save → reopen the panel (and inspect `<vault>/.system/config.yaml`) → values persisted.
+3. **Hot-reload:** with the panel closed, edit `.system/config.yaml` externally → reopen Settings → new values reflected without restart. With the panel open and unsaved edits, an external edit shows a non-blocking "reload" notice and preserves the draft.
+4. **Plugin manager (#65):** Plugins tab lists Agenda + Calendar (Bundled) and any installed third-party plugins; Enable/Disable toggles reload via `plugins:changed`; Uninstall asks for confirmation and is hidden for bundled plugins; a broken plugin shows an inline error; "Install from .silt-plugin…" → validation preview → install works; first-party plugins have an "Open view" link.
+5. **About:** shows the version from VERSION (0.1.0).
+
+## Cross-Platform Build Verification
+
+- **Linux:** `./build-linux.sh --no-bump` produces a working AppImage (`Silt-<v>-x86_64.AppImage`) and `.deb` (`silt_<v>_amd64.deb`) into `distributions/v<version>/`. The build auto-detects webkit2gtk-4.1 (Ubuntu 24.04+) and applies the `-tags webkit2_41` tag.
+- **Windows:** `./build.sh --no-bump` produces the portable zip + NSIS installer (run on a Windows host).
+- **CI:** merging a PR to `main` triggers `.github/workflows/release.yml`, which bumps VERSION, tags `v<version>`, builds both platforms from that one version, and publishes a GitHub Release with all artifacts.
+
+## Known Gaps (deferred)
+
+- The Appearance tab is a placeholder; wiring the theme picker + dark/light mode toggle into Settings is tracked in #47 (Sprint 6). The theme engine core landed in Sprint 5 (#43–#46), and Sprint 10 code uses its canonical semantic accent tokens.
+- Per-plugin settings in the detail panel are read-only; an editing UI is future work.
+- Community plugin marketplace/registry browsing is out of scope (separate future issue).

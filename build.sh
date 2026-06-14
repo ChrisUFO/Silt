@@ -26,6 +26,35 @@ check_tool() {
     fi
 }
 
+# Bump the patch component of a semver string (echoes MAJOR.MINOR.PATCH+1).
+bump_patch() {
+    local major minor patch
+    IFS='.' read -r major minor patch <<< "$1"
+    patch=$((patch + 1))
+    echo "${major}.${minor}.${patch}"
+}
+
+# --- args ---
+# CI is the release authority (the Release workflow bumps and tags on merge),
+# so a local build asks before advancing. --bump/--no-bump skip the prompt
+# (CI passes --no-bump so it never blocks).
+#   BUMP_REQUESTED: "" = prompt (default), "yes" = --bump, "no" = --no-bump
+BUMP_REQUESTED=""
+for arg in "$@"; do
+    case "$arg" in
+        --no-bump) BUMP_REQUESTED="no" ;;
+        --bump)    BUMP_REQUESTED="yes" ;;
+        -h|--help)
+            echo "Usage: $0 [--no-bump|--bump]"
+            echo "  (default)  prompt whether to bump the patch version (y/N)."
+            echo "  --no-bump  never bump (CI / quick local rebuilds)."
+            echo "  --bump     bump without prompting."
+            echo "Releases are tagged automatically by the Release workflow on merge to main."
+            exit 0 ;;
+        *) log_error "Unknown option: $arg"; exit 1 ;;
+    esac
+done
+
 # --- prereq checks ---
 check_tool go
 check_tool node
@@ -33,18 +62,39 @@ check_tool npm
 check_tool wails
 check_tool makensis
 
-# --- read & bump version ---
+# --- read version & decide whether to advance -------------------------------
 if [ ! -f "$VERSION_FILE" ]; then
     echo "0.1.0" > "$VERSION_FILE"
     log_info "Created VERSION file with 0.1.0"
 fi
-
 OLD_VERSION=$(tr -d '[:space:]' < "$VERSION_FILE")
-IFS='.' read -r MAJOR MINOR PATCH <<< "$OLD_VERSION"
-PATCH=$((PATCH + 1))
-VERSION="${MAJOR}.${MINOR}.${PATCH}"
+CANDIDATE_VERSION="$(bump_patch "$OLD_VERSION")"
 
-log_info "Building version: $OLD_VERSION -> $VERSION"
+if [[ "$BUMP_REQUESTED" == "yes" ]]; then
+    BUMP="yes"
+elif [[ "$BUMP_REQUESTED" == "no" ]]; then
+    BUMP="no"
+else
+    # Prompt only on an interactive TTY. In any non-interactive context
+    # (piped input, CI) default to NO bump so we never block.
+    if [[ -t 0 ]]; then
+        read -rp "Bump patch version ${OLD_VERSION} -> ${CANDIDATE_VERSION}? [y/N] " ans || ans=""
+        case "${ans:-n}" in
+            y|Y|yes|YES) BUMP="yes" ;;
+            *)           BUMP="no" ;;
+        esac
+    else
+        BUMP="no"
+    fi
+fi
+
+if [[ "$BUMP" == "yes" ]]; then
+    VERSION="$CANDIDATE_VERSION"
+    log_info "Building version: $OLD_VERSION -> $VERSION"
+else
+    VERSION="$OLD_VERSION"
+    log_info "Building version: $VERSION (no bump)"
+fi
 
 # --- build frontend + backend + NSIS scaffolding ---
 # Build frontend before wails because wails runs Go bindings generation
@@ -110,9 +160,11 @@ cp "$NSIS_OUTPUT" "$BUILD_DIR/$INSTALLER_NAME"
 
 log_info "  -> $BUILD_DIR/$INSTALLER_NAME"
 
-# --- persist new version (only on success) ---
-echo "$VERSION" > "$VERSION_FILE"
-log_info "Version bumped to $VERSION"
+# --- persist new version (only on success, and only if we bumped) ---
+if [[ "$BUMP" == "yes" ]]; then
+    echo "$VERSION" > "$VERSION_FILE"
+    log_info "Version bumped to $VERSION"
+fi
 
 # --- summary ---
 echo ""

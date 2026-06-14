@@ -13,8 +13,10 @@
   import SearchModal from './components/SearchModal.svelte'
   import TagsExplorer from './components/TagsExplorer.svelte'
   import PluginView from './components/PluginView.svelte'
-  import PluginManagerModal from './components/PluginManagerModal.svelte'
+  import SettingsShell from './components/settings/SettingsShell.svelte'
   import { loadPlugins } from './plugins/loader'
+  import { initConfigHotReload, loadConfig, settings } from './settings/store.svelte'
+  import { matchHotkey } from './settings/hotkeys'
   import logo from './assets/logo.svg'
 
   let isInitialized = $state(false)
@@ -30,7 +32,8 @@
   // Shell state
   let sidebarCollapsed = $state(false)
   let showSearch = $state(false)
-  let showPluginManager = $state(false)
+  let showSettings = $state(false)
+  let settingsTab = $state('general')
 
   // Focused block ancestry path highlighting
   let activeFocusedBlockAncestors = $state<string[]>([])
@@ -54,15 +57,28 @@
     loadPlugins('', '', '').catch((e) =>
       console.error('Plugin load failed:', e)
     )
+    // Subscribe to config hot-reload (config:changed from Go) so the settings
+    // store refreshes on external edits to .system/config.yaml.
+    initConfigHotReload()
+    // Eagerly load the config so config-driven global shortcuts (open_search,
+    // toggle_sidebar) work from startup, not only after Settings is opened.
+    loadConfig().catch((e) => console.error('Startup config load failed:', e))
 
+    function handleOpenSettings(e: Event) {
+      const detail = (e as CustomEvent).detail
+      openSettings(typeof detail === 'string' ? detail : 'general')
+    }
     function handleGlobalKeyDown(e: KeyboardEvent) {
-      // Ctrl+P → search
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+      // Config-driven global shortcuts. Read live from the settings store so
+      // edits made in Settings → General take effect after Save (no rebind
+      // needed — the store is a reactive proxy read at event time). Editor-
+      // internal shortcuts (indent/cycle-view) are consumed by the editor.
+      const hotkeys = settings.config?.hotkeys ?? {}
+      if (matchHotkey(e, hotkeys.open_search)) {
         e.preventDefault()
         showSearch = !showSearch
       }
-      // Ctrl+B → toggle sidebar
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+      if (matchHotkey(e, hotkeys.toggle_sidebar)) {
         e.preventDefault()
         sidebarCollapsed = !sidebarCollapsed
       }
@@ -82,8 +98,17 @@
         activeView = 'tags'
       }
     }
+    function handleSwitchView(e: Event) {
+      // PluginsTab "Open view" + any other switch-view dispatcher.
+      const detail = (e as CustomEvent).detail
+      if (typeof detail === 'string' && detail) {
+        activeView = detail
+        showSettings = false
+      }
+    }
     function handleOpenPluginManager() {
-      showPluginManager = true
+      // The plugin manager is now the "Plugins" tab inside Settings.
+      openSettings('plugins')
     }
     function handlePluginsChanged() {
       // Re-run discovery with the live location so newly installed/enabled
@@ -96,7 +121,9 @@
     window.addEventListener('keydown', handleGlobalKeyDown)
     window.addEventListener('navigate-to-block', handleNavigateToBlock)
     window.addEventListener('navigate-to-tag', handleNavigateToTag)
+    window.addEventListener('switch-view', handleSwitchView)
     window.addEventListener('open-plugin-manager', handleOpenPluginManager)
+    window.addEventListener('open-settings', handleOpenSettings)
     // `plugins:changed` is a Wails event (Go runtime.EventsEmit), so it must
     // be received via EventsOn — a DOM addEventListener would never fire.
     const offPluginsChanged = EventsOn('plugins:changed', () =>
@@ -106,7 +133,9 @@
       window.removeEventListener('keydown', handleGlobalKeyDown)
       window.removeEventListener('navigate-to-block', handleNavigateToBlock)
       window.removeEventListener('navigate-to-tag', handleNavigateToTag)
+      window.removeEventListener('switch-view', handleSwitchView)
       window.removeEventListener('open-plugin-manager', handleOpenPluginManager)
+      window.removeEventListener('open-settings', handleOpenSettings)
       offPluginsChanged()
     }
   })
@@ -116,6 +145,9 @@
       const success = await InitializeVault()
       if (success) {
         isInitialized = true
+        // Populate the config store now that a vault exists so config-driven
+        // global shortcuts work immediately after onboarding.
+        loadConfig().catch((e) => console.error('Post-init config load failed:', e))
         window.dispatchEvent(new CustomEvent('refresh-navigation'))
       }
     } catch (e) {
@@ -176,6 +208,11 @@
       !!activeSection &&
       !!activePage
   )
+
+  function openSettings(tab?: string) {
+    settingsTab = tab || 'general'
+    showSettings = true
+  }
 </script>
 
 <main
@@ -214,6 +251,7 @@
       bind:activeView
       bind:sidebarCollapsed
       onSearchClick={() => (showSearch = true)}
+      onOpenSettings={(tab) => openSettings(tab)}
     />
 
     <div class="flex mt-14 h-[calc(100vh-56px)] w-full relative">
@@ -321,12 +359,13 @@
     />
   {/if}
 
-  {#if showPluginManager}
-    <PluginManagerModal
-      onClose={() => (showPluginManager = false)}
-      {activeNotebook}
-      {activeSection}
-      {activePage}
+  {#if showSettings}
+    <SettingsShell
+      bind:activeTab={settingsTab}
+      onClose={() => (showSettings = false)}
+      activeNotebook={activeNotebook}
+      activeSection={activeSection}
+      activePage={activePage}
     />
   {/if}
 </main>

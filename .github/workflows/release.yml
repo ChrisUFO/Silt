@@ -1,0 +1,167 @@
+# Release on merge. Every PR merge into main:
+#   1. prepare — bumps the patch version in VERSION, commits it back to main
+#      ([skip ci]), and creates a `v<version>` tag. Runs once so both platforms
+#      build the SAME version (no per-machine coordination).
+#   2. build  — matrix over ubuntu-latest + windows-latest, checking out the
+#      tag, building the platform's distribution files with --no-bump.
+#   3. release — creates a GitHub Release on the tag with all assets attached.
+#
+# Works on the free GitHub plan (private repos get 2,000 Actions min/month;
+# Windows builds are billed at 2x). Cancel-in-progress is off so a release in
+# flight always finishes even if another merge lands.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # commit VERSION bump, push tag, create release
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    # Skip the workflow's own VERSION-bump commit to avoid a loop.
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
+      sha: ${{ steps.bump.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # A PAT is not required for the default GITHUB_TOKEN to push back to
+          # the same repo, but fetch-depth 0 is needed so the tag push is clean.
+          fetch-depth: 0
+
+      - name: Bump patch version
+        id: bump
+        run: |
+          set -euo pipefail
+          OLD="$(tr -d '[:space:]' < VERSION)"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$OLD"
+          PATCH=$((PATCH + 1))
+          NEW="${MAJOR}.${MINOR}.${PATCH}"
+          echo "$NEW" > VERSION
+          echo "version=$NEW" >> "$GITHUB_OUTPUT"
+          echo "tag=v$NEW" >> "$GITHUB_OUTPUT"
+          echo "Bumping version: $OLD -> $NEW"
+
+      - name: Commit VERSION + create tag
+        id: commit
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          git commit -m "chore(release): ${{ steps.bump.outputs.version }} [skip ci]"
+          git tag "${{ steps.bump.outputs.tag }}"
+          git push origin main --tags
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            script: ./build-linux.sh
+            artifact: linux
+          - os: windows-latest
+            script: ./build.sh
+            artifact: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout (at release tag)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Wails CLI
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # --- platform-specific native build deps ---
+      - name: Install Linux deps (webkit2gtk-4.1 + GTK)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev build-essential pkg-config
+
+      - name: Install NSIS (if missing)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y --no-progress
+          } else {
+            Write-Host "makensis already installed"
+          }
+
+      - name: Build distribution (--no-bump, version pinned by tag)
+        shell: bash
+        run: ${{ matrix.script }} --no-bump
+
+      - name: Normalize artifact path
+        id: path
+        shell: bash
+        run: |
+          # The build scripts emit into distributions/v<version>/.
+          echo "dir=distributions/v${{ needs.prepare.outputs.version }}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.artifact }}
+          path: ${{ steps.path.outputs.dir }}/*
+          if-no-files-found: error
+
+  release:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: dist-*
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "Attaching release assets:"
+          ls -la release-assets/
+          gh release create "${{ needs.prepare.outputs.tag }}" \
+            --target "$GITHUB_SHA" \
+            --title "${{ needs.prepare.outputs.version }}" \
+            --generate-notes \
+            release-assets/*

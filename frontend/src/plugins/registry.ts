@@ -14,6 +14,8 @@ registerPlugin({
     id: 'silt-agenda',
     name: 'Agenda',
     version: '1.0.0',
+    author: 'Silt',
+    description: 'Rolling agenda of overdue, today, and upcoming tasks.',
     icon: 'event_repeat'
   },
   component: Agenda,
@@ -24,6 +26,8 @@ registerPlugin({
     id: 'silt-calendar',
     name: 'Calendar',
     version: '1.0.0',
+    author: 'Silt',
+    description: 'Month and week grids of tasks by due date.',
     icon: 'calendar_month'
   },
   component: Calendar,

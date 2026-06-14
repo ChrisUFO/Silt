@@ -120,6 +120,9 @@ type PluginInfo struct {
 	Disabled    bool   `json:"disabled"`
 	Name        string `json:"name,omitempty"`
 	Version     string `json:"version,omitempty"`
+	Author      string `json:"author,omitempty"`
+	Description string `json:"description,omitempty"`
+	Icon        string `json:"icon,omitempty"`
 }
 
 // PluginManifest is the plugin.json schema carried inside a .silt-plugin
@@ -134,6 +137,15 @@ type PluginManifest struct {
 	Icon           string `json:"icon,omitempty"`
 	Main           string `json:"main,omitempty"`
 	MinSiltVersion string `json:"minSiltVersion,omitempty"`
+}
+
+// PluginValidationResult bundles a validated plugin manifest with the
+// non-fatal warnings produced during validation, so both cross the Wails IPC
+// boundary in a single return value (Wails bindings only expose the first
+// non-error return value).
+type PluginValidationResult struct {
+	Manifest PluginManifest `json:"manifest"`
+	Warnings []string       `json:"warnings"`
 }
 
 type TaskResult struct {

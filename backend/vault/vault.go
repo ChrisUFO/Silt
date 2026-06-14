@@ -165,6 +165,7 @@ parsing:
 hotkeys:
   open_search: "Ctrl+P"
   open_command_palette: "Ctrl+Slash"
+  toggle_sidebar: "Ctrl+B"
   cycle_view_layout: "Alt+Tab"
   indent_block: "Tab"
   unindent_block: "Shift+Tab"

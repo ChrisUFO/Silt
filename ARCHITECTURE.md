@@ -271,6 +271,14 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 // counts merged from the index. Section-less pages group under section "".
 func (a *App) ListNavigation() (NavigationTree, error)
 
+// System configuration (see §8). GetSystemConfig returns the parsed
+// .system/config.yaml; SaveSystemConfig validates + atomically persists +
+// applies live knobs (editor.tab_indent_spaces drives parsing) and emits
+// config:changed. GetAppVersion returns the embedded VERSION.
+func (a *App) GetSystemConfig() (config.SystemConfig, error)
+func (a *App) SaveSystemConfig(cfg config.SystemConfig) error
+func (a *App) GetAppVersion() string
+
 
 4.4 Theme Engine IPC & Pipeline
 
@@ -491,3 +499,18 @@ PluginContext is a thin frontend wrapper over four Wails bindings on App:
 7.3 Smart Graph Events
 
 Block mutations broadcast a `block:changed` Wails event (BlockChangedEvent {ID, Notebook, Section, Page, FileDate}) so live embeds (`{{embed:uuid}}`) and references (`((uuid))`) refresh in real time. Emitted from MutateBlock, UpdateBlockState, and the post-write path of SaveFileBlocks; emission no-ops when ctx is nil (tests). The frontend EmbedPortal subscribes via EventsOn and re-fetches its source block when the event matches its uuid (a module-scoped render-stack guard stops recursive embed loops).
+8. System Configuration Engine (config.yaml)
+
+Global settings — editor defaults, parsing rules, hotkeys, and the plugin registry — live in <vault>/.system/config.yaml, the single source of truth for everything except the vault path (which stays in OS-config settings.json because it must be known before any vault can be opened).
+
+8.1 Parser (backend/config)
+
+config.SystemConfig mirrors the SPECS §9.1 schema (notebooks / editor / parsing / hotkeys / plugins). Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
+
+8.2 Hot-Reload (backend/config.ConfigWatcher)
+
+A dedicated fsnotify watcher observes the .system parent directory (not the file alone) so a delete+recreate of config.yaml is still observed. Self-loop prevention is a local time-window in ConfigWatcher: SaveSystemConfig calls RegisterSelfWrite() before the atomic write, and the watcher ignores every config.yaml event until a 500ms window elapses — a single logical save can emit several fsnotify events (atomic temp+rename, or truncate+write), so the window suppresses all of them, not just the first. External edits re-parse and invoke onChange → App.applyConfig (updates live knobs + emits config:changed); a parse failure invokes onError → config:error (last-good config retained). This implements SPECS §9.2 without an application restart.
+
+8.3 Settings Menu (frontend)
+
+The settings store (settings/store.svelte.ts) is a $state object exposing loadConfig/saveConfig, dirty tracking, and a config:changed / config:error subscription. The SettingsShell is a full-screen frosted overlay with a left tab rail (General / Appearance / Plugins / About), roving keyboard navigation (Arrow/Home/End, Esc to close), and ARIA tablist semantics. GeneralTab edits a local draft (Save/Revert) so an external hot-reload cannot fight a half-edited form; if an external change lands while the draft is dirty, the draft is preserved and a non-blocking "reload" notice is shown (never a silent clobber). The Plugins tab (#65) is the single plugin UI: rich cards (first-party bundled vs. third-party installed), enable/disable, uninstall (first-party protected), inline load errors, an expandable detail panel with per-plugin settings, and the .silt-plugin install flow. The standalone PluginManagerModal was removed in favour of this tab; the titlebar extension icon opens Settings → Plugins.

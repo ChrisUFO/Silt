@@ -1,11 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"silt/backend/config"
 	"silt/backend/core"
 	"silt/backend/db"
 	"silt/backend/monitor"
@@ -30,15 +32,23 @@ func newTestApp(t *testing.T) *App {
 	coord := core.NewExecutionCoordinator(dm.SQLDB())
 	tracker := monitor.NewWriteTracker()
 
-	return &App{
+	app := &App{
 		// ctx intentionally nil: tests have no Wails lifecycle context, so
-		// block:changed event emission is skipped (see emitBlockChanged).
-		db:          dm,
-		coordinator: coord,
-		tracker:     tracker,
-		vaultPath:   vaultPath,
+		// block:changed / config:changed event emission is skipped.
+		db:           dm,
+		coordinator:  coord,
+		tracker:      tracker,
+		vaultPath:    vaultPath,
 		spacesPerTab: 4,
 	}
+	// Load the scaffolded config.yaml so config-backed bindings
+	// (GetPluginRegistry, GetSystemConfig) behave as in production.
+	cfg, err := config.Load(vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	app.applyConfigLocked(cfg)
+	return app
 }
 
 func writeFile(t *testing.T, path, content string) {
@@ -732,6 +742,13 @@ func TestGetPluginRegistry_ParsesConfig(t *testing.T) {
 	app := newTestApp(t)
 	configPath := filepath.Join(app.vaultPath, ".system", "config.yaml")
 	writeFile(t, configPath, "plugins:\n  active:\n    - silt-agenda\n    - silt-calendar\n  disabled: []\n  plugin_settings:\n    silt-agenda:\n      window: 7\n")
+	// Reload the in-memory config (production uses the hot-reload watcher).
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	app.applyConfigLocked(loaded)
+
 	registry, err := app.GetPluginRegistry()
 	if err != nil {
 		t.Fatalf("GetPluginRegistry: %v", err)
@@ -741,6 +758,144 @@ func TestGetPluginRegistry_ParsesConfig(t *testing.T) {
 	}
 	if _, ok := registry.Settings["silt-agenda"]; !ok {
 		t.Errorf("expected silt-agenda settings parsed, got %v", registry.Settings)
+	}
+}
+
+func TestGetSystemConfig_ReturnsLoadedConfig(t *testing.T) {
+	app := newTestApp(t)
+	cfg, err := app.GetSystemConfig()
+	if err != nil {
+		t.Fatalf("GetSystemConfig: %v", err)
+	}
+	// The scaffolded config.yaml matches Defaults(), so the loaded config
+	// must carry those values.
+	if cfg.Editor.FontFamily == "" {
+		t.Errorf("expected scaffolded editor.font_family to be populated")
+	}
+	if cfg.Editor.TabIndentSpaces != 4 {
+		t.Errorf("expected scaffolded tab_indent_spaces=4, got %d", cfg.Editor.TabIndentSpaces)
+	}
+	if _, ok := cfg.Hotkeys["open_search"]; !ok {
+		t.Errorf("expected scaffolded hotkeys.open_search present")
+	}
+}
+
+func TestSaveSystemConfig_PersistsAndApplies(t *testing.T) {
+	app := newTestApp(t)
+
+	cfg, err := app.GetSystemConfig()
+	if err != nil {
+		t.Fatalf("GetSystemConfig: %v", err)
+	}
+	cfg.Editor.TabIndentSpaces = 8
+	cfg.Editor.FontFamily = "TestFont"
+	cfg.Hotkeys["custom"] = "Ctrl+Shift+T"
+
+	if err := app.SaveSystemConfig(cfg); err != nil {
+		t.Fatalf("SaveSystemConfig: %v", err)
+	}
+
+	// Live knob applied immediately.
+	if app.spacesPerTab != 8 {
+		t.Errorf("expected spacesPerTab=8 after save, got %d", app.spacesPerTab)
+	}
+
+	// A fresh App reading the same vault sees the persisted change (proves it
+	// hit disk, not just memory).
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if loaded.Editor.TabIndentSpaces != 8 {
+		t.Errorf("persisted tab_indent_spaces: want 8, got %d", loaded.Editor.TabIndentSpaces)
+	}
+	if loaded.Editor.FontFamily != "TestFont" {
+		t.Errorf("persisted font_family: want TestFont, got %q", loaded.Editor.FontFamily)
+	}
+	if loaded.Hotkeys["custom"] != "Ctrl+Shift+T" {
+		t.Errorf("persisted custom hotkey missing: %v", loaded.Hotkeys)
+	}
+}
+
+func TestSaveSystemConfig_RejectsInvalid(t *testing.T) {
+	app := newTestApp(t)
+	cfg, _ := app.GetSystemConfig()
+
+	cfg.Editor.TabIndentSpaces = 0
+	if err := app.SaveSystemConfig(cfg); err == nil {
+		t.Errorf("expected error for tab_indent_spaces=0")
+	}
+
+	cfg.Editor.TabIndentSpaces = 4
+	cfg.Editor.FontSizePx = 0
+	if err := app.SaveSystemConfig(cfg); err == nil {
+		t.Errorf("expected error for font_size_px=0")
+	}
+
+	cfg.Editor.FontSizePx = 14
+	cfg.Editor.LineHeight = 0
+	if err := app.SaveSystemConfig(cfg); err == nil {
+		t.Errorf("expected error for line_height=0")
+	}
+
+	cfg.Editor.LineHeight = 1.6
+	cfg.Editor.AutoSaveDelayMs = -1
+	if err := app.SaveSystemConfig(cfg); err == nil {
+		t.Errorf("expected error for auto_save_delay_ms=-1")
+	}
+
+	// auto_save_delay_ms = 0 is valid (means save immediately / disabled).
+	cfg.Editor.AutoSaveDelayMs = 0
+	if err := app.SaveSystemConfig(cfg); err != nil {
+		t.Errorf("expected no error for auto_save_delay_ms=0, got %v", err)
+	}
+
+	// Hotkey validation: empty is allowed (intentional disable)...
+	cfg.Hotkeys["open_search"] = ""
+	if err := app.SaveSystemConfig(cfg); err != nil {
+		t.Errorf("expected no error for empty (disabled) hotkey, got %v", err)
+	}
+	// ...but a modifier-only binding is rejected.
+	cfg.Hotkeys["open_search"] = "Ctrl+Shift"
+	if err := app.SaveSystemConfig(cfg); err == nil {
+		t.Errorf("expected error for modifier-only hotkey \"Ctrl+Shift\"")
+	}
+	// A valid binding is accepted; restore it so the config is clean.
+	cfg.Hotkeys["open_search"] = "Ctrl+P"
+	if err := app.SaveSystemConfig(cfg); err != nil {
+		t.Errorf("expected no error for valid hotkey, got %v", err)
+	}
+}
+
+func TestGetConfigLoadError_OneShot(t *testing.T) {
+	app := newTestApp(t)
+	// Simulate the startup load error stashed by initializeVaultServices when
+	// config.yaml is malformed (the config:error event it emits is lost because
+	// the frontend hasn't subscribed yet).
+	app.configLoadErr = fmt.Errorf("failed to parse config.yaml: bad indent")
+	got := app.GetConfigLoadError()
+	if !strings.Contains(got, "bad indent") {
+		t.Errorf("expected surfaced load error, got %q", got)
+	}
+	// The binding is one-shot: a second read clears it.
+	if app.GetConfigLoadError() != "" {
+		t.Errorf("expected empty after one-shot read, got %q", app.GetConfigLoadError())
+	}
+}
+
+func TestSaveSystemConfig_RoundTripThroughGet(t *testing.T) {
+	app := newTestApp(t)
+	cfg, _ := app.GetSystemConfig()
+	cfg.Editor.AutoSaveDelayMs = 1234
+	if err := app.SaveSystemConfig(cfg); err != nil {
+		t.Fatalf("SaveSystemConfig: %v", err)
+	}
+	got, err := app.GetSystemConfig()
+	if err != nil {
+		t.Fatalf("GetSystemConfig: %v", err)
+	}
+	if got.Editor.AutoSaveDelayMs != 1234 {
+		t.Errorf("round-trip autosave: want 1234, got %d", got.Editor.AutoSaveDelayMs)
 	}
 }
 
@@ -1066,3 +1221,63 @@ func TestCloseVault_ReopenUsesWarmRestart(t *testing.T) {
 	}
 }
 
+func TestGetAppVersion_MatchesEmbeddedVersion(t *testing.T) {
+	app := newTestApp(t)
+	got := app.GetAppVersion()
+	if got == "" {
+		t.Fatalf("GetAppVersion returned empty string")
+	}
+	// The embedded VERSION file is the source of truth for appVersion.
+	raw, err := os.ReadFile("VERSION")
+	if err != nil {
+		t.Fatalf("read VERSION: %v", err)
+	}
+	want := strings.TrimSpace(string(raw))
+	if got != want {
+		t.Errorf("GetAppVersion = %q, want %q (VERSION file)", got, want)
+	}
+}
+
+func TestListPlugins_PopulatesManifestFields(t *testing.T) {
+	app := newTestApp(t)
+	pluginDir := filepath.Join(app.vaultPath, ".system", "plugins", "rich-demo")
+	writeFile(t, filepath.Join(pluginDir, "index.js"), "export default {};\n")
+	writeFile(t, filepath.Join(pluginDir, "plugin.json"), `{
+		"id": "rich-demo",
+		"name": "Rich Demo",
+		"version": "2.3.4",
+		"author": "Ada",
+		"description": "A demo with full manifest fields.",
+		"icon": "extension"
+	}`)
+
+	list, err := app.ListPlugins()
+	if err != nil {
+		t.Fatalf("ListPlugins: %v", err)
+	}
+	var info *parser.PluginInfo
+	for i := range list {
+		if list[i].ID == "rich-demo" {
+			info = &list[i]
+			break
+		}
+	}
+	if info == nil {
+		t.Fatalf("rich-demo not returned by ListPlugins: %+v", list)
+	}
+	if !info.HasManifest || !info.HasIndex {
+		t.Errorf("expected HasManifest+HasIndex, got %+v", info)
+	}
+	if info.Name != "Rich Demo" || info.Version != "2.3.4" {
+		t.Errorf("name/version: got %+v", info)
+	}
+	if info.Author != "Ada" {
+		t.Errorf("author: want Ada, got %q", info.Author)
+	}
+	if info.Description != "A demo with full manifest fields." {
+		t.Errorf("description not populated: got %q", info.Description)
+	}
+	if info.Icon != "extension" {
+		t.Errorf("icon: want extension, got %q", info.Icon)
+	}
+}
