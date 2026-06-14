@@ -179,7 +179,8 @@ export const HeaderBlock = Node.create({
   }
 })
 
-// Silt-specific block extensions, excluding the StarterKit equivalents (we do
-// not want StarterKit's paragraph/heading competing with our block nodes).
-// StarterKit is still pulled in for History (undo/redo), keymaps, and marks.
-export const SiltBlockExtensions = [TaskBlock, NoteBlock, HeaderBlock]
+// Silt-specific block extensions. NoteBlock MUST be first — ProseMirror uses
+// the first registered block type as the "default" for content normalization.
+// NoteBlock (plain text) is the natural default; TaskBlock and HeaderBlock
+// are opt-in types the user creates via the slash menu.
+export const SiltBlockExtensions = [NoteBlock, TaskBlock, HeaderBlock]
