@@ -97,5 +97,38 @@ else
   echo "No frontend files changed. Skipping Svelte/Vite compilation check."
 fi
 
+# Binding-drift gate: if Go Wails bindings (app method signatures) changed,
+# the pre-generated frontend/wailsjs/ bindings must be regenerated and
+# committed. A stale binding ships a JS function that does not match the Go
+# signature, so this fails the push when `npm run generate` would produce
+# changes that are not already on disk.
+if [ $RUN_GO -eq 1 ]; then
+  echo "Go files changed. Checking Wails binding freshness..."
+  # `wails generate module` rewrites frontend/wailsjs/ from the live Go
+  # signatures. If anything is dirty afterwards, the committed bindings are
+  # out of date. Run `npm run generate` from the frontend dir.
+  (cd frontend && npm run generate) >/dev/null 2>&1
+  if [ $? -ne 0 ]; then
+    echo "ERROR: 'wails generate module' failed. Is the wails CLI installed? Push aborted."
+    exit 1
+  fi
+  # `git status --porcelain frontend/wailsjs` reports changes the regenerate
+  # would introduce. An empty result means the committed bindings are current.
+  BINDING_DRIFT=$(git status --porcelain frontend/wailsjs)
+  if [ -n "$BINDING_DRIFT" ]; then
+    echo "ERROR: Wails JS bindings are out of date. The following changes are"
+    echo "required after editing Wails-bound Go methods:"
+    echo "$BINDING_DRIFT"
+    echo ""
+    echo "Run 'npm run generate' (from frontend/) and commit the result. Push aborted."
+    # Discard the regenerate's working-tree changes so the repo is left clean
+    # for the developer to run the command themselves.
+    git checkout -- frontend/wailsjs >/dev/null 2>&1
+    exit 1
+  fi
+else
+  echo "No Go files changed. Skipping binding-drift gate."
+fi
+
 echo "Pre-push checks passed successfully!"
 exit 0

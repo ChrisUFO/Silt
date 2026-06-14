@@ -1,5 +1,9 @@
 # Testing & Verification — Sprint 1 (Foundation)
 
+> See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the contribution workflow,
+> pre-push hook setup (`git config core.hooksPath .githooks`), and the
+> `npm run generate` Wails-binding regeneration step.
+
 ## Automated Tests
 
 Run with: `go test -race -count=1 ./...`
