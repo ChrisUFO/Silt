@@ -8,6 +8,7 @@
   import CommandPalette from './CommandPalette.svelte'
   import RichText from './RichText.svelte'
   import BlockPickerModal from './BlockPickerModal.svelte'
+  import { settings } from '../settings/store.svelte'
 
   interface Block {
     id: string
@@ -120,6 +121,10 @@
   // Determine if a guide rail at depth `d` (0-indexed) is active
   let activeGuides = $derived.by(() => {
     const guides = Array(block.depth).fill(false)
+    // Respect the editor.focus_highlight_ancestors config: when explicitly
+    // disabled, guide rails still render (they show indentation depth) but
+    // never light up with the active highlight gradient.
+    if (settings.config?.editor?.focus_highlight_ancestors === false) return guides
     if (activeFocusedBlockAncestors.length === 0) return guides
 
     // Trace parent chain for this block
@@ -456,7 +461,8 @@
         onblur={handleBlur}
         onkeydown={handleKeyDown}
         oninput={handleInput}
-        class="flex-1 focus:outline-none text-on-surface leading-relaxed whitespace-pre-wrap break-words min-h-[22px] min-w-[150px]"
+        class="flex-1 focus:outline-none text-on-surface whitespace-pre-wrap break-words min-h-[22px] min-w-[150px]"
+        style="font-family: var(--editor-mono-font-family); font-size: var(--editor-font-size); line-height: var(--editor-line-height);"
         class:text-text-muted={block.status === 'DONE'}
         class:line-through={block.status === 'DONE'}
       >
@@ -470,7 +476,8 @@
         tabindex="0"
         onfocus={beginEdit}
         onclick={beginEdit}
-        class="flex-1 text-on-surface leading-relaxed whitespace-pre-wrap break-words min-h-[22px] min-w-[150px] cursor-text rounded"
+        class="flex-1 text-on-surface whitespace-pre-wrap break-words min-h-[22px] min-w-[150px] cursor-text rounded"
+        style="font-family: var(--editor-mono-font-family); font-size: var(--editor-font-size); line-height: var(--editor-line-height);"
         class:text-text-muted={block.status === 'DONE'}
         class:line-through={block.status === 'DONE'}
       >

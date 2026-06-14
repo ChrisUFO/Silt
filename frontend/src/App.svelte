@@ -15,6 +15,7 @@
   import SettingsShell from './components/settings/SettingsShell.svelte'
   import { loadPlugins } from './plugins/loader'
   import { initConfigHotReload, loadConfig, settings } from './settings/store.svelte'
+  import { initEditorTokens } from './settings/editor-tokens.svelte'
   import { matchHotkey } from './settings/hotkeys'
   import logo from './assets/logo.svg'
 
@@ -59,6 +60,9 @@
     // Subscribe to config hot-reload (config:changed from Go) so the settings
     // store refreshes on external edits to .system/config.yaml.
     initConfigHotReload()
+    // Inject editor typography CSS variables from config and re-inject on
+    // hot-reload. Uses $effect.root to watch the reactive settings store.
+    initEditorTokens()
     // Eagerly load the config so config-driven global shortcuts (open_search,
     // toggle_sidebar) work from startup, not only after Settings is opened.
     loadConfig().catch((e) => console.error('Startup config load failed:', e))
