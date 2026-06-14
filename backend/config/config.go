@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -53,6 +54,44 @@ type PluginsConfig struct {
 	Active         []string       `yaml:"active" json:"active"`
 	Disabled       []string       `yaml:"disabled" json:"disabled"`
 	PluginSettings map[string]any `yaml:"plugin_settings" json:"plugin_settings"`
+}
+
+// hotkeyModifiers are the modifier tokens allowed in a hotkey binding
+// (case-insensitive). Everything else in a binding is treated as the key.
+var hotkeyModifiers = map[string]bool{
+	"ctrl": true, "control": true, "shift": true,
+	"alt": true, "option": true, "meta": true,
+	"cmd": true, "command": true, "win": true,
+}
+
+// ValidateHotkeys rejects bindings that would parse to a null hotkey and
+// silently disable the action. An empty binding is allowed (it means
+// "intentionally disabled" — matchHotkey never fires — which is also the only
+// way to disable a hotkey, since deleting the key would restore the default
+// via the YAML merge). A non-empty binding must contain at least one
+// non-modifier token, mirroring the frontend parseHotkey's null outcome so the
+// two layers agree on what is valid.
+func ValidateHotkeys(hotkeys map[string]string) error {
+	for action, binding := range hotkeys {
+		binding = strings.TrimSpace(binding)
+		if binding == "" {
+			continue // explicitly disabled
+		}
+		hasKey := false
+		for _, p := range strings.Split(strings.ToLower(binding), "+") {
+			t := strings.TrimSpace(p)
+			if t == "" {
+				continue // tolerate stray empty segments (e.g. "Ctrl++P")
+			}
+			if !hotkeyModifiers[t] {
+				hasKey = true
+			}
+		}
+		if !hasKey {
+			return fmt.Errorf("invalid hotkey for %q: %q has no key (only modifiers)", action, binding)
+		}
+	}
+	return nil
 }
 
 // ConfigPath returns the absolute path to a vault's config.yaml.

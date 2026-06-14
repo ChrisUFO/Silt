@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -847,6 +848,38 @@ func TestSaveSystemConfig_RejectsInvalid(t *testing.T) {
 	cfg.Editor.AutoSaveDelayMs = 0
 	if err := app.SaveSystemConfig(cfg); err != nil {
 		t.Errorf("expected no error for auto_save_delay_ms=0, got %v", err)
+	}
+
+	// Hotkey validation: empty is allowed (intentional disable)...
+	cfg.Hotkeys["open_search"] = ""
+	if err := app.SaveSystemConfig(cfg); err != nil {
+		t.Errorf("expected no error for empty (disabled) hotkey, got %v", err)
+	}
+	// ...but a modifier-only binding is rejected.
+	cfg.Hotkeys["open_search"] = "Ctrl+Shift"
+	if err := app.SaveSystemConfig(cfg); err == nil {
+		t.Errorf("expected error for modifier-only hotkey \"Ctrl+Shift\"")
+	}
+	// A valid binding is accepted; restore it so the config is clean.
+	cfg.Hotkeys["open_search"] = "Ctrl+P"
+	if err := app.SaveSystemConfig(cfg); err != nil {
+		t.Errorf("expected no error for valid hotkey, got %v", err)
+	}
+}
+
+func TestGetConfigLoadError_OneShot(t *testing.T) {
+	app := newTestApp(t)
+	// Simulate the startup load error stashed by initializeVaultServices when
+	// config.yaml is malformed (the config:error event it emits is lost because
+	// the frontend hasn't subscribed yet).
+	app.configLoadErr = fmt.Errorf("failed to parse config.yaml: bad indent")
+	got := app.GetConfigLoadError()
+	if !strings.Contains(got, "bad indent") {
+		t.Errorf("expected surfaced load error, got %q", got)
+	}
+	// The binding is one-shot: a second read clears it.
+	if app.GetConfigLoadError() != "" {
+		t.Errorf("expected empty after one-shot read, got %q", app.GetConfigLoadError())
 	}
 }
 

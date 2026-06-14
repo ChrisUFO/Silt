@@ -1,6 +1,7 @@
 <script lang="ts">
   import { settings, saveConfig, reloadFromBackend } from '../../settings/store.svelte'
   import type { SystemConfig } from '../../settings/store.svelte'
+  import { parseHotkey } from '../../settings/hotkeys'
 
   // Local editable draft. Initialized from the store config; the user edits
   // here and commits with Save (so an external hot-reload doesn't fight a
@@ -30,12 +31,14 @@
 
   // Mirrors the backend SaveSystemConfig validation so the Save button is
   // disabled before submission rather than relying on a backend rejection.
+  // Hotkeys: empty is allowed (= disabled); a non-empty binding must parse.
   let isValid = $derived(
     draft !== null &&
       draft.editor.font_size_px > 0 &&
       draft.editor.tab_indent_spaces > 0 &&
       draft.editor.line_height > 0 &&
-      draft.editor.auto_save_delay_ms >= 0
+      draft.editor.auto_save_delay_ms >= 0 &&
+      Object.values(draft.hotkeys).every((h) => h.trim() === '' || parseHotkey(h) !== null)
   )
 
   let hotkeyEntries = $derived(

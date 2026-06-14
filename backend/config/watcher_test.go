@@ -7,16 +7,6 @@ import (
 	"time"
 )
 
-// await receives a value on ch within the timeout or fails the test.
-func await(t *testing.T, ch <-chan struct{}, what string) {
-	t.Helper()
-	select {
-	case <-ch:
-	case <-time.After(3 * time.Second):
-		t.Fatalf("timed out waiting for: %s", what)
-	}
-}
-
 func TestConfigWatcher_ExternalWrite_TriggersReload(t *testing.T) {
 	tmp := t.TempDir()
 	// Seed a config so there is something to edit.

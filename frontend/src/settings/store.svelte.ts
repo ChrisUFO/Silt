@@ -1,5 +1,6 @@
 import {
   GetSystemConfig,
+  GetConfigLoadError,
   SaveSystemConfig
 } from '../../wailsjs/go/main/App.js'
 import { EventsOn } from '../../wailsjs/runtime/runtime.js'
@@ -31,6 +32,11 @@ export async function loadConfig(): Promise<void> {
   try {
     settings.config = await GetSystemConfig()
     settings.dirty = false
+    // Surface a startup config-load error that was emitted before this
+    // frontend subscribed to config:error (one-shot: retrieved then cleared
+    // on the Go side, so a broken config.yaml isn't silently masked).
+    const loadErr = await GetConfigLoadError()
+    if (loadErr) settings.error = loadErr
   } catch (e) {
     settings.error = errMsg(e)
   } finally {

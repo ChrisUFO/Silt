@@ -181,3 +181,31 @@ func TestNormalize_NeverNil(t *testing.T) {
 		t.Errorf("normalize must produce non-nil hotkeys")
 	}
 }
+
+func TestValidateHotkeys(t *testing.T) {
+	cases := []struct {
+		name    string
+		hotkeys map[string]string
+		wantErr bool
+	}{
+		{"valid single", map[string]string{"open_search": "Ctrl+P"}, false},
+		{"valid multi-modifier + named", map[string]string{"x": "Ctrl+Shift+Slash"}, false},
+		{"empty allowed (disabled)", map[string]string{"open_search": ""}, false},
+		{"stray empty segment tolerated", map[string]string{"open_search": "Ctrl++P"}, false},
+		{"modifier-only rejected", map[string]string{"open_search": "Ctrl+Shift"}, true},
+		{"single modifier rejected", map[string]string{"open_search": "Ctrl"}, true},
+		{"whitespace-only rejected", map[string]string{"open_search": "   "}, false}, // trims to empty = disabled
+		{"nil map ok", nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := ValidateHotkeys(c.hotkeys)
+			if c.wantErr && err == nil {
+				t.Errorf("expected error, got nil")
+			}
+			if !c.wantErr && err != nil {
+				t.Errorf("expected no error, got %v", err)
+			}
+		})
+	}
+}

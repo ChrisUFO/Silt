@@ -31,7 +31,6 @@
   ]
 
   let railRefs: HTMLButtonElement[] = $state([])
-  let panelEl: HTMLDivElement | null = $state(null)
   let dialogEl: HTMLDivElement | null = $state(null)
   let previouslyFocused: HTMLElement | null = null
 
@@ -172,7 +171,7 @@
     </nav>
 
     <!-- Right: active panel -->
-    <div bind:this={panelEl} class="flex-1 min-w-0 flex flex-col overflow-hidden">
+    <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
       <div class="flex items-center justify-between px-6 py-4 border-b border-border-muted flex-shrink-0">
         <h2 class="font-headline-md text-headline-md text-text-primary capitalize">
           {tabs.find((t) => t.id === activeTab)?.label}

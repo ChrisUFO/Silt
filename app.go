@@ -66,6 +66,10 @@ type App struct {
 	cfg           config.SystemConfig
 	configMu      sync.RWMutex
 	configWatcher *config.ConfigWatcher
+	// configLoadErr holds the initial config.yaml load error, if any. The
+	// startup load runs before the frontend subscribes to config:error, so
+	// that event is typically lost; GetConfigLoadError surfaces this one-shot.
+	configLoadErr error
 
 	// pluginRODB is a lazy read-only handle to the in-memory index, used
 	// exclusively by PluginRawQuery so a plugin can never mutate the index
@@ -135,6 +139,12 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		runtime.EventsEmit(a.ctx, "config:error", cfgErr.Error())
 	}
 	a.applyConfigLocked(cfg) // sets a.cfg + a.spacesPerTab before scanning
+	// The config:error event above fires before the frontend mounts and
+	// subscribes, so it is typically lost. Stash the error for
+	// GetConfigLoadError() to surface on the frontend's initial loadConfig().
+	a.configMu.Lock()
+	a.configLoadErr = cfgErr
+	a.configMu.Unlock()
 
 	dbMgr, err := db.NewDatabaseManager()
 	if err != nil {
@@ -1490,6 +1500,23 @@ func (a *App) GetSystemConfig() (config.SystemConfig, error) {
 	return a.cfg, nil
 }
 
+// GetConfigLoadError returns the error from the initial config.yaml load (if
+// any) and clears it. The startup load runs before the frontend subscribes to
+// config:error, so that event can be missed; this binding lets the frontend
+// retrieve the one-shot error on its first loadConfig() so a broken config is
+// surfaced rather than silently masked by Defaults(). Returns "" when there
+// was no error (or it was already retrieved).
+func (a *App) GetConfigLoadError() string {
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	if a.configLoadErr == nil {
+		return ""
+	}
+	msg := a.configLoadErr.Error()
+	a.configLoadErr = nil
+	return msg
+}
+
 // SaveSystemConfig validates, persists atomically, and applies the new config.
 // The self-write is registered first so the hot-reload watcher ignores the
 // fsnotify event from our own atomic write.
@@ -1508,6 +1535,9 @@ func (a *App) SaveSystemConfig(cfg config.SystemConfig) error {
 	}
 	if cfg.Editor.AutoSaveDelayMs < 0 {
 		return fmt.Errorf("invalid config: editor.auto_save_delay_ms must be non-negative")
+	}
+	if err := config.ValidateHotkeys(cfg.Hotkeys); err != nil {
+		return err
 	}
 	if a.configWatcher != nil {
 		a.configWatcher.RegisterSelfWrite()
