@@ -1,0 +1,179 @@
+package themes
+
+import (
+	"math"
+	"testing"
+)
+
+// approxRatio computes the WCAG contrast ratio between two hex/rgb color
+// strings using the same math as the production harness, rounded to 2 dp
+// for legible failure messages.
+func approxRatio(t *testing.T, a, b string) float64 {
+	t.Helper()
+	r, ok := ContrastRatio(a, b)
+	if !ok {
+		t.Fatalf("ContrastRatio(%q,%q) not parseable", a, b)
+	}
+	return math.Round(r*100) / 100
+}
+
+// TestContrastRatio_ReferencePairs pins the WCAG formula against known
+// reference values so a future refactor of the math is caught.
+func TestContrastRatio_ReferencePairs(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+		want float64 // exact WCAG ratio
+		tol  float64
+	}{
+		{"black on white", "#ffffff", "#000000", 21.0, 0.05},
+		{"white on black", "#000000", "#ffffff", 21.0, 0.05},
+		{"black on black", "#000000", "#000000", 1.0, 0.001},
+		{"#777 on #fff (WCAG sample)", "#777777", "#ffffff", 4.48, 0.05},
+	}
+	for _, c := range cases {
+		got, ok := ContrastRatio(c.a, c.b)
+		if !ok {
+			t.Fatalf("%s: not parseable", c.name)
+		}
+		if math.Abs(got-c.want) > c.tol {
+			t.Errorf("%s: ContrastRatio = %.3f, want %.2f (±%.2f)", c.name, got, c.want, c.tol)
+		}
+	}
+}
+
+// TestContrastRatio_AcceptedColorForms ensures the harness handles every
+// color grammar the validator permits (#hex variants + rgb()/rgba()).
+func TestContrastRatio_AcceptedColorForms(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+	}{
+		{"#rrggbb", "#0c0c0e", "#ffffff"},
+		{"#rgb", "#fff", "#000"},
+		{"#rrggbbaa (alpha dropped)", "#0c0c0eff", "#ffffffff"},
+		{"rgb()", "rgb(12,12,14)", "rgb(255,255,255)"},
+		{"rgba()", "rgba(12,12,14,1)", "rgba(255,255,255,1)"},
+		{"rgb() percent", "rgb(5%,5%,5%)", "rgb(100%,100%,100%)"},
+	}
+	for _, c := range cases {
+		if _, ok := ContrastRatio(c.a, c.b); !ok {
+			t.Errorf("%s: expected ok, got false (%q vs %q)", c.name, c.a, c.b)
+		}
+	}
+	// Unparseable forms are rejected.
+	for _, bad := range []string{"red", "hsl(0,0%,0%)", "url(x)", "", "not-a-color"} {
+		if _, ok := ContrastRatio(bad, "#fff"); ok {
+			t.Errorf("expected %q to be rejected, got ok", bad)
+		}
+	}
+}
+
+// contrastPairs enumerates the text/background pairs the shipped default
+// theme is measured against, per the WCAG targets documented in
+// DESIGN.md §8 and docs/THEMING.md §5.
+type contrastPair struct {
+	label  string
+	fg, bg string
+}
+
+func themePairs(t *Theme) map[string][]contrastPair {
+	pairs := map[string][]contrastPair{}
+	for _, mode := range []string{"dark", "light"} {
+		flat := t.Flatten(mode)
+		bgs := []string{"--bg-void", "--bg-surface", "--bg-panel"}
+		textFgs := []string{"--text-primary", "--text-muted"}
+		var ps []contrastPair
+		for _, fg := range textFgs {
+			for _, bg := range bgs {
+				ps = append(ps, contrastPair{fg + " on " + bg, flat[fg], flat[bg]})
+			}
+		}
+		// Accents are non-text UI (focus rings, swatches, icons): AA
+		// non-text threshold is 3:1.
+		for _, fg := range []string{"--accent-primary-start", "--accent-secondary-start"} {
+			ps = append(ps, contrastPair{fg + " on --bg-void", flat[fg], flat["--bg-void"]})
+		}
+		pairs[mode] = ps
+	}
+	return pairs
+}
+
+// TestWCAG_DefaultTheme_ReportsAllRatios logs every measured ratio for
+// the embedded default so the assertion thresholds below are auditable
+// and a future palette regression is obvious from the log.
+func TestWCAG_DefaultTheme_ReportsAllRatios(t *testing.T) {
+	th, err := ParseDefault()
+	if err != nil {
+		t.Fatalf("ParseDefault: %v", err)
+	}
+	for mode, ps := range themePairs(th) {
+		for _, p := range ps {
+			t.Logf("[%-5s] %-32s %s / %s = %.2f:1", mode, p.label, p.fg, p.bg, approxRatio(t, p.fg, p.bg))
+		}
+	}
+}
+
+// TestWCAG_DefaultTheme_PrimaryTextAAA asserts primary text meets AAA
+// (>=7:1) against every background it is rendered on, in both modes.
+// Primary text is body copy — the highest-contrast requirement.
+func TestWCAG_DefaultTheme_PrimaryTextAAA(t *testing.T) {
+	th, err := ParseDefault()
+	if err != nil {
+		t.Fatalf("ParseDefault: %v", err)
+	}
+	const min = 7.0
+	for _, mode := range []string{"dark", "light"} {
+		flat := th.Flatten(mode)
+		for _, bg := range []string{"--bg-void", "--bg-surface", "--bg-panel"} {
+			r := approxRatio(t, flat["--text-primary"], flat[bg])
+			if r < min {
+				t.Errorf("%s: text.primary on %s = %.2f:1, want >= %.1f:1 (AAA)", mode, bg, r, min)
+			}
+		}
+	}
+}
+
+// TestWCAG_DefaultTheme_AccentsNonTextAA asserts the two semantic accent
+// starts meet the WCAG AA non-text threshold (>=3:1) on the canvas, so
+// focus rings, icons, and swatches stay discernible.
+func TestWCAG_DefaultTheme_AccentsNonTextAA(t *testing.T) {
+	th, err := ParseDefault()
+	if err != nil {
+		t.Fatalf("ParseDefault: %v", err)
+	}
+	const min = 3.0
+	for _, mode := range []string{"dark", "light"} {
+		flat := th.Flatten(mode)
+		for _, fg := range []string{"--accent-primary-start", "--accent-secondary-start"} {
+			r := approxRatio(t, flat[fg], flat["--bg-void"])
+			if r < min {
+				t.Errorf("%s: %s on bg.void = %.2f:1, want >= %.1f:1 (AA non-text)", mode, fg, r, min)
+			}
+		}
+	}
+}
+
+// TestWCAG_DefaultTheme_MutedTextAA asserts muted text (labels,
+// metadata, secondary text) meets AA (>=4.5:1) against every
+// background in both modes. This is the documented DESIGN.md §8 target
+// for secondary text.
+func TestWCAG_DefaultTheme_MutedTextAA(t *testing.T) {
+	th, err := ParseDefault()
+	if err != nil {
+		t.Fatalf("ParseDefault: %v", err)
+	}
+	const min = 4.5
+	for _, mode := range []string{"dark", "light"} {
+		flat := th.Flatten(mode)
+		for _, bg := range []string{"--bg-void", "--bg-surface", "--bg-panel"} {
+			r := approxRatio(t, flat["--text-muted"], flat[bg])
+			if r < min {
+				t.Errorf("%s: text.muted on %s = %.2f:1, want >= %.1f:1 (AA). "+
+					"Muted/metadata text is below the documented 4.5:1 target; "+
+					"bump modes.%s.text.muted lighter (dark) / darker (light).",
+					mode, bg, r, min, mode)
+			}
+		}
+	}
+}

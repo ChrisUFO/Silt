@@ -107,6 +107,87 @@ func TestValidate_UnparseableJSON(t *testing.T) {
 	}
 }
 
+// TestValidate_SchemaVersionForwardCompat pins the documented forward-
+// compatibility contract: schema_version is informational. A theme
+// whose token set still matches v1 but carries a higher version number
+// keeps loading rather than being rejected outright (validate.go checks
+// only that schema_version is non-empty, not that it equals
+// SupportedSchemaVersion).
+func TestValidate_SchemaVersionForwardCompat(t *testing.T) {
+	future := strings.Replace(minimalValidJSON, `"schema_version": "1.0.0"`, `"schema_version": "9.9.9"`, 1)
+	th, err := ParseAndValidate([]byte(future))
+	if err != nil {
+		t.Fatalf("a higher schema_version should still validate (informational): %v", err)
+	}
+	if th.SchemaVersion != "9.9.9" {
+		t.Errorf("schema_version = %q, want 9.9.9 preserved", th.SchemaVersion)
+	}
+}
+
+// TestValidate_UnknownSchemaVersionStillRequiresField: a missing
+// schema_version is reported (the field is required even though its
+// value is informational), so a forward-versioned theme can never be
+// confused with a theme that omits the field entirely.
+func TestValidate_UnknownSchemaVersionStillRequiresField(t *testing.T) {
+	bad := strings.Replace(minimalValidJSON, `"schema_version": "1.0.0",`, ``, 1)
+	_, err := ParseAndValidate([]byte(bad))
+	if err == nil {
+		t.Fatal("expected validation error for missing schema_version")
+	}
+	if !strings.Contains(err.Error(), "schema_version") {
+		t.Fatalf("expected schema_version in error, got: %v", err)
+	}
+}
+
+// darkOnlyJSON is a structurally-valid dark theme with NO light mode
+// object. The validator must report every required token under
+// modes.light as missing (a zero-valued Mode struct has empty token
+// fields, each of which fails the required-token check).
+const darkOnlyJSON = `{
+  "schema_version": "1.0.0",
+  "id": "test-theme",
+  "name": "Test Theme",
+  "modes": {
+    "dark": {
+      "bg": {"void":"#000000","surface":"#111111","panel":"#161616","hover":"#1c1c1c","active":"#222222"},
+      "border": {"muted":"#1e1e1e","zinc":"#272727","active":"#3f3f3f","focus":"#525252"},
+      "text": {"primary":"#e4e4e4","muted":"#8b8b94","disabled":"#4b5563"},
+      "accent": {
+        "primary": {"start":"#2dd4bf","end":"#0d9488","glow":"rgba(20,184,166,0.15)"},
+        "secondary": {"start":"#6366f1","end":"#a855f7","glow":"rgba(168,85,247,0.12)"}
+      },
+      "status": {"warn":"#fbbf24","danger":"#f43f5e"}
+    }
+  }
+}`
+
+// TestValidate_MissingLightMode: a theme that defines only modes.dark
+// must be rejected with every required modes.light token reported as
+// missing. This is the explicit "missing modes" case from #50.
+func TestValidate_MissingLightMode(t *testing.T) {
+	_, err := ParseAndValidate([]byte(darkOnlyJSON))
+	if err == nil {
+		t.Fatal("expected validation error for a theme missing modes.light")
+	}
+	verrs, ok := err.(ValidationErrors)
+	if !ok {
+		t.Fatalf("expected ValidationErrors, got %T: %v", err, err)
+	}
+	// Every required dark token is present, so all reported errors must
+	// be under modes.light. Count them and confirm the prefix.
+	lightErrs := 0
+	for _, e := range verrs {
+		if strings.HasPrefix(e.Field, "modes.light.") {
+			lightErrs++
+		} else {
+			t.Errorf("unexpected non-light error: %+v", e)
+		}
+	}
+	if lightErrs != len(requiredTokens) {
+		t.Errorf("expected all %d required light tokens flagged, got %d", len(requiredTokens), lightErrs)
+	}
+}
+
 func TestIsValidColor(t *testing.T) {
 	good := []string{
 		"#fff", "#ffffff", "#ffffffff",

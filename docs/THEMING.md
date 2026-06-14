@@ -135,7 +135,7 @@ The smallest theme that passes validation — both modes, every required token. 
     "dark": {
       "bg":      { "void": "#0c0c0e", "surface": "#121215", "panel": "#161619", "hover": "#1c1c21", "active": "#222226" },
       "border":  { "muted": "#1e1e23", "zinc": "#27272a", "active": "#3f3f46", "focus": "#52525b" },
-      "text":    { "primary": "#dee3e6", "muted": "#71717a", "disabled": "#4b5563" },
+      "text":    { "primary": "#dee3e6", "muted": "#8b8b94", "disabled": "#4b5563" },
       "accent":  {
         "primary":   { "start": "#2dd4bf", "end": "#0d9488", "glow": "rgba(20,184,166,0.15)" },
         "secondary": { "start": "#6366f1", "end": "#a855f7", "glow": "rgba(168,85,247,0.12)" }
@@ -145,7 +145,7 @@ The smallest theme that passes validation — both modes, every required token. 
     "light": {
       "bg":      { "void": "#f8fafc", "surface": "#ffffff", "panel": "#f1f5f9", "hover": "#e2e8f0", "active": "#cbd5e1" },
       "border":  { "muted": "#e2e8f0", "zinc": "#cbd5e1", "active": "#94a3b8", "focus": "#64748b" },
-      "text":    { "primary": "#0f172a", "muted": "#64748b", "disabled": "#94a3b8" },
+      "text":    { "primary": "#0f172a", "muted": "#586478", "disabled": "#94a3b8" },
       "accent":  {
         "primary":   { "start": "#0d9488", "end": "#115e59", "glow": "rgba(13,148,136,0.10)" },
         "secondary": { "start": "#4f46e5", "end": "#7c3aed", "glow": "rgba(79,70,229,0.08)" }
