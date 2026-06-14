@@ -110,22 +110,21 @@ func TestImportThemeFromPath_SchemaError(t *testing.T) {
 	mustWriteTheme(t, filepath.Dir(src), filepath.Base(src), bad)
 
 	themesDir := t.TempDir()
-	_, err := ImportThemeFromPath(themesDir, src)
-	if err == nil {
-		t.Fatal("expected validation error")
+	res, err := ImportThemeFromPath(themesDir, src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	verrs, ok := err.(ValidationErrors)
-	if !ok {
-		t.Fatalf("expected ValidationErrors, got %T: %v", err, err)
+	if len(res.ValidationErrors) == 0 {
+		t.Fatal("expected validation errors in result")
 	}
 	found := false
-	for _, e := range verrs {
+	for _, e := range res.ValidationErrors {
 		if strings.Contains(e.Field, "accent.primary.start") {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected error on accent.primary.start, got: %+v", verrs)
+		t.Errorf("expected error on accent.primary.start, got: %+v", res.ValidationErrors)
 	}
 	// Critical: the import must NOT have written a file.
 	entries, _ := os.ReadDir(themesDir)
@@ -149,8 +148,11 @@ func TestImportThemeFromPath_SandboxRejectsNonColor(t *testing.T) {
 		mutated := strings.Replace(validCustomThemeJSON, `"#c2410c"`, `"`+bad+`"`, 1)
 		src := filepath.Join(t.TempDir(), "src.json")
 		mustWriteTheme(t, filepath.Dir(src), filepath.Base(src), mutated)
-		_, err := ImportThemeFromPath(t.TempDir(), src)
-		if err == nil {
+		res, err := ImportThemeFromPath(t.TempDir(), src)
+		if err != nil {
+			t.Errorf("unexpected error for %q: %v", bad, err)
+		}
+		if len(res.ValidationErrors) == 0 {
 			t.Errorf("expected validator to reject %q as a color value", bad)
 		}
 	}
@@ -242,6 +244,31 @@ func TestImportThemeFromPath_SanitizesID(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(themesDir, want+".json")); err != nil {
 		t.Errorf("expected sanitized filename: %v", err)
+	}
+}
+
+func TestImportThemeFromPath_RejectsAllInvalidID(t *testing.T) {
+	// A theme whose id consists entirely of invalid characters (e.g.
+	// punctuation) sanitizes to "". Before the fix this slipped past
+	// Validate (non-empty id) and produced a ".json" file with an empty
+	// id. Now the importer must reject it explicitly.
+	themesDir := t.TempDir()
+	badID := "!@#$"
+	clone := strings.Replace(validCustomThemeJSON, `"terra-test"`, `"`+badID+`"`, 1)
+	src := filepath.Join(t.TempDir(), "src.json")
+	mustWriteTheme(t, filepath.Dir(src), filepath.Base(src), clone)
+
+	_, err := ImportThemeFromPath(themesDir, src)
+	if err == nil {
+		t.Fatal("expected error for all-invalid theme ID")
+	}
+	if !strings.Contains(err.Error(), "invalid after sanitization") {
+		t.Errorf("expected sanitization error, got: %v", err)
+	}
+	// No file written.
+	entries, _ := os.ReadDir(themesDir)
+	if len(entries) != 0 {
+		t.Errorf("expected no file written, got: %+v", entries)
 	}
 }
 

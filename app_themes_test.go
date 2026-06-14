@@ -357,7 +357,7 @@ func TestImportTheme_IPCHappyPath(t *testing.T) {
 }
 
 // TestImportTheme_IPCValidationFailure verifies the IPC layer surfaces
-// ValidationErrors and does not write a file on failure.
+// ValidationErrors in the result payload and does not write a file on failure.
 func TestImportTheme_IPCValidationFailure(t *testing.T) {
 	configDirOverride(t)
 	app := newTestApp(t)
@@ -366,22 +366,21 @@ func TestImportTheme_IPCValidationFailure(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "src.json")
 	writeFile(t, src, bad)
 
-	_, err := app.ImportTheme(src)
-	if err == nil {
-		t.Fatal("expected validation error")
+	res, err := app.ImportTheme(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	verrs, ok := err.(themes.ValidationErrors)
-	if !ok {
-		t.Fatalf("expected themes.ValidationErrors, got %T: %v", err, err)
+	if len(res.ValidationErrors) == 0 {
+		t.Fatal("expected validation errors in result")
 	}
 	found := false
-	for _, e := range verrs {
+	for _, e := range res.ValidationErrors {
 		if strings.Contains(e.Field, "accent.primary.start") {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected error on accent.primary.start, got: %+v", verrs)
+		t.Errorf("expected error on accent.primary.start, got: %+v", res.ValidationErrors)
 	}
 	// No file written under themes/.
 	themesDir := filepath.Join(app.vaultPath, ".system", "themes")

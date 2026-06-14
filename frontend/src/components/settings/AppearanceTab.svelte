@@ -9,7 +9,10 @@
   // the duration of the hover; pressing Esc or moving focus off the row
   // restores the active theme.
   import { onMount } from 'svelte'
-  import { OnFileDrop, OnFileDropOff } from '../../../wailsjs/runtime/runtime.js'
+  import {
+    OnFileDrop,
+    OnFileDropOff
+  } from '../../../wailsjs/runtime/runtime.js'
   import { injectTokens } from '../../theme/inject'
   import {
     applyTheme,
@@ -149,10 +152,11 @@
     if (!ft) return null
     if (themeState.mode === 'light') return ft.light
     if (themeState.mode === 'system') {
-      // For preview we use the dark map as a deterministic stand-in;
-      // once the user picks this theme the live theme:changed handler
-      // resolves system to the real OS preference.
-      return ft.dark
+      const prefersLight =
+        typeof window !== 'undefined' &&
+        window.matchMedia &&
+        window.matchMedia('(prefers-color-scheme: light)').matches
+      return prefersLight ? ft.light : ft.dark
     }
     return ft.dark
   })
@@ -238,7 +242,8 @@
       {/each}
     </div>
     <p class="text-text-muted text-[11px] font-label-sm mt-2">
-      "System" follows your OS appearance preference. Switching mode does not change the active theme.
+      "System" follows your OS appearance preference. Switching mode does not
+      change the active theme.
     </p>
   </section>
 
@@ -252,12 +257,15 @@
         Theme
       </h3>
       <span class="text-text-muted text-[11px] font-label-sm">
-        {themesState.items.length} {themesState.items.length === 1 ? 'theme' : 'themes'}
+        {themesState.items.length}
+        {themesState.items.length === 1 ? 'theme' : 'themes'}
       </span>
     </div>
 
     {#if themesState.loading && themesState.items.length === 0}
-      <div class="text-text-muted text-[12px] font-body-md animate-pulse py-8 text-center">
+      <div
+        class="text-text-muted text-[12px] font-body-md animate-pulse py-8 text-center"
+      >
         Loading themes…
       </div>
     {:else if themesState.loadError}
@@ -266,13 +274,17 @@
         role="alert"
       >
         <span class="material-symbols-outlined text-[18px]">error</span>
-        <span class="flex-1">Failed to load themes: {themesState.loadError}</span>
+        <span class="flex-1"
+          >Failed to load themes: {themesState.loadError}</span
+        >
       </div>
     {:else}
       <div
         role="listbox"
         aria-label="Available themes"
-        aria-activedescendant={focusIndex !== null ? `theme-row-${focusIndex}` : undefined}
+        aria-activedescendant={focusIndex !== null
+          ? `theme-row-${focusIndex}`
+          : undefined}
         class="space-y-2"
       >
         {#each themesState.items as theme, i (theme.id)}
@@ -282,7 +294,9 @@
             id={`theme-row-${i}`}
             role="option"
             aria-selected={active}
-            tabindex={focusIndex === i || (focusIndex === null && i === 0) ? 0 : -1}
+            tabindex={focusIndex === i || (focusIndex === null && i === 0)
+              ? 0
+              : -1}
             bind:this={rowRefs[i]}
             onclick={() => selectTheme(theme.id)}
             onmouseenter={() => onRowEnter(theme.id)}
@@ -306,17 +320,21 @@
               <span
                 aria-hidden="true"
                 class="block w-4 h-8 rounded-sm border border-border-muted"
-                style="background-color: {theme.swatches?.[0] ?? 'var(--accent-primary-start)'}"
+                style="background-color: {theme.swatches?.[0] ??
+                  'var(--accent-primary-start)'}"
               ></span>
               <span
                 aria-hidden="true"
                 class="block w-4 h-8 rounded-sm border border-border-muted"
-                style="background-color: {theme.swatches?.[1] ?? 'var(--accent-secondary-start)'}"
+                style="background-color: {theme.swatches?.[1] ??
+                  'var(--accent-secondary-start)'}"
               ></span>
             </div>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
-                <span class="text-text-primary text-[13px] font-body-md truncate">
+                <span
+                  class="text-text-primary text-[13px] font-body-md truncate"
+                >
                   {theme.name}
                 </span>
                 {#if active}
@@ -335,7 +353,9 @@
                 </div>
               {/if}
             </div>
-            <span class="material-symbols-outlined text-text-muted text-[18px] flex-shrink-0">
+            <span
+              class="material-symbols-outlined text-text-muted text-[18px] flex-shrink-0"
+            >
               {active ? 'check_circle' : 'chevron_right'}
             </span>
           </button>
@@ -372,8 +392,9 @@
       </button>
     </div>
     <p class="text-text-muted text-[11px] font-label-sm mt-2">
-      Drop a theme .json file anywhere in this tab to import. Imported themes are validated against
-      the canonical schema and appear in the list above immediately.
+      Drop a theme .json file anywhere in this tab to import. Imported themes
+      are validated against the canonical schema and appear in the list above
+      immediately.
     </p>
   </section>
 
@@ -382,11 +403,17 @@
     <div
       role={statusAriaRole(themeStatus) ?? undefined}
       aria-live={themeStatus.kind === 'error' ? 'assertive' : 'polite'}
-      class="rounded-lg px-3 py-2 text-[12px] font-body-md {statusClasses(themeStatus)}"
+      class="rounded-lg px-3 py-2 text-[12px] font-body-md {statusClasses(
+        themeStatus
+      )}"
     >
       <div class="flex items-start gap-2">
         <span class="material-symbols-outlined text-[16px] flex-shrink-0">
-          {themeStatus.kind === 'error' ? 'error' : themeStatus.kind === 'success' ? 'check_circle' : 'info'}
+          {themeStatus.kind === 'error'
+            ? 'error'
+            : themeStatus.kind === 'success'
+              ? 'check_circle'
+              : 'info'}
         </span>
         <div class="flex-1 min-w-0">
           <div>{themeStatus.message}</div>

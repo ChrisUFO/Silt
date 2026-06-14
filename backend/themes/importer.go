@@ -21,10 +21,11 @@ import (
 // to avoid clobbering an existing on-disk theme; the UI can show a "imported
 // as <id>" toast so the user understands why a different id appears.
 type ImportResult struct {
-	Info          ThemeInfo  `json:"info"`
-	RenamedFromID string     `json:"renamed_from_id,omitempty"`
-	Renamed       bool       `json:"renamed"`
-	Warnings      []string   `json:"warnings,omitempty"`
+	Info             ThemeInfo       `json:"info"`
+	RenamedFromID    string          `json:"renamed_from_id,omitempty"`
+	Renamed          bool            `json:"renamed"`
+	Warnings         []string        `json:"warnings,omitempty"`
+	ValidationErrors []ValidationError `json:"validation_errors,omitempty"`
 }
 
 // idSanitizer matches the plugin manifest id pattern (^[a-z0-9_-]+$). The
@@ -74,13 +75,18 @@ func ImportThemeFromPath(themesDir, srcPath string) (*ImportResult, error) {
 	}
 	t, err := ParseAndValidate(raw)
 	if err != nil {
-		// ValidationErrors (and the parse-failure wrapper) propagate verbatim
-		// so the UI can name the offending token and the expected format.
+		var verrs ValidationErrors
+		if errors.As(err, &verrs) {
+			return &ImportResult{ValidationErrors: verrs}, nil
+		}
 		return nil, err
 	}
 
 	originalID := t.ID
 	t.ID = sanitizeThemeID(t.ID)
+	if t.ID == "" {
+		return nil, fmt.Errorf("theme ID %q is invalid after sanitization", originalID)
+	}
 
 	// Reject any built-in id outright? The issue says "Sanitize/namespace
 	// imported theme ids to avoid collisions with built-in themes" — a

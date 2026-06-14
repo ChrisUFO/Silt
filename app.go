@@ -661,6 +661,9 @@ func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
 	)
 	if id == themes.DefaultThemeID {
 		t, err = themes.ParseDefault()
+		if err != nil {
+			return ActiveThemeResult{}, err
+		}
 	} else {
 		var found bool
 		t, found, err = themes.LoadByID(a.themesDir(), id)
@@ -670,9 +673,6 @@ func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
 		if !found {
 			return ActiveThemeResult{}, fmt.Errorf("theme %q is not available", id)
 		}
-	}
-	if err != nil {
-		return ActiveThemeResult{}, err
 	}
 
 	// Persist the selection atomically. Use the actually-resolved theme id
@@ -741,6 +741,9 @@ func (a *App) ImportTheme(srcPath string) (*themes.ImportResult, error) {
 	res, err := themes.ImportThemeFromPath(a.themesDir(), srcPath)
 	if err != nil {
 		return nil, err
+	}
+	if len(res.ValidationErrors) > 0 {
+		return res, nil
 	}
 	themes.InvalidateThemeCache(res.Info.ID)
 	if a.ctx != nil {

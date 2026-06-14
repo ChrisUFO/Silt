@@ -51,7 +51,10 @@ export const themeState: ThemeState = $state({
  */
 export interface ThemesListingState {
   items: themes.ThemeInfo[]
-  flatTokens: Record<string, { dark: Record<string, string>; light: Record<string, string> }>
+  flatTokens: Record<
+    string,
+    { dark: Record<string, string>; light: Record<string, string> }
+  >
   loadError: string | null
   loading: boolean
 }
@@ -253,7 +256,8 @@ export async function loadThemes(): Promise<void> {
   try {
     const res = await ListThemes()
     themesState.items = res?.themes ?? []
-    themesState.flatTokens = (res?.flat_tokens as ThemesListingState['flatTokens']) ?? {}
+    themesState.flatTokens =
+      (res?.flat_tokens as ThemesListingState['flatTokens']) ?? {}
   } catch (err) {
     console.error('theme: ListThemes failed:', err)
     themesState.loadError = err instanceof Error ? err.message : String(err)
@@ -289,9 +293,19 @@ export async function pickAndImportTheme(): Promise<string | null> {
 
 /** Import a theme from a known path (used by both the picker button and
  * the OnFileDrop drop zone). */
-export async function importThemeFromPath(path: string): Promise<string | null> {
+export async function importThemeFromPath(
+  path: string
+): Promise<string | null> {
   try {
     const res = await ImportTheme(path)
+    if (res.validation_errors?.length) {
+      setStatus({
+        kind: 'error',
+        message: 'Theme import failed:',
+        fields: res.validation_errors
+      })
+      return null
+    }
     const id = res.info.id
     if (res.renamed) {
       setStatus({
@@ -308,24 +322,11 @@ export async function importThemeFromPath(path: string): Promise<string | null> 
     }
     return id
   } catch (err) {
-    // The backend's themes.ValidationErrors is a JSON array; when it
-    // comes back over Wails the Wails binding layer decodes it as a
-    // plain JS array of {field, message}. Render per-field so the
-    // user sees exactly which token failed and why.
-    const fields = validationFieldsFromError(err)
-    if (fields.length > 0) {
-      setStatus({
-        kind: 'error',
-        message: 'Theme import failed:',
-        fields
-      })
-    } else {
-      setStatus({
-        kind: 'error',
-        message: `Theme import failed: ${errMsg(err)}`,
-        fields: []
-      })
-    }
+    setStatus({
+      kind: 'error',
+      message: `Theme import failed: ${errMsg(err)}`,
+      fields: []
+    })
     return null
   }
 }
@@ -378,24 +379,6 @@ export async function exportActiveTheme(): Promise<boolean> {
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
-}
-
-function validationFieldsFromError(err: unknown): { field: string; message: string }[] {
-  // The Go-side `themes.ValidationErrors` is a slice of ValidationError
-  // (Field, Message). Wails JSON-decodes the slice into an array of
-  // {field, message} objects — we accept either the array directly or
-  // a wrapped Error whose message is the joined text. Per-field
-  // rendering is the user-friendly path.
-  if (Array.isArray(err)) {
-    return err
-      .filter((e) => e && typeof e.field === 'string' && typeof e.message === 'string')
-      .map((e) => ({ field: e.field, message: e.message }))
-  }
-  if (err && typeof err === 'object') {
-    const anyErr = err as { field?: string; message?: string; fields?: { field: string; message: string }[] }
-    if (Array.isArray(anyErr.fields)) return anyErr.fields
-  }
-  return []
 }
 
 /**
