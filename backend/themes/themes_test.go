@@ -308,3 +308,151 @@ func TestHexToRGB(t *testing.T) {
 		}
 	}
 }
+
+// --- Typography tests (Sprint 6 extension) ---
+
+func TestValidate_TypographyOptional(t *testing.T) {
+	// A theme without a typography section must still validate (backward compat).
+	th, err := ParseAndValidate([]byte(minimalValidJSON))
+	if err != nil {
+		t.Fatalf("theme without typography should validate: %v", err)
+	}
+	if th.Typography != nil {
+		t.Errorf("expected nil Typography, got %+v", th.Typography)
+	}
+}
+
+func TestValidate_TypographyValid(t *testing.T) {
+	withTypo := strings.Replace(
+		minimalValidJSON,
+		`"modes": {`,
+		`"typography": {
+      "font_family": "'Inter', sans-serif",
+      "mono_font_family": "'JetBrains Mono', monospace",
+      "headline_font": "'Hanken Grotesk', sans-serif"
+    },
+    "modes": {`,
+		1,
+	)
+	th, err := ParseAndValidate([]byte(withTypo))
+	if err != nil {
+		t.Fatalf("valid typography should pass: %v", err)
+	}
+	if th.Typography == nil {
+		t.Fatal("expected non-nil Typography")
+	}
+	if th.Typography.FontFamily != "'Inter', sans-serif" {
+		t.Errorf("FontFamily = %q", th.Typography.FontFamily)
+	}
+}
+
+func TestValidate_TypographyRejectsCSSInjection(t *testing.T) {
+	bad := []string{
+		"'Inter'; body { background: red",
+		"'Inter'} body{",
+		"'Inter'<script>alert(1)</script>",
+		"'Inter'>bad",
+	}
+	for _, v := range bad {
+		withBad := strings.Replace(
+			minimalValidJSON,
+			`"modes": {`,
+			`"typography": { "font_family": "`+v+`" },
+    "modes": {`,
+			1,
+		)
+		_, err := ParseAndValidate([]byte(withBad))
+		if err == nil {
+			t.Errorf("expected validation error for font_family %q", v)
+		}
+	}
+}
+
+func TestValidate_TypographyPartial(t *testing.T) {
+	// Only headline_font defined — other fields are optional.
+	partial := strings.Replace(
+		minimalValidJSON,
+		`"modes": {`,
+		`"typography": { "headline_font": "'Playfair Display', serif" },
+    "modes": {`,
+		1,
+	)
+	th, err := ParseAndValidate([]byte(partial))
+	if err != nil {
+		t.Fatalf("partial typography should pass: %v", err)
+	}
+	if th.Typography.HeadlineFont != "'Playfair Display', serif" {
+		t.Errorf("HeadlineFont = %q", th.Typography.HeadlineFont)
+	}
+	if th.Typography.FontFamily != "" {
+		t.Errorf("FontFamily should be empty, got %q", th.Typography.FontFamily)
+	}
+}
+
+func TestFlatten_TypographyEmittedWhenPresent(t *testing.T) {
+	withTypo := strings.Replace(
+		minimalValidJSON,
+		`"modes": {`,
+		`"typography": {
+      "font_family": "'Inter', sans-serif",
+      "headline_font": "'Hanken Grotesk', sans-serif"
+    },
+    "modes": {`,
+		1,
+	)
+	th, err := ParseAndValidate([]byte(withTypo))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	dark := th.Flatten("dark")
+	if dark["--font-body"] != "'Inter', sans-serif" {
+		t.Errorf("--font-body = %q", dark["--font-body"])
+	}
+	if dark["--font-headline"] != "'Hanken Grotesk', sans-serif" {
+		t.Errorf("--font-headline = %q", dark["--font-headline"])
+	}
+	if _, ok := dark["--font-mono"]; ok {
+		t.Errorf("--font-mono should be absent (mono_font_family not set)")
+	}
+}
+
+func TestFlatten_TypographyAbsentWhenNoSection(t *testing.T) {
+	th, err := ParseAndValidate([]byte(minimalValidJSON))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	dark := th.Flatten("dark")
+	for _, key := range []string{"--font-body", "--font-mono", "--font-headline"} {
+		if _, ok := dark[key]; ok {
+			t.Errorf("%s should be absent when theme has no typography section", key)
+		}
+	}
+}
+
+func TestIsValidFontFamily(t *testing.T) {
+	good := []string{
+		"'Inter', sans-serif",
+		"'JetBrains Mono', monospace",
+		"serif",
+		"Georgia, 'Times New Roman', serif",
+		"system-ui",
+	}
+	bad := []string{
+		"'Inter'; body{",
+		"'Inter'} div{",
+		"'><script>",
+		// CSS escape-sequence bypass: \3B resolves to ; at CSS-parse time.
+		"'Inter'\\3B background:red;/*",
+		"'Inter'\\7D body{",
+	}
+	for _, v := range good {
+		if !isValidFontFamily(v) {
+			t.Errorf("expected %q to be valid", v)
+		}
+	}
+	for _, v := range bad {
+		if isValidFontFamily(v) {
+			t.Errorf("expected %q to be rejected", v)
+		}
+	}
+}

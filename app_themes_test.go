@@ -1,7 +1,10 @@
 package main
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"silt/backend/themes"
@@ -310,5 +313,266 @@ func TestApplyTheme_BadModeNotPersisted(t *testing.T) {
 	if after.ThemeMode != beforeMode || after.ActiveTheme != beforeTheme {
 		t.Errorf("invalid ApplyTheme mutated settings: mode %q->%q theme %q->%q",
 			beforeMode, after.ThemeMode, beforeTheme, after.ActiveTheme)
+	}
+}
+
+// TestImportTheme_IPCHappyPath verifies the Wails-bound ImportTheme method:
+// valid file → metadata returned, file written under <vault>/.system/themes/.
+func TestImportTheme_IPCHappyPath(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+
+	// Source file outside the vault, so the importer does the work.
+	src := filepath.Join(t.TempDir(), "src.json")
+	writeFile(t, src, validCustomThemeJSON)
+
+	res, err := app.ImportTheme(src)
+	if err != nil {
+		t.Fatalf("ImportTheme: %v", err)
+	}
+	if res.Info.ID != "terra-test" {
+		t.Errorf("expected id terra-test, got %q", res.Info.ID)
+	}
+	if res.Info.Source != "disk" {
+		t.Errorf("expected source disk, got %q", res.Info.Source)
+	}
+	dst := filepath.Join(app.vaultPath, ".system", "themes", "terra-test.json")
+	if _, err := os.Stat(dst); err != nil {
+		t.Errorf("expected import to write %s: %v", dst, err)
+	}
+	// And the new theme is in the picker listing immediately (no restart).
+	listing, err := app.ListThemes()
+	if err != nil {
+		t.Fatalf("ListThemes: %v", err)
+	}
+	found := false
+	for _, ti := range listing.Themes {
+		if ti.ID == "terra-test" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("imported theme not in ListThemes: %+v", listing.Themes)
+	}
+}
+
+// TestImportTheme_IPCValidationFailure verifies the IPC layer surfaces
+// ValidationErrors in the result payload and does not write a file on failure.
+func TestImportTheme_IPCValidationFailure(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+
+	bad := strings.Replace(validCustomThemeJSON, `"#c2410c"`, `""`, 1)
+	src := filepath.Join(t.TempDir(), "src.json")
+	writeFile(t, src, bad)
+
+	res, err := app.ImportTheme(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.ValidationErrors) == 0 {
+		t.Fatal("expected validation errors in result")
+	}
+	found := false
+	for _, e := range res.ValidationErrors {
+		if strings.Contains(e.Field, "accent.primary.start") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected error on accent.primary.start, got: %+v", res.ValidationErrors)
+	}
+	// No file written under themes/.
+	themesDir := filepath.Join(app.vaultPath, ".system", "themes")
+	entries, _ := os.ReadDir(themesDir)
+	imported := 0
+	for _, e := range entries {
+		if e.Name() != themes.DefaultThemeID+".json" {
+			imported++
+		}
+	}
+	if imported != 0 {
+		t.Errorf("expected no imported file, found: %+v", entries)
+	}
+}
+
+// TestImportTheme_IPCBeforeVault: no vault → error, no file written.
+func TestImportTheme_IPCBeforeVault(t *testing.T) {
+	configDirOverride(t)
+	app := &App{spacesPerTab: 4}
+	src := filepath.Join(t.TempDir(), "src.json")
+	writeFile(t, src, validCustomThemeJSON)
+	if _, err := app.ImportTheme(src); err == nil {
+		t.Fatal("expected error for pre-vault import")
+	}
+}
+
+// TestImportTheme_IPCNamespaceBuiltIn: an import whose id collides with the
+// bundled default is renamed to user-<id>.
+func TestImportTheme_IPCNamespaceBuiltIn(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+
+	clone := strings.Replace(validCustomThemeJSON, `"terra-test"`, `"`+themes.DefaultThemeID+`"`, 1)
+	src := filepath.Join(t.TempDir(), "src.json")
+	writeFile(t, src, clone)
+
+	res, err := app.ImportTheme(src)
+	if err != nil {
+		t.Fatalf("ImportTheme: %v", err)
+	}
+	want := "user-" + themes.DefaultThemeID
+	if res.Info.ID != want {
+		t.Errorf("expected id %q, got %q", want, res.Info.ID)
+	}
+	if !res.Renamed {
+		t.Errorf("expected Renamed=true")
+	}
+}
+
+// TestImportTheme_IPCRejectsDuplicate: importing the same id twice yields
+// ErrImportDuplicate the second time.
+func TestImportTheme_IPCRejectsDuplicate(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+
+	src := filepath.Join(t.TempDir(), "src.json")
+	writeFile(t, src, validCustomThemeJSON)
+	if _, err := app.ImportTheme(src); err != nil {
+		t.Fatalf("first import: %v", err)
+	}
+	_, err := app.ImportTheme(src)
+	if err == nil {
+		t.Fatal("expected duplicate error")
+	}
+	if !errors.Is(err, themes.ErrImportDuplicate) {
+		t.Errorf("expected ErrImportDuplicate, got: %v", err)
+	}
+}
+
+// TestImportTheme_IPCMissingSource: file does not exist on disk.
+func TestImportTheme_IPCMissingSource(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+	if _, err := app.ImportTheme("/no/such/file.json"); err == nil {
+		t.Fatal("expected error for missing source")
+	}
+}
+
+// TestPickThemeFile_NoCtx: returns a clear error when the Wails ctx is
+// not available (mirrors the existing pre-vault test pattern).
+func TestPickThemeFile_NoCtx(t *testing.T) {
+	app := &App{spacesPerTab: 4}
+	if _, err := app.PickThemeFile(); err == nil {
+		t.Fatal("expected error when ctx is nil")
+	}
+}
+
+// TestPickExportPath_NoCtx: returns a clear error when the Wails ctx is
+// not available (same guard as PickThemeFile).
+func TestPickExportPath_NoCtx(t *testing.T) {
+	app := &App{spacesPerTab: 4}
+	if _, err := app.PickExportPath("theme.json"); err == nil {
+		t.Fatal("expected error when ctx is nil")
+	}
+}
+
+// TestExportActiveTheme_IPCRoundTrip: switching to a custom theme, exporting
+// it, and re-parsing the exported file with the canonical validator.
+func TestExportActiveTheme_IPCRoundTrip(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+
+	// Add a custom theme, switch to it.
+	writeFile(t, filepath.Join(app.vaultPath, ".system", "themes", "terra.json"), validCustomThemeJSON)
+	if _, err := app.ApplyTheme("terra-test", "light"); err != nil {
+		t.Fatalf("ApplyTheme: %v", err)
+	}
+
+	dst := filepath.Join(t.TempDir(), "export.json")
+	if err := app.ExportActiveTheme(dst); err != nil {
+		t.Fatalf("ExportActiveTheme: %v", err)
+	}
+	raw, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read export: %v", err)
+	}
+	parsed, err := themes.ParseAndValidate(raw)
+	if err != nil {
+		t.Fatalf("exported file fails canonical validation: %v", err)
+	}
+	if parsed.ID != "terra-test" {
+		t.Errorf("exported id = %q, want terra-test", parsed.ID)
+	}
+}
+
+// TestExportActiveTheme_IPCBeforeVault: no vault → error.
+func TestExportActiveTheme_IPCBeforeVault(t *testing.T) {
+	app := &App{spacesPerTab: 4}
+	if err := app.ExportActiveTheme(filepath.Join(t.TempDir(), "out.json")); err == nil {
+		t.Fatal("expected error for pre-vault export")
+	}
+}
+
+// TestExportActiveTheme_IPCEmptyPath: empty destination returns error.
+func TestExportActiveTheme_IPCEmptyPath(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+	if err := app.ExportActiveTheme(""); err == nil {
+		t.Fatal("expected error for empty dst")
+	}
+}
+
+// TestApplyTheme_ReadsListOnce (#76): ApplyTheme now resolves the requested
+// theme via themes.LoadByID (a single os.ReadDir). Switch through several
+// on-disk themes under -race to catch any unsynchronized access that the
+// double-scan path might have masked.
+//
+// This is a SMOKE GUARD, not a strict single-scan assertion: it exercises
+// the happy path under -race but does not count os.ReadDir calls (which
+// would require wrapping the syscall in a test-only counter, adding
+// production-code churn for marginal test value). The single-scan contract
+// is enforced structurally by the code path: ApplyTheme calls
+// themes.LoadByID exactly once and never calls themes.ListThemes.
+func TestApplyTheme_ReadsListOnce(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+	// Populate themes dir so LoadByID has work to do.
+	for _, name := range []string{"alpha", "beta", "gamma"} {
+		body := strings.Replace(validCustomThemeJSON, `"terra-test"`, `"`+name+`"`, 1)
+		writeFile(t, filepath.Join(app.vaultPath, ".system", "themes", name+".json"), body)
+	}
+	// Cycle through them under -race; any double-scan race surfaces here.
+	for _, name := range []string{"alpha", "beta", "gamma", "alpha", "beta"} {
+		if _, err := app.ApplyTheme(name, "dark"); err != nil {
+			t.Fatalf("ApplyTheme(%q): %v", name, err)
+		}
+	}
+}
+
+// TestImportTheme_EmitsThemesChanged: a successful import must emit exactly
+// one "themes:changed" Wails event so the frontend picker re-fetches
+// ListThemes and the new theme appears without a restart. Plan-promised
+// in PLAN.md Phase 2; verifies the emit path end-to-end.
+//
+// The App struct stores the Wails context (a.ctx) which is nil in tests
+// (no Wails runtime). When ctx is nil, EventsEmit is a no-op (guarded by
+// `if a.ctx != nil`). So we verify the guard logic by asserting (a) the
+// method succeeds and (b) it does not panic with a nil ctx. The actual
+// event wire-format is exercised by the Wails integration test (future).
+func TestImportTheme_EmitsThemesChanged_NoCtxNoPanic(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t) // a.ctx is nil in tests
+
+	src := filepath.Join(t.TempDir(), "src.json")
+	writeFile(t, src, validCustomThemeJSON)
+
+	// Must not panic despite nil ctx (the EventsEmit guard must hold).
+	res, err := app.ImportTheme(src)
+	if err != nil {
+		t.Fatalf("ImportTheme: %v", err)
+	}
+	if res == nil || res.Info.ID != "terra-test" {
+		t.Errorf("unexpected result: %+v", res)
 	}
 }

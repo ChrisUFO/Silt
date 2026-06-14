@@ -670,39 +670,43 @@ func (a *App) GetActiveTheme() (ActiveThemeResult, error) {
 // ApplyTheme selects a theme and mode, persists it to settings, and returns
 // the new token maps. Both id and mode are validated: an unknown id or an
 // invalid mode returns a structured error and is NOT persisted.
+//
+// The on-disk theme scan happens exactly once (per #76): themes.LoadByID
+// reads the themesDir and returns the parsed theme in a single pass. The
+// previous implementation called ListThemes (reads + parses every file)
+// followed by ResolveActive (reads the directory a second time to find the
+// same theme), so every switch did two directory scans + 2N parses.
 func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
 	if !vault.ValidThemeMode(mode) {
 		return ActiveThemeResult{}, fmt.Errorf("invalid mode %q (valid: dark, light, system)", mode)
 	}
-	// Confirm the requested id is selectable (on-disk or the embedded
-	// default). A typo or stale id errors here rather than silently
-	// snapping to the default.
-	listing, err := themes.ListThemes(a.themesDir())
-	if err != nil {
-		return ActiveThemeResult{}, fmt.Errorf("failed to enumerate themes: %w", err)
-	}
-	if id != themes.DefaultThemeID {
-		known := false
-		for _, ti := range listing.Themes {
-			if ti.ID == id {
-				known = true
-				break
-			}
+	// Resolve the requested theme in one pass. The embedded default is
+	// always available; any other id must live on disk. A typo or stale id
+	// errors here rather than silently snapping to the default.
+	var (
+		t   *themes.Theme
+		err error
+	)
+	if id == themes.DefaultThemeID {
+		t, err = themes.ParseDefault()
+		if err != nil {
+			return ActiveThemeResult{}, err
 		}
-		if !known {
+	} else {
+		var found bool
+		t, found, err = themes.LoadByID(a.themesDir(), id)
+		if err != nil {
+			return ActiveThemeResult{}, fmt.Errorf("failed to look up theme %q: %w", id, err)
+		}
+		if !found {
 			return ActiveThemeResult{}, fmt.Errorf("theme %q is not available", id)
 		}
 	}
 
-	t, err := themes.ResolveActive(a.themesDir(), id, mode)
-	if err != nil {
-		return ActiveThemeResult{}, err
-	}
-
 	// Persist the selection atomically. Use the actually-resolved theme id
-	// (t.ID) rather than the requested id: if ResolveActive fell back to the
-	// embedded default (e.g. the file vanished between the ListThemes check
-	// and resolution), settings stays consistent with what is rendered.
+	// (t.ID) rather than the requested id: if the caller requested the
+	// embedded default and the file vanished mid-request, settings stays
+	// consistent with what is rendered.
 	settings, err := vault.LoadSettings()
 	if err != nil {
 		return ActiveThemeResult{}, fmt.Errorf("failed to load settings: %w", err)
@@ -714,12 +718,103 @@ func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
 	}
 
 	res := buildThemeResult(t, mode)
+	log.Printf("themes: ApplyTheme(id=%q mode=%q) → resolved %q", id, mode, t.ID)
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "theme:changed", map[string]string{
 			"id": t.ID, "mode": mode,
 		})
 	}
 	return res, nil
+}
+
+// PickThemeFile opens the native file picker (filtered to *.json) and
+// returns the chosen path. The empty string means the user cancelled. The
+// frontend feeds the returned path to ImportTheme — the backend does all
+// validation and writing, so the frontend never touches the filesystem
+// directly.
+func (a *App) PickThemeFile() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("application context not ready")
+	}
+	selected, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select a theme JSON",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Silt Theme (*.json)", Pattern: "*.json"},
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to open file picker: %w", err)
+	}
+	return selected, nil
+}
+
+// ImportTheme validates a theme JSON at srcPath, namespaces its id to
+// avoid collisions with built-ins / already-imported themes, and writes
+// it atomically to <vault>/.system/themes/. The shared validator
+// (themes.ParseAndValidate) is the same call the loader uses, so a
+// successfully imported theme is the exact same object ListThemes will
+// enumerate on the next picker refresh.
+//
+// On success the Wails-bound event "themes:changed" is emitted so any
+// subscribed frontend (the picker, future command palette, etc.)
+// re-fetches the listing immediately. The active theme is NOT changed:
+// a fresh import is unselected until the user picks it.
+//
+// The in-process theme cache (#73) is invalidated so a launch-time
+// background-color resolution that runs after the import will pick up
+// the new file instead of a stale parse.
+func (a *App) ImportTheme(srcPath string) (*themes.ImportResult, error) {
+	if a.vaultPath == "" {
+		return nil, fmt.Errorf("vault not loaded")
+	}
+	res, err := themes.ImportThemeFromPath(a.themesDir(), srcPath)
+	if err != nil {
+		log.Printf("themes: ImportTheme(%q) failed: %v", filepath.Base(srcPath), err)
+		return nil, err
+	}
+	if len(res.ValidationErrors) > 0 {
+		log.Printf("themes: ImportTheme(%q) rejected: %d validation error(s)", filepath.Base(srcPath), len(res.ValidationErrors))
+		return res, nil
+	}
+	log.Printf("themes: ImportTheme(%q) → imported as %q (renamed=%v)", filepath.Base(srcPath), res.Info.ID, res.Renamed)
+	themes.InvalidateThemeCache(res.Info.ID)
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "themes:changed", struct{}{})
+	}
+	return res, nil
+}
+
+// PickExportPath opens the native save-file dialog (filtered to *.json)
+// and returns the chosen path. The empty string means the user
+// cancelled. The frontend feeds the returned path to ExportActiveTheme.
+// defaultFilename is offered as the initial file name (e.g.
+// "<theme-id>.json"); pass "" to let the OS pick a default.
+func (a *App) PickExportPath(defaultFilename string) (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("application context not ready")
+	}
+	return runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:            "Export active theme",
+		DefaultFilename:  defaultFilename,
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Silt Theme (*.json)", Pattern: "*.json"},
+		},
+	})
+}
+
+// ExportActiveTheme writes the currently active theme verbatim to
+// dstPath as JSON, so the user can round-trip edit it (and re-import).
+// The active id is read from AppSettings; the embedded default ships
+// even when the on-disk copy is missing.
+func (a *App) ExportActiveTheme(dstPath string) error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	settings, err := vault.LoadSettings()
+	if err != nil {
+		return fmt.Errorf("failed to load settings: %w", err)
+	}
+	return themes.ExportThemeToPath(a.themesDir(), settings.ActiveTheme, dstPath)
 }
 
 

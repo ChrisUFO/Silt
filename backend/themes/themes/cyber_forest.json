@@ -4,6 +4,11 @@
   "name": "Cyber Forest",
   "author": "System Designer",
   "description": "The default Silt dark theme: ink-rich slate canvas with surgical teal primary and indigo secondary accents.",
+  "typography": {
+    "font_family": "'Plus Jakarta Sans', sans-serif",
+    "mono_font_family": "'JetBrains Mono', monospace",
+    "headline_font": "'Hanken Grotesk', sans-serif"
+  },
   "modes": {
     "dark": {
       "bg": {

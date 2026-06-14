@@ -282,7 +282,7 @@ Kanban Card Drag-Reorder: Uses compile-time svelte/animate (using Svelte's nativ
 
 7. Dynamic Theme Injection Runtime
 
-To support user-defined styling, Silt implements a runtime CSS Custom Property injector. The active theme and dark/light mode are persisted in AppSettings (user-global settings.json) and resolved over the Wails IPC bridge; a Svelte theme store injects the resolved token map onto :root in a single paint frame.
+To support user-defined styling, Silt implements a runtime CSS Custom Property injector. The active theme and dark/light mode are persisted in AppSettings (user-global settings.json) and resolved over the Wails IPC bridge; a Svelte theme store injects the resolved token map onto :root in a single paint frame. The token map includes both color tokens (--bg-*, --border-*, --text-*, --accent-*, --status-*) and, when the theme defines them, typography tokens (--font-headline, --font-body, --font-mono). Typography is theme-level (not per-mode): each theme can optionally declare font-family choices that override the config-driven editor.* defaults via CSS fallback chains in index.css (e.g. `var(--font-body, var(--editor-font-family), 'Plus Jakarta Sans', sans-serif)`). Themes without a typography section are fully backward compatible — the config values remain in effect.
 
 ```
                 +------------------------------------------+
@@ -306,6 +306,10 @@ To support user-defined styling, Silt implements a runtime CSS Custom Property i
 ```
 
 A canonical default theme (cyber_forest) is embedded in the Go binary so the app always renders correctly before a vault exists or when the themes directory is wiped. The native webview BackgroundColour is resolved at launch from that embedded theme's `bg.void`, eliminating any pre-CSS flash that matches no token.
+
+Custom Theme Import (Sprint 6, #48): users can import a theme JSON via the Settings → Appearance "Import" button or by dragging a `.json` onto the tab (Wails `OnFileDrop`). The backend validates against the canonical schema using the same `themes.ParseAndValidate` the loader uses, namespaces the id (`user-` prefix on a built-in id, counter suffix on repeat), and writes the file atomically. `themes.ValidationErrors` propagate over IPC so the UI names the offending token and the expected format. On success the backend emits the Wails event `themes:changed` (distinct from the active-theme event `theme:changed`); the frontend `themesState` listing re-fetches and the new theme appears in the picker without a restart. Sandbox by schema: the canonical schema accepts only color values (hex / rgb / rgba) at every token slot, so embedded `<script>`, `url()`, `expression()`, and named colors are rejected structurally before they reach disk.
+
+User Theme Engine UX (Sprint 6, #47): Settings → Appearance is the single surface for theme selection. Mode is a `role="radiogroup"` of Dark / Light / System (changing mode never changes the active theme). Themes are a `role="listbox"` of `role="option"` rows with roving tabindex, Arrow/Home/End navigation, Enter/Space commit, and Esc to cancel any live preview. Swatches are data-driven from `ThemeInfo.Swatches` (no per-theme code branches). The picker renders a live preview on hover/focus by injecting the preview theme's tokens via the existing `injectTokens` path — restoring the active theme on `mouseleave`/`blur`/`Esc`. Errors and status updates flow through a `role="status" aria-live="polite"` region (escalating to `role="alert" aria-live="assertive"` for errors). The active id and mode persist across restarts via `AppSettings` (Sprint 5).
 
 
 8. Accessibility (A11Y) & Keyboard Navigation Compliance

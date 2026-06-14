@@ -174,37 +174,42 @@ body {
   background: var(--border-muted);
 }
 
-/* Typography styles */
+/* Typography styles — font families resolve through the theme pipeline
+   first (--font-* tokens injected by the theme engine), falling back to
+   the config-driven --editor-* variables, then to hardcoded defaults.
+   This lets each theme define its own typographic identity without
+   touching the config, while themes without a typography section stay
+   backward compatible. */
 .font-headline-lg {
-  font-family: 'Hanken Grotesk', sans-serif;
+  font-family: var(--font-headline, 'Hanken Grotesk', sans-serif);
   font-size: 24px;
   font-weight: 700;
   line-height: 31px;
 }
 
 .font-headline-md {
-  font-family: 'Hanken Grotesk', sans-serif;
+  font-family: var(--font-headline, 'Hanken Grotesk', sans-serif);
   font-size: 18px;
   font-weight: 600;
   line-height: 25px;
 }
 
 .font-body-md {
-  font-family: var(--editor-font-family);
+  font-family: var(--font-body, var(--editor-font-family));
   font-size: var(--editor-font-size);
   font-weight: 400;
   line-height: var(--editor-line-height);
 }
 
 .font-label-sm {
-  font-family: var(--editor-mono-font-family);
+  font-family: var(--font-mono, var(--editor-mono-font-family));
   font-size: 12px;
   font-weight: 400;
   line-height: 12px;
 }
 
 .font-label-sm-bold {
-  font-family: var(--editor-mono-font-family);
+  font-family: var(--font-mono, var(--editor-mono-font-family));
   font-size: 12px;
   font-weight: 700;
   line-height: 12px;

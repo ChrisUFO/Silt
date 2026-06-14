@@ -1,6 +1,7 @@
 package themes
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -8,6 +9,12 @@ import (
 	"sort"
 	"strings"
 )
+
+// ErrThemeNotFound is returned (wrapped) by loadThemeByID when no theme
+// with the requested id lives on disk. Callers use errors.Is to
+// distinguish "not found" (benign — fall back to default) from genuine
+// I/O errors (permission denied, etc.) which should propagate.
+var ErrThemeNotFound = errors.New("theme not found")
 
 // ParseDefault parses the embedded canonical default theme. It is the
 // guaranteed fallback used when no vault/themes exist or the active id is
@@ -44,12 +51,25 @@ type ThemeLoadError struct {
 	Message string `json:"message"`
 }
 
+// FlatTokensPerMode is the per-theme flat CSS-token map for each mode.
+// Used by the picker to render live previews on hover without an
+// extra roundtrip per preview. The picker receives one pair per theme
+// (one dark + one light map) so it can preview in the user's current
+// mode without a second IPC call when the mode changes.
+type FlatTokensPerMode struct {
+	Dark  map[string]string `json:"dark"`
+	Light map[string]string `json:"light"`
+}
+
 // ListThemesResult is returned by ListThemes: the valid themes (always
 // including the embedded default, deduped by id) plus any per-file load
-// errors.
+// errors. FlatTokens (Sprint 6, #47) carries the per-mode CSS custom-
+// property map keyed by ThemeInfo.ID so the picker can render live
+// previews without a second IPC call per hover.
 type ListThemesResult struct {
-	Themes []ThemeInfo      `json:"themes"`
-	Errors []ThemeLoadError `json:"errors"`
+	Themes     []ThemeInfo                  `json:"themes"`
+	Errors     []ThemeLoadError             `json:"errors"`
+	FlatTokens map[string]FlatTokensPerMode `json:"flat_tokens,omitempty"`
 }
 
 // ListThemes enumerates <themesDir>/*.json, returning metadata for every
@@ -57,10 +77,16 @@ type ListThemesResult struct {
 // embedded default theme is always present (deduped by id) so the picker
 // always has at least one selectable theme even on an empty/wiped vault.
 // A missing themesDir is not an error — it yields just the default.
+//
+// Since Sprint 6 (#47) the result also carries FlatTokens: the per-mode
+// CSS-token map keyed by ThemeInfo.ID, used by the picker for live
+// previews. The cost is one extra Flatten call per parsed theme (cheap;
+// the theme is already in memory after ParseAndValidate).
 func ListThemes(themesDir string) (*ListThemesResult, error) {
 	res := &ListThemesResult{
-		Themes: []ThemeInfo{},
-		Errors: []ThemeLoadError{},
+		Themes:     []ThemeInfo{},
+		Errors:     []ThemeLoadError{},
+		FlatTokens: map[string]FlatTokensPerMode{},
 	}
 
 	seenIDs := map[string]bool{}
@@ -89,6 +115,10 @@ func ListThemes(themesDir string) (*ListThemesResult, error) {
 				}
 				seenIDs[t.ID] = true
 				res.Themes = append(res.Themes, t.AsInfo("disk"))
+				res.FlatTokens[t.ID] = FlatTokensPerMode{
+					Dark:  t.Flatten("dark"),
+					Light: t.Flatten("light"),
+				}
 			}
 		} else if !os.IsNotExist(err) {
 			// A real I/O error (permissions, etc.) — surface it. A missing dir
@@ -103,6 +133,10 @@ func ListThemes(themesDir string) (*ListThemesResult, error) {
 	if !seenIDs[DefaultThemeID] {
 		if dt, derr := ParseDefault(); derr == nil {
 			res.Themes = append(res.Themes, dt.AsInfo("default"))
+			res.FlatTokens[DefaultThemeID] = FlatTokensPerMode{
+				Dark:  dt.Flatten("dark"),
+				Light: dt.Flatten("light"),
+			}
 		}
 	}
 
@@ -144,12 +178,13 @@ func ResolveActive(themesDir, activeID, mode string) (*Theme, error) {
 }
 
 // loadThemeByID scans themesDir for the first valid theme whose id matches.
-// It intentionally does not assume the filename equals the id.
+// It intentionally does not assume the filename equals the id. Returns
+// ErrThemeNotFound (wrapped) when no matching id is on disk; returns the
+// raw os.ReadDir error on genuine I/O failures so callers don't confuse
+// a permission fault with a missing theme.
 func loadThemeByID(themesDir, id string) (*Theme, error) {
 	if themesDir == "" {
-		// No vault open → nothing to scan. The caller (ResolveActive) falls
-		// back to the embedded default.
-		return nil, fmt.Errorf("themes directory is empty")
+		return nil, ErrThemeNotFound
 	}
 	entries, err := os.ReadDir(themesDir)
 	if err != nil {
@@ -167,5 +202,26 @@ func loadThemeByID(themesDir, id string) (*Theme, error) {
 			return t, nil
 		}
 	}
-	return nil, fmt.Errorf("no theme with id %q in %s", id, themesDir)
+	return nil, fmt.Errorf("%w: %q in %s", ErrThemeNotFound, id, themesDir)
+}
+
+// LoadByID is the public version of loadThemeByID: a single os.ReadDir scan
+// that returns the parsed theme for the given id (or false if absent). Used
+// by ApplyTheme to validate the requested id and obtain the theme in one
+// directory read (the previous implementation called ListThemes — which
+// reads + parses every file — and then ResolveActive — which read the
+// directory a second time — making ApplyTheme double the file system work
+// for every switch).
+func LoadByID(themesDir, id string) (*Theme, bool, error) {
+	if themesDir == "" {
+		return nil, false, nil
+	}
+	t, err := loadThemeByID(themesDir, id)
+	if err != nil {
+		if errors.Is(err, ErrThemeNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return t, true, nil
 }

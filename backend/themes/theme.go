@@ -6,13 +6,31 @@ import "strings"
 // DESIGN.md §2.1 / SPECS.md §6.4 exactly: a modes-based object with
 // hue-agnostic semantic accents. See themes/cyber_forest.json for the
 // canonical example.
+//
+// Typography is an optional theme-level section (not per-mode): font
+// families rarely change between dark and light variants of the same
+// theme. When present, the theme's font choices are injected as CSS
+// custom properties (--font-headline, --font-body, --font-mono)
+// alongside the color tokens; when absent, the config's editor.*
+// values remain in effect (backward compatible).
 type Theme struct {
-	SchemaVersion string `json:"schema_version"`
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Author        string `json:"author"`
-	Description   string `json:"description"`
-	Modes         Modes  `json:"modes"`
+	SchemaVersion string      `json:"schema_version"`
+	ID            string      `json:"id"`
+	Name          string      `json:"name"`
+	Author        string      `json:"author"`
+	Description   string      `json:"description"`
+	Typography    *Typography `json:"typography,omitempty"`
+	Modes         Modes       `json:"modes"`
+}
+
+// Typography holds the optional font-family choices for a theme. Each
+// field is a CSS font-family declaration string (e.g. "'Plus Jakarta
+// Sans', sans-serif"). Fields are individually optional — a theme can
+// define only a headline font while leaving body/mono to the config.
+type Typography struct {
+	FontFamily     string `json:"font_family,omitempty"`
+	MonoFontFamily string `json:"mono_font_family,omitempty"`
+	HeadlineFont   string `json:"headline_font,omitempty"`
 }
 
 // Modes holds the per-appearance token sets. Both dark and light are
@@ -111,6 +129,22 @@ func (t *Theme) Flatten(mode string) map[string]string {
 
 	out["--status-warn"] = m.Status.Warn
 	out["--status-danger"] = m.Status.Danger
+
+	// Typography (theme-level, not per-mode). Emitted only when the
+	// theme defines them; the frontend CSS uses these with fallbacks
+	// to the config-provided --editor-* variables, so themes without
+	// a typography section are backward compatible.
+	if t.Typography != nil {
+		if v := t.Typography.HeadlineFont; v != "" {
+			out["--font-headline"] = v
+		}
+		if v := t.Typography.FontFamily; v != "" {
+			out["--font-body"] = v
+		}
+		if v := t.Typography.MonoFontFamily; v != "" {
+			out["--font-mono"] = v
+		}
+	}
 
 	return out
 }

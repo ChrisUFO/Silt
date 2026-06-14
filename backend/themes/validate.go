@@ -95,10 +95,55 @@ func Validate(t *Theme) error {
 	errs = append(errs, validateMode("modes.dark", t.Modes.Dark)...)
 	errs = append(errs, validateMode("modes.light", t.Modes.Light)...)
 
+	// Typography is optional: when absent (nil) the theme inherits font
+	// choices from config. When present, each non-empty field is validated
+	// against isValidFontFamily to prevent CSS injection via font-family
+	// values (the same sandbox-by-validation approach used for colors).
+	if t.Typography != nil {
+		errs = append(errs, validateTypographyField("typography.font_family", t.Typography.FontFamily)...)
+		errs = append(errs, validateTypographyField("typography.mono_font_family", t.Typography.MonoFontFamily)...)
+		errs = append(errs, validateTypographyField("typography.headline_font", t.Typography.HeadlineFont)...)
+	}
+
 	if len(errs) == 0 {
 		return nil
 	}
 	return errs
+}
+
+// validateTypographyField checks a single optional font-family string.
+// Empty values are valid (the field is optional). Non-empty values must
+// not contain CSS declaration-breaking characters (;, {}, <, >) that
+// could escape the :root{--name:value;} injection context.
+func validateTypographyField(field, value string) ValidationErrors {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if !isValidFontFamily(value) {
+		return ValidationErrors{{
+			Field:   field,
+			Message: fmt.Sprintf("not a valid font-family value: %q (must not contain ;, {, }, <, or >)", value),
+		}}
+	}
+	return nil
+}
+
+// isValidFontFamily accepts any string that does not contain characters
+// that could break out of a CSS property declaration context. Font-family
+// values are free-form (font names, generic families like sans-serif,
+// comma-separated stacks), so the check is intentionally narrow: block
+// only the structural escape characters. Backslash is included because
+// CSS escape sequences (\3B → ;) could bypass the literal-character
+// checks and inject declaration-breaking values at CSS-parse time.
+func isValidFontFamily(s string) bool {
+	for _, c := range s {
+		switch c {
+		case ';', '{', '}', '<', '>', '\\':
+			return false
+		}
+	}
+	return true
 }
 
 func validateMode(prefix string, m Mode) ValidationErrors {

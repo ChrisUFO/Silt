@@ -1,10 +1,20 @@
-// Theme store (#46): holds the active theme/mode and the dark/light token
-// maps, subscribes to the backend GetActiveTheme / ApplyTheme IPC methods,
-// re-resolves "system" mode locally via prefers-color-scheme, and drives
-// the runtime injector. Svelte 5 $state runes in a .svelte.ts module
-// (matches plugins/store.svelte.ts).
-import { ApplyTheme, GetActiveTheme } from '../../wailsjs/go/main/App.js'
+// Theme store (#46, #47): holds the active theme/mode and the dark/light
+// token maps, the listing of available themes, subscribes to the backend
+// GetActiveTheme / ApplyTheme / ListThemes IPC methods, re-resolves "system"
+// mode locally via prefers-color-scheme, and drives the runtime injector.
+// Svelte 5 $state runes in a .svelte.ts module (matches
+// plugins/store.svelte.ts and settings/store.svelte.ts).
+import {
+  ApplyTheme,
+  ExportActiveTheme,
+  GetActiveTheme,
+  ImportTheme,
+  ListThemes,
+  PickExportPath,
+  PickThemeFile
+} from '../../wailsjs/go/main/App.js'
 import { EventsOn } from '../../wailsjs/runtime/runtime.js'
+import type { themes } from '../../wailsjs/go/models'
 import { injectTokens } from './inject'
 
 export type ThemeMode = 'dark' | 'light' | 'system'
@@ -28,8 +38,120 @@ export const themeState: ThemeState = $state({
   error: null
 })
 
+/**
+ * Listing store (#47): every theme currently selectable, populated from
+ * `ListThemes()`. Decoupled from the active theme (themeState): the
+ * picker renders `themesState.items` and the highlighted row matches
+ * `themeState.id`. Re-fetched on the backend's `themes:changed` event
+ * (emitted by the importer — see backend/themes/importer.go) so an
+ * imported theme appears in the picker immediately, no restart.
+ *
+ * `flatTokens` carries the per-mode CSS custom-property map keyed by
+ * ThemeInfo.ID so the picker can render hover previews without a
+ * second IPC call. The map is rebuilt on every `loadThemes` call.
+ */
+export interface ThemesListingState {
+  items: themes.ThemeInfo[]
+  flatTokens: Record<
+    string,
+    { dark: Record<string, string>; light: Record<string, string> }
+  >
+  loadError: string | null
+  loading: boolean
+}
+
+export const themesState: ThemesListingState = $state({
+  items: [],
+  flatTokens: {},
+  loadError: null,
+  loading: false
+})
+
+/**
+ * Transient status surface for the picker (#47, #48). The picker renders
+ * `themeStatus.message` in a `role="status" aria-live="polite"` region so
+ * "Theme X applied", "Imported as <id>", and error notices are
+ * announced to screen readers without stealing focus. `kind` drives
+ * the styling and the aria role (alert vs. status). An empty
+ * `message` is the "no status" sentinel.
+ */
+export type ThemeStatusKind = 'info' | 'success' | 'error'
+
+export interface ThemeStatus {
+  kind: ThemeStatusKind
+  message: string
+  /** Per-field validation details (from themes.ValidationErrors). */
+  fields: { field: string; message: string }[]
+}
+
+export const themeStatus: ThemeStatus = $state({
+  kind: 'info',
+  message: '',
+  fields: []
+})
+
+/** Replace the status with a fresh message; clear with `clearStatus()`. */
+export function setStatus(s: ThemeStatus): void {
+  themeStatus.kind = s.kind
+  themeStatus.message = s.message
+  themeStatus.fields = s.fields
+  // Auto-dismiss non-error messages after 5 seconds so screen-reader
+  // users don't get a stale live-region announcement lingering after
+  // the action is long past. Errors stay until the user dismisses them
+  // (they need attention). The previous timeout (if any) is cleared.
+  if (statusTimeout !== null) {
+    clearTimeout(statusTimeout)
+    statusTimeout = null
+  }
+  if (s.kind !== 'error' && s.message) {
+    statusTimeout = setTimeout(() => {
+      clearStatus()
+      statusTimeout = null
+    }, 5000)
+  }
+}
+
+export function clearStatus(): void {
+  if (statusTimeout !== null) {
+    clearTimeout(statusTimeout)
+    statusTimeout = null
+  }
+  themeStatus.kind = 'info'
+  themeStatus.message = ''
+  themeStatus.fields = []
+}
+
+let statusTimeout: ReturnType<typeof setTimeout> | null = null
+
 let schemeMedia: MediaQueryList | null = null
 let started = false
+let themesStarted = false
+let offThemesChanged: (() => void) | null = null
+
+/**
+ * Test-only: reset module-level state (the `started` / `themesStarted`
+ * idempotency guards + the cached MQL + the event subscription).
+ * Exported for the vitest coverage of this store; not used in app
+ * code (and intentionally not re-exported from the public surface).
+ */
+export function _resetForTests(): void {
+  schemeMedia = null
+  started = false
+  themesStarted = false
+  offThemesChanged?.()
+  offThemesChanged = null
+  themeState.id = ''
+  themeState.name = ''
+  themeState.mode = 'dark'
+  themeState.darkTokens = {}
+  themeState.lightTokens = {}
+  themeState.error = null
+  themesState.items = []
+  themesState.flatTokens = {}
+  themesState.loadError = null
+  themesState.loading = false
+  clearStatus()
+}
 
 /** Returns true when the OS prefers light mode (used to resolve "system").
  * Reads the cached MQL rather than allocating one per repaint; null pre-init
@@ -47,8 +169,11 @@ function effectiveTokens(s: ThemeState): Record<string, string> {
   return osPrefersLight() ? s.lightTokens : s.darkTokens
 }
 
-/** Re-inject the effective tokens for the current state (same-tick). */
-function repaint(): void {
+/** Re-inject the effective tokens for the current state (same-tick).
+ * Exported so the AppearanceTab can restore the active theme when a
+ * live-preview ends (the picker calls it from the $effect's else
+ * branch — see AppearanceTab.svelte). */
+export function restoreActiveTheme(): void {
   injectTokens(effectiveTokens(themeState))
 }
 
@@ -68,7 +193,7 @@ export async function initTheme(): Promise<void> {
   if (typeof window !== 'undefined' && window.matchMedia) {
     schemeMedia = window.matchMedia('(prefers-color-scheme: light)')
     schemeMedia.addEventListener('change', () => {
-      if (themeState.mode === 'system') repaint()
+      if (themeState.mode === 'system') restoreActiveTheme()
     })
   }
 
@@ -122,12 +247,14 @@ function applyResult(res: {
   themeState.darkTokens = res.dark_tokens || {}
   themeState.lightTokens = res.light_tokens || {}
   themeState.error = null
-  repaint()
+  restoreActiveTheme()
 }
 
 /**
  * Switch to a theme/mode, persist it via the backend, and inject the result.
- * Returns true on success.
+ * Returns true on success. Errors are surfaced through `themeStatus` (the
+ * picker's live region) in addition to `themeState.error`, so a failed
+ * switch is never silently swallowed.
  */
 export async function applyTheme(
   id: string,
@@ -136,10 +263,189 @@ export async function applyTheme(
   try {
     const res = await ApplyTheme(id, mode)
     applyResult(res)
+    setStatus({
+      kind: 'success',
+      message: `Theme "${res.name}" applied.`,
+      fields: []
+    })
     return true
   } catch (err) {
     console.error('theme: ApplyTheme failed:', err)
-    themeState.error = err instanceof Error ? err.message : String(err)
+    const msg = err instanceof Error ? err.message : String(err)
+    themeState.error = msg
+    setStatus({
+      kind: 'error',
+      message: `Failed to apply theme: ${msg}`,
+      fields: []
+    })
     return false
+  }
+}
+
+/**
+ * Load the listing of selectable themes. Safe to call repeatedly; subsequent
+ * calls overwrite the previous result (used as the `themes:changed`
+ * event handler in `initThemes()`).
+ */
+export async function loadThemes(): Promise<void> {
+  themesState.loading = true
+  themesState.loadError = null
+  try {
+    const res = await ListThemes()
+    themesState.items = res?.themes ?? []
+    themesState.flatTokens =
+      (res?.flat_tokens as ThemesListingState['flatTokens']) ?? {}
+  } catch (err) {
+    console.error('theme: ListThemes failed:', err)
+    themesState.loadError = err instanceof Error ? err.message : String(err)
+  } finally {
+    themesState.loading = false
+  }
+}
+
+/**
+ * Open the native file picker and import the chosen theme. The backend
+ * validates, namespaces, and writes the file; on success the
+ * `themes:changed` event fires and `loadThemes` repopulates the listing.
+ * Returns the imported id (which may differ from the source id if the
+ * importer renamed it for collision safety) or null on cancel/error.
+ */
+export async function pickAndImportTheme(): Promise<string | null> {
+  let path: string
+  try {
+    path = await PickThemeFile()
+  } catch (err) {
+    setStatus({
+      kind: 'error',
+      message: `Could not open file picker: ${errMsg(err)}`,
+      fields: []
+    })
+    return null
+  }
+  if (!path) {
+    return null // user cancelled
+  }
+  return importThemeFromPath(path)
+}
+
+/** Import a theme from a known path (used by both the picker button and
+ * the OnFileDrop drop zone). */
+export async function importThemeFromPath(
+  path: string
+): Promise<string | null> {
+  try {
+    const res = await ImportTheme(path)
+    if (res.validation_errors?.length) {
+      setStatus({
+        kind: 'error',
+        message: 'Theme import failed:',
+        fields: res.validation_errors
+      })
+      return null
+    }
+    const id = res.info.id
+    if (res.renamed) {
+      setStatus({
+        kind: 'success',
+        message: `Imported as "${id}" (renamed from "${res.renamed_from_id}").`,
+        fields: []
+      })
+    } else {
+      setStatus({
+        kind: 'success',
+        message: `Imported "${id}".`,
+        fields: []
+      })
+    }
+    return id
+  } catch (err) {
+    setStatus({
+      kind: 'error',
+      message: `Theme import failed: ${errMsg(err)}`,
+      fields: []
+    })
+    return null
+  }
+}
+
+/** Export the active theme to a user-chosen JSON path. */
+export async function exportActiveTheme(): Promise<boolean> {
+  if (!themeState.id) {
+    setStatus({
+      kind: 'error',
+      message: 'No active theme to export.',
+      fields: []
+    })
+    return false
+  }
+  let dst: string
+  try {
+    dst = await PickExportPath(`${themeState.id}.json`)
+  } catch (err) {
+    setStatus({
+      kind: 'error',
+      message: `Could not open save dialog: ${errMsg(err)}`,
+      fields: []
+    })
+    return false
+  }
+  if (!dst) {
+    return false // user cancelled
+  }
+  try {
+    await ExportActiveTheme(dst)
+    const basename = dst.split(/[/\\]/).pop() || dst
+    setStatus({
+      kind: 'success',
+      message: `Exported "${themeState.id}" to ${basename}.`,
+      fields: []
+    })
+    return true
+  } catch (err) {
+    setStatus({
+      kind: 'error',
+      message: `Export failed: ${errMsg(err)}`,
+      fields: []
+    })
+    return false
+  }
+}
+
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
+/**
+ * Wire the theme-listing store: one initial load plus a subscription to
+ * the backend's `themes:changed` event so an imported theme appears
+ * immediately. Idempotent; safe to call once from `App.svelte onMount`.
+ * Returns a disposer that unsubscribes from the event — call it on
+ * unmount to prevent duplicate listeners during dev hot-reload
+ * (mirrors the initConfigHotReload pattern in settings/store.svelte.ts).
+ */
+export function initThemes(): () => void {
+  if (themesStarted) return () => {}
+  themesStarted = true
+  void loadThemes()
+  // Debounce the re-fetch so a rapid burst of imports (e.g. drag-drop
+  // of multiple files) coalesces into a single ListThemes call rather
+  // than N concurrent round-trips whose responses may arrive
+  // out-of-order.
+  let reloadTimer: ReturnType<typeof setTimeout> | null = null
+  offThemesChanged = EventsOn('themes:changed', () => {
+    if (reloadTimer !== null) clearTimeout(reloadTimer)
+    reloadTimer = setTimeout(() => {
+      reloadTimer = null
+      void loadThemes()
+    }, 100)
+  })
+  return () => {
+    if (reloadTimer !== null) {
+      clearTimeout(reloadTimer)
+      reloadTimer = null
+    }
+    offThemesChanged?.()
+    offThemesChanged = null
+    themesStarted = false
   }
 }

@@ -197,3 +197,58 @@ All existing Go tests pass unchanged (`go test -race -count=1 ./...`) — no bac
 5. **focus_highlight_ancestors:** Uncheck the checkbox → Save → focus a nested block → guide rails still render (showing indentation) but never light up with the active highlight gradient.
 6. **Hot-reload:** With Settings closed, edit `.system/config.yaml` externally (change `font_size_px`) → editor re-renders at the new size without restart (the `$effect.root` in `initEditorTokens` re-injects CSS variables from the updated store).
 7. **Disabled hotkeys:** Set `indent_block` to `""` (empty) in config.yaml → Tab falls through to the browser default (moves focus, does not indent).
+
+---
+
+# Sprint 6 — Theme Engine: UX & Extensibility (#47, #48, #73, #74, #76)
+
+The theme engine shipped complete in Sprint 5 (settings persistence, loader, runtime injection, picker-as-`themes:changed` re-fetch) and is now extended with the user-facing surface in `Settings → Appearance`: live picker, mode toggle, custom theme import + export, plus a perf-pass that drops the previous `ApplyTheme` double-directory-scan (#76) and a launch-time cache that eliminates the first-paint flash for non-default themes (#73).
+
+## Automated Tests
+
+Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (frontend, vitest).
+
+### Go coverage added/updated this sprint
+
+| Package | Tests | What is covered |
+|---|---|---|
+| `silt` (main) | `ImportTheme_IPCHappyPath` (file written + listing refreshes), `ImportTheme_IPCValidationFailure` (per-field ValidationErrors, no file written), `ImportTheme_IPCBeforeVault`, `ImportTheme_IPCNamespaceBuiltIn` (id renamed to `user-cyber_forest`), `ImportTheme_IPCRejectsDuplicate` (ErrImportDuplicate), `ImportTheme_IPCMissingSource`, `PickThemeFile_NoCtx`, `ExportActiveTheme_IPCRoundTrip` (exported file re-parses with the canonical validator), `ExportActiveTheme_IPCBeforeVault`, `ExportActiveTheme_IPCEmptyPath`, `ApplyTheme_ReadsListOnce` (#76 regression guard under -race) | Wails IPC surface for the import/export flow + the perf refactor |
+| `backend/themes` | `importer_test.go` (24 tests: happy path, validation, sandbox rejection of non-color values, built-in namespacing, duplicate rejection, id sanitization with `_` preserved, atomic-write cleanliness, export round-trip, embedded default export, `LoadByID` semantics); `cache_test.go` (11 tests: embedded-default fallbacks, disk load, cache hit, invalid-file fallback, mtime reload, invalidate-one/all); `loader_test.go` regressions for the `flat_tokens` extension | Canonical validator reuse, atomic import, in-process theme cache |
+| `silt` (main) | `launchBackgroundColour_TracksActiveCustom` (custom dark.bg.void propagates to the webview), `launchBackgroundColour_DefaultWhenNoSettings` (embedded default used pre-vault), `launchBackgroundColour_InvalidActiveIDFallsBack` (stale id → default rather than failing the launch) | main.go pre-CSS paint color |
+
+### Frontend coverage added this sprint (#74)
+
+`npm test` runs **17 vitest tests** across three files (jsdom environment, all stubs via `vi.mock` + `vi.hoisted` for the Wails-bound functions):
+
+| File | Tests | What is covered |
+|---|---|---|
+| `frontend/src/theme/inject.test.ts` (7 tests) | single `<style id="silt-theme">` creation, element reuse on subsequent calls, CSS custom-property emission, empty/null/undefined skip, exactly-one textContent assignment per call (same-tick repaint contract), round-trip through `readToken`, no dangling `--empty:;` | Injector DOM-write contract |
+| `frontend/src/theme/store.test.ts` (5 tests) | `initTheme` loads + injects, idempotency guard, `applyTheme` round-trip, `applyTheme` error path (returns false, surfaces error), subscription to the `theme:changed` event | Active-theme store |
+| `frontend/src/theme/listing.test.ts` (5 tests) | `loadThemes` populates `themesState.items`, error surfacing, `initThemes` idempotency, subscription to `themes:changed` event, event handler re-fetches `ListThemes` | Listing store |
+
+`npm run check` reports **0 errors** across the new theme code (inject, store, AppearanceTab, three test files) and the App.svelte wiring.
+
+## Manual Verification Matrix (`wails dev`)
+
+1. **Onboarding → first theme:** Initialize a fresh vault → Settings → Appearance → "Cyber Forest" row is the active row with a check icon; the swatches render the teal+indigo pair. Toggle Dark → Light → System. The same theme renders in each mode (System is OS-dependent).
+2. **Mode change does not change the active theme:** Switch to Light; the row that was active is still active (only the segmented control's highlight changed).
+3. **Keyboard navigation in the picker:** Tab into the tab; ArrowDown/ArrowUp moves focus between rows; Home/End jumps to first/last; Enter/Space selects the focused row; Esc cancels any live preview.
+4. **Live preview on hover:** Hover a non-active theme row → the shell repaints in the same paint frame with the hovered theme's tokens; mouse leave restores the active theme. Esc also restores.
+5. **focus ring:** Tab into the picker; the focused row has a `--accent-primary-start` focus ring visible.
+6. **prefers-reduced-motion:** With `prefers-reduced-motion: reduce` set in the OS, no swatch / selection animations play. (The picker uses a single style block rewrite; the only "transition" is the same-tick repaint, which is unaffected.)
+7. **Import — happy path:** Click "Import .json" → native file picker → select a valid theme JSON (e.g. the one in `app_themes_test.go`) → the new theme appears in the list immediately (no restart). Status region shows "Imported as <id>".
+8. **Import — validation failure:** Import a JSON with `modes.dark.accent.primary.start: "not-a-color"`. The error message names the token (`modes.dark.accent.primary.start`) and the expected format (`#hex or rgb()/rgba()`). No file is written under `<vault>/.system/themes/`.
+9. **Import — built-in id collision:** Import a JSON whose `id` is `cyber_forest`. The status shows "Imported as user-cyber_forest (renamed from cyber_forest)". The on-disk `cyber_forest.json` is untouched.
+10. **Import — drag-drop:** Drag a `.json` file from the OS file manager and drop it onto the tab. The import fires through the same code path as the picker button.
+11. **Import — duplicate:** Import a theme, then import the same JSON again. The second call rejects with "theme id X already exists". The first theme is not overwritten.
+12. **Export — round-trip:** Click "Export active" → native save dialog (default filename = `<themeId>.json`) → save → open the file in a text editor → confirm the JSON parses with the canonical validator (Drop into the import picker to verify the round trip).
+13. **Persistence:** Switch to a custom theme and dark mode → close the app → reopen → the same theme and mode are restored (Sprint 5 regression: `vault.SaveSettings` is the source of truth).
+14. **First-paint cache (#73):** Apply a custom theme whose `bg.void` is a distinctive color (e.g. `#102030`) → restart the app → the window background color is `#102030` from the very first paint (no flash of the default's bg.void).
+15. **ApplyTheme perf (#76):** With many on-disk themes (≥ 5), switching between them repeatedly under -race shows no concurrency hazard. (The single-scan refactor removes the second `os.ReadDir` that was inside `ResolveActive`.)
+
+## Known Gaps (deferred to future sprints)
+
+- A visual palette editor (in-app) for custom themes — covered by `Sprint 8 — First-Class Themes` (#42 follow-up).
+- A user-facing authoring guide for custom themes — covered by the Sprint 7 docs work (#49).
+- Theme marketplace / online sharing (out of scope per #48).
+- Per-note theming (out of scope per #47).
