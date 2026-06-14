@@ -816,13 +816,6 @@ func (dm *DatabaseManager) QueryTagHierarchy() ([]parser.TagNode, error) {
 	return build(root), nil
 }
 
-func sortTagNodes(nodes []parser.TagNode) {
-	// Alphabetical sort to keep tree output deterministic.
-	sort.Slice(nodes, func(i, j int) bool {
-		return nodes[i].Name < nodes[j].Name
-	})
-}
-
 // QueryBlocksByTag returns blocks whose tag path equals tagPath or is nested
 // beneath it (prefix semantics, so #work matches #work/sogav/milestone-one).
 func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult, error) {
