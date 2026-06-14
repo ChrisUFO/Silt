@@ -10,11 +10,19 @@ import (
 
 // TestMigrationInvariant_NoOldHueTokens (#50) is a CI-grade guard that
 // the old hue-named tokens — color-teal-*, --accent-teal-*,
-// --color-teal-*, --accent-indigo-* — do NOT reappear anywhere in the
-// tracked tree. The #43 migration canonicalized them to hue-agnostic
-// semantic accents (--accent-primary-* / --accent-secondary-*); this
-// test fails loudly the moment a stale reference creeps back into CSS,
-// a theme JSON, a component, or a doc.
+// --color-teal-*, --accent-indigo-* — do NOT reappear in LIVE SOURCE
+// (code, CSS, theme JSON, configs). The #43 migration canonicalized
+// them to hue-agnostic semantic accents (--accent-primary-* /
+// --accent-secondary-*); this test fails loudly the moment a stale
+// reference creeps back into a stylesheet, a theme file, a component,
+// or Go code.
+//
+// Scope: SOURCE files only (.go/.ts/.svelte/.css/.json/.js/.html/.yaml).
+// Markdown (.md) is intentionally EXCLUDED — documentation that
+// describes the migration (this very comment, TESTING.md, ARCHITECTURE
+// notes) legitimately names the old tokens in prose, and markdown is
+// never rendered as CSS so a literal there has no runtime effect. The
+// risk surface for stale tokens is code/CSS/themes, which IS scanned.
 //
 // It runs under the existing `go test -race -count=1 ./...` CI step and
 // the local pre-push hook, so no separate grep/lint step is required.
@@ -126,10 +134,12 @@ func trackedTextFiles(repoRoot string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Source extensions only — see the doc comment for why .md is
+	// excluded (documentation prose legitimately names the migration).
 	textExt := map[string]bool{
 		".go": true, ".ts": true, ".tsx": true, ".js": true, ".jsx": true,
 		".svelte": true, ".vue": true, ".css": true, ".scss": true,
-		".json": true, ".jsonc": true, ".md": true, ".html": true,
+		".json": true, ".jsonc": true, ".html": true,
 		".yaml": true, ".yml": true, ".toml": true, ".svg": true,
 	}
 	var files []string
