@@ -127,13 +127,13 @@
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <div
   onclick={onClose}
-  class="fixed inset-0 bg-[#000]/60 backdrop-blur-sm z-[180] flex items-start justify-center pt-24"
+  class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[180] flex items-start justify-center pt-24"
 >
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
     onclick={(e) => e.stopPropagation()}
     class="w-full max-w-2xl glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[70vh]"
-    style="backdrop-filter: blur(16px) saturate(140%); background: rgba(22, 22, 25, 0.94);"
+    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--bg-panel) 94%, transparent);"
   >
     <div class="px-5 py-4 border-b border-border-muted flex items-center gap-2">
       <span class="material-symbols-outlined text-accent-primary-start"

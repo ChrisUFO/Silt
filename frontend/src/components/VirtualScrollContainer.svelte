@@ -212,12 +212,12 @@
     </h1>
     <div class="flex items-center gap-3">
       <span
-        class="bg-[#1e1e23]/50 border border-accent-secondary-start/20 text-accent-secondary-start px-2 py-0.5 rounded text-[10px] font-label-sm-bold uppercase tracking-wider"
+        class="bg-border-muted/50 border border-accent-secondary-start/20 text-accent-secondary-start px-2 py-0.5 rounded text-[10px] font-label-sm-bold uppercase tracking-wider"
       >
         {notebook}
       </span>
       <span
-        class="bg-[#1e1e23]/50 border border-accent-primary-start/20 text-accent-primary-start px-2 py-0.5 rounded text-[10px] font-label-sm-bold uppercase tracking-wider"
+        class="bg-border-muted/50 border border-accent-primary-start/20 text-accent-primary-start px-2 py-0.5 rounded text-[10px] font-label-sm-bold uppercase tracking-wider"
       >
         {section}
       </span>

@@ -80,7 +80,7 @@
 <!-- Command Palette Container (Frosted glass) -->
 <div
   class="absolute top-8 left-6 w-64 glass-palette border border-border-zinc rounded shadow-2xl z-[100] overflow-hidden py-2 scale-100 origin-top-left transition-transform"
-  style="backdrop-filter: blur(12px) saturate(140%); background: rgba(22, 22, 25, 0.85);"
+  style="backdrop-filter: blur(12px) saturate(140%); background: color-mix(in srgb, var(--bg-panel) 85%, transparent);"
 >
   <div
     class="px-3 py-1.5 text-[10px] text-text-muted font-label-sm-bold uppercase tracking-widest border-b border-border-muted mb-1 select-none"

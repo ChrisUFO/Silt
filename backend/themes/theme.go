@@ -122,6 +122,67 @@ func (t *Theme) BGVoid(mode string) string {
 	return t.Modes.Dark.BG.Void
 }
 
+// HexToRGB parses a #rgb / #rrggbb hex color into its 8-bit components. It
+// is used at launch to turn the active theme's bg.void into the native
+// webview BackgroundColour before the webview renders. Non-hex inputs return
+// ok=false so the caller can keep a safe default.
+func HexToRGB(s string) (r, g, b uint8, ok bool) {
+	s = trimSpace(s)
+	if len(s) == 0 || s[0] != '#' {
+		return 0, 0, 0, false
+	}
+	hex := s[1:]
+	var full string
+	switch len(hex) {
+	case 3:
+		// #rgb → #rrggbb
+		full = string([]byte{hex[0], hex[0], hex[1], hex[1], hex[2], hex[2]})
+	case 6:
+		full = hex
+	default:
+		return 0, 0, 0, false
+	}
+	ri, ok1 := parseHexByte(full[0:2])
+	gi, ok2 := parseHexByte(full[2:4])
+	bi, ok3 := parseHexByte(full[4:6])
+	if !ok1 || !ok2 || !ok3 {
+		return 0, 0, 0, false
+	}
+	return ri, gi, bi, true
+}
+
+func parseHexByte(s string) (uint8, bool) {
+	hi, ok1 := hexDigit(s[0])
+	lo, ok2 := hexDigit(s[1])
+	if !ok1 || !ok2 {
+		return 0, false
+	}
+	return hi*16 + lo, true
+}
+
+func hexDigit(c byte) (uint8, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', true
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, true
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, true
+	}
+	return 0, false
+}
+
+func trimSpace(s string) string {
+	start, end := 0, len(s)
+	for start < end && (s[start] == ' ' || s[start] == '\t') {
+		start++
+	}
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
+		end--
+	}
+	return s[start:end]
+}
+
 // ThemeInfo is the lightweight metadata returned by ListThemes for the
 // picker UI (#47) and the active-theme summary.
 type ThemeInfo struct {

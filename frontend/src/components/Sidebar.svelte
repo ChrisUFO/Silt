@@ -294,7 +294,7 @@
         ></div>
         <div
           class="absolute left-1 right-1 top-14 glass-palette border border-accent-primary-start/20 rounded-lg shadow-2xl z-[70] py-2 max-h-[60vh] overflow-y-auto custom-scrollbar"
-          style="backdrop-filter: blur(16px); background: rgba(22, 22, 25, 0.92);"
+          style="backdrop-filter: blur(16px); background: color-mix(in srgb, var(--bg-panel) 92%, transparent);"
         >
           {#if tree.notebooks.length === 0}
             <div class="px-4 py-3 text-text-muted text-[12px] font-body-md">
@@ -505,13 +505,13 @@
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <div
       onclick={() => (createMode = '')}
-      class="fixed inset-0 bg-[#000]/60 backdrop-blur-sm z-[160] flex items-start justify-center pt-32"
+      class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[160] flex items-start justify-center pt-32"
     >
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div
         onclick={(e) => e.stopPropagation()}
         class="w-full max-w-md glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
-        style="backdrop-filter: blur(16px) saturate(140%); background: rgba(22, 22, 25, 0.9);"
+        style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--bg-panel) 90%, transparent);"
       >
         <div class="px-5 py-4 border-b border-border-muted">
           <h2 class="font-headline-md text-headline-md text-text-primary">

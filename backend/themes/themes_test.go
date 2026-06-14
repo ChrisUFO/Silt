@@ -254,3 +254,27 @@ func TestResolveActive_EmptyID_FallsBackToDefault(t *testing.T) {
 		t.Errorf("expected default, got %q", t1.ID)
 	}
 }
+
+func TestHexToRGB(t *testing.T) {
+	cases := []struct {
+		in           string
+		r, g, b      uint8
+		ok           bool
+	}{
+		{"#0c0c0e", 12, 12, 14, true},
+		{"#ffffff", 255, 255, 255, true},
+		{"#fff", 255, 255, 255, true},
+		{"#000", 0, 0, 0, true},
+		{" #0c0c0e ", 12, 12, 14, true},
+		{"nope", 0, 0, 0, false},
+		{"#ff", 0, 0, 0, false},
+		{"#gggggg", 0, 0, 0, false},
+	}
+	for _, c := range cases {
+		r, g, b, ok := HexToRGB(c.in)
+		if ok != c.ok || r != c.r || g != c.g || b != c.b {
+			t.Errorf("HexToRGB(%q) = (%d,%d,%d,%v), want (%d,%d,%d,%v)",
+				c.in, r, g, b, ok, c.r, c.g, c.b, c.ok)
+		}
+	}
+}

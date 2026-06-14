@@ -220,7 +220,8 @@ body {
     var(--accent-primary-start),
     var(--accent-primary-end)
   );
-  box-shadow: 0 0 4px rgba(45, 212, 191, 0.4);
+  box-shadow: 0 0 4px
+    color-mix(in srgb, var(--accent-primary-start) 40%, transparent);
 }
 
 /* Frosted glass palette style */
@@ -258,7 +259,8 @@ body {
 
 .done-check {
   background-color: var(--accent-primary-glow);
-  border: 1px solid rgba(20, 184, 166, 0.3);
+  border: 1px solid
+    color-mix(in srgb, var(--accent-primary-start) 30%, transparent);
 }
 
 /* Drag State Styling */
@@ -296,7 +298,7 @@ body {
   text-align: center;
   box-shadow:
     0 20px 40px rgba(0, 0, 0, 0.5),
-    0 0 2px rgba(45, 212, 191, 0.1);
+    0 0 2px color-mix(in srgb, var(--accent-primary-start) 10%, transparent);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -350,7 +352,8 @@ body {
 
 .onboarding-btn:hover {
   filter: brightness(1.1);
-  box-shadow: 0 6px 16px rgba(20, 184, 166, 0.3);
+  box-shadow: 0 6px 16px
+    color-mix(in srgb, var(--accent-primary-start) 30%, transparent);
   transform: translateY(-1px);
 }
 

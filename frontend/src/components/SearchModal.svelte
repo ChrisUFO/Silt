@@ -95,14 +95,14 @@
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <div
   onclick={onClose}
-  class="fixed inset-0 bg-[#000]/60 backdrop-blur-sm z-[150] flex items-start justify-center pt-28"
+  class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150] flex items-start justify-center pt-28"
 >
   <!-- Modal Frame (Frosted Glass Panel) -->
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
     onclick={(e) => e.stopPropagation()}
     class="w-full max-w-2xl glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
-    style="backdrop-filter: blur(16px) saturate(140%); background: rgba(22, 22, 25, 0.8);"
+    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--bg-panel) 80%, transparent);"
   >
     <!-- Search Input Area -->
     <div
