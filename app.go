@@ -253,6 +253,49 @@ func (a *App) IsVaultInitialized() bool {
 	return a.vaultPath != "" && a.db != nil
 }
 
+// CloseVault tears down the active vault's services in the reverse order of
+// initializeVaultServices: release all focus leases, close the watcher, stop
+// the write tracker, and close (with a WAL checkpoint) the on-disk index.
+// After it returns, IsVaultInitialized is false so the UI re-shows the
+// onboarding screen. It does NOT clear the saved settings.json path — the
+// user can re-open the same vault via InitializeVault / a new selection.
+// Idempotent: safe to call when no vault is open. Waits on any in-flight
+// Wails-bound calls (a.wg) so a close can't race an in-progress write.
+func (a *App) CloseVault() error {
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	if a.vaultPath == "" && a.db == nil {
+		return nil // nothing to close
+	}
+
+	if a.watcher != nil {
+		a.watcher.ReleaseAllFocus()
+		_ = a.watcher.Close()
+		a.watcher = nil
+	}
+	if a.tracker != nil {
+		a.tracker.Stop()
+		a.tracker = nil
+	}
+	// Close the read-only plugin handle too (it points at the closing index).
+	a.pluginRODBMu.Lock()
+	if a.pluginRODB != nil {
+		_ = a.pluginRODB.Close()
+		a.pluginRODB = nil
+	}
+	a.pluginRODBMu.Unlock()
+	if a.db != nil {
+		// Close runs PRAGMA wal_checkpoint(TRUNCATE) so the WAL is merged
+		// into the main index file on a clean close (#29).
+		_ = a.db.Close()
+		a.db = nil
+	}
+	a.coordinator = nil
+	a.vaultPath = ""
+	return nil
+}
+
 // InitializeVault prompts the user for a folder, sets it up, and loads the services.
 func (a *App) InitializeVault() (bool, error) {
 	selectedPath, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{

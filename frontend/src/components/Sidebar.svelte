@@ -34,6 +34,7 @@
     onSelectSection: (section: string) => void
     onSelectPage: (notebook: string, section: string, page: string) => void
     onSelectView: (view: string) => void
+    onCloseVault?: () => void
   }
 
   let {
@@ -45,7 +46,8 @@
     onSelectNotebook,
     onSelectSection,
     onSelectPage,
-    onSelectView
+    onSelectView,
+    onCloseVault
   }: Props = $props()
 
   let tree = $state<NavigationTree>({ notebooks: [] })
@@ -575,8 +577,19 @@
 
   <!-- Sidebar Footer -->
   <div
-    class="px-3 py-2 border-t border-border-muted flex items-center justify-end bg-bg-surface flex-shrink-0"
+    class="px-3 py-2 border-t border-border-muted flex items-center justify-between bg-bg-surface flex-shrink-0"
   >
+    {#if onCloseVault}
+      <button
+        onclick={onCloseVault}
+        aria-label="Change Vault"
+        title="Close this vault and return to the setup screen"
+        class="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-accent-primary-start hover:bg-bg-hover transition-all duration-150 border-none bg-transparent cursor-pointer focus:outline-none"
+      >
+        <span class="material-symbols-outlined text-[15px]">swap_horiz</span>
+        <span>Change Vault</span>
+      </button>
+    {/if}
     <button
       onclick={() => (collapsed = true)}
       aria-label="Hide sidebar"

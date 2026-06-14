@@ -964,3 +964,105 @@ func TestEnforceMinVersion(t *testing.T) {
 		t.Errorf("expected nil for minSiltVersion 0.0.1, got %v", err)
 	}
 }
+
+// --- Phase 6: CloseVault / switch-workspace (#33) ---
+
+// TestCloseVault_TearsDownServices confirms CloseVault nils out every service
+// field so IsVaultInitialized flips to false (the signal the frontend uses to
+// re-show the onboarding screen).
+func TestCloseVault_TearsDownServices(t *testing.T) {
+	app := newTestApp(t)
+	if !app.IsVaultInitialized() {
+		t.Fatal("expected vault initialized before close")
+	}
+	if err := app.CloseVault(); err != nil {
+		t.Fatalf("CloseVault: %v", err)
+	}
+	if app.IsVaultInitialized() {
+		t.Error("IsVaultInitialized should be false after CloseVault")
+	}
+	if app.db != nil || app.watcher != nil || app.tracker != nil || app.coordinator != nil {
+		t.Errorf("CloseVault left a service non-nil: db=%v watcher=%v tracker=%v coord=%v",
+			app.db != nil, app.watcher != nil, app.tracker != nil, app.coordinator != nil)
+	}
+	if app.vaultPath != "" {
+		t.Error("CloseVault should clear vaultPath")
+	}
+}
+
+// TestCloseVault_Idempotent verifies calling CloseVault twice (or on an
+// already-closed app) is a no-op rather than panicking.
+func TestCloseVault_Idempotent(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.CloseVault(); err != nil {
+		t.Fatalf("first CloseVault: %v", err)
+	}
+	if err := app.CloseVault(); err != nil {
+		t.Fatalf("second CloseVault: %v", err)
+	}
+	// Closing a never-opened app is also safe.
+	fresh := NewApp()
+	if err := fresh.CloseVault(); err != nil {
+		t.Fatalf("CloseVault on never-opened app: %v", err)
+	}
+}
+
+// TestCloseVault_ReopenUsesWarmRestart confirms the close→reopen round-trip
+// works and that reopening the same on-disk vault takes the warm-restart path
+// (files table populated → unchanged files skipped). This exercises the #29 +
+// #33 interaction end-to-end.
+func TestCloseVault_ReopenUsesWarmRestart(t *testing.T) {
+	// newTestApp uses an in-memory DB (""), so to test the on-disk warm path
+	// we build a real app with initializeVaultServices against a scaffolded
+	// vault containing one note.
+	vaultPath := t.TempDir()
+	if err := vault.ScaffoldVault(vaultPath); err != nil {
+		t.Fatalf("ScaffoldVault: %v", err)
+	}
+	noteDir := filepath.Join(vaultPath, "Work", "Journal", "Daily")
+	if err := os.MkdirAll(noteDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	notePath := filepath.Join(noteDir, "2026-06-14.md")
+	writeFile(t, notePath, "---\nnotebook: Work\nsection: Journal\npage: Daily\ndate: 2026-06-14\ntags: []\n---\n# Note <!-- id: aaaaaaaa-1111-1111-1111-111111111111 -->\n")
+
+	app := &App{spacesPerTab: 4}
+	if err := app.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("first initializeVaultServices: %v", err)
+	}
+	// The note's blocks must be indexed.
+	var count int
+	_ = app.db.SQLDB().QueryRow("SELECT count(*) FROM blocks").Scan(&count)
+	if count == 0 {
+		t.Fatal("expected blocks indexed on first init")
+	}
+	filesPath := filepath.Join(vaultPath, ".system", "index.sqlite")
+	if _, err := os.Stat(filesPath); err != nil {
+		t.Fatalf("on-disk index not created: %v", err)
+	}
+
+	// Close + reopen. The second init must reuse the persistent index and the
+	// files-table skip (the file is unchanged → not re-indexed).
+	if err := app.CloseVault(); err != nil {
+		t.Fatalf("CloseVault: %v", err)
+	}
+	if err := app.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("second initializeVaultServices: %v", err)
+	}
+	defer app.CloseVault()
+
+	// Blocks survive (persistent index), and the file is marked known.
+	var count2 int
+	_ = app.db.SQLDB().QueryRow("SELECT count(*) FROM blocks").Scan(&count2)
+	if count2 != count {
+		t.Errorf("block count changed across close/reopen: first=%d second=%d", count, count2)
+	}
+	known, err := app.db.KnownFiles()
+	if err != nil {
+		t.Fatalf("KnownFiles: %v", err)
+	}
+	if len(known) == 0 {
+		t.Error("warm restart did not retain the files table")
+	}
+}
+
