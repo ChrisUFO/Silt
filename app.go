@@ -1592,9 +1592,20 @@ func migratePerDayFiles(vaultPath string, spacesPerTab int) []string {
 		if !d.IsDir() {
 			return nil
 		}
+		if path == rootAbs {
+			return nil
+		}
 		name := d.Name()
-		if path != rootAbs && strings.HasPrefix(name, ".") {
+		if strings.HasPrefix(name, ".") {
 			return filepath.SkipDir
+		}
+		rel, err := filepath.Rel(rootAbs, path)
+		if err != nil {
+			return nil
+		}
+		segments := strings.Split(filepath.ToSlash(rel), "/")
+		if len(segments) < 2 {
+			return nil
 		}
 		entries, err := os.ReadDir(path)
 		if err != nil {
@@ -1687,9 +1698,13 @@ func migratePerDayFiles(vaultPath string, spacesPerTab int) []string {
 			continue
 		}
 
-		// Remove the old directory.
-		if err := os.RemoveAll(pd.dir); err != nil {
-			warnings = append(warnings, fmt.Sprintf("migration: wrote %q but cannot remove old dir %q: %v", targetPath, pd.dir, err))
+		// Remove the migrated date files individually.
+		for _, dateFile := range pd.dateFiles {
+			_ = os.Remove(filepath.Join(pd.dir, dateFile))
+		}
+		// Remove the old directory only if it is now empty.
+		if err := os.Remove(pd.dir); err != nil {
+			warnings = append(warnings, fmt.Sprintf("migration: wrote %q and removed migrated files, but kept directory %q (may contain other files): %v", targetPath, pd.dir, err))
 		}
 
 		warnings = append(warnings, fmt.Sprintf("migration: merged %d date files from %q into %q", len(pd.dateFiles), pd.dir, targetPath))

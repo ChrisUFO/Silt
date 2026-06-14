@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte'
+  import { onDestroy } from 'svelte'
   import { createEditor, EditorContent } from 'svelte-tiptap'
   import type { Editor } from 'svelte-tiptap'
-  import type { Readable } from 'svelte/store'
   import StarterKit from '@tiptap/starter-kit'
   import Placeholder from '@tiptap/extension-placeholder'
   import {
@@ -45,7 +44,6 @@
   }: Props = $props()
 
   let editorInstance: Editor | null = null
-  let editorStore = $state<Readable<Editor> | null>(null)
   let saveTimeout: ReturnType<typeof setTimeout> | null = null
   let heartbeatInterval: ReturnType<typeof setInterval> | null = null
   let hasFocusLock = false
@@ -53,52 +51,49 @@
   let suppressUpdate = false
   let showSlashMenu = $state(false)
 
-  onMount(() => {
-    const initialDoc = blocksToDoc(blocks)
-    const store = createEditor({
-      extensions: [
-        StarterKit.configure({
-          paragraph: false,
-          heading: false,
-          bulletList: false,
-          orderedList: false,
-          listItem: false,
-          blockquote: false,
-          codeBlock: false,
-          horizontalRule: false,
-          trailingNode: false
-        }),
-        ...SiltBlockExtensionsWithNodeViews,
-        UniqueBlockIds,
-        SiltBlockKeymaps,
-        Placeholder.configure({
-          placeholder: 'Type / for commands, or start writing…'
-        })
-      ],
-      content: initialDoc,
-      onUpdate: () => {
-        if (suppressUpdate) return
-        detectSlashCommand()
-        triggerAutoSave()
-      },
-      onFocus: () => {
-        isFocused = true
-        acquireFocus()
-        startHeartbeat()
-        notifyFocus()
-      },
-      onBlur: () => {
-        isFocused = false
-        stopHeartbeat()
-        void releaseFocus()
-        flushPendingSave()
-        onBlockBlur?.()
-      },
-      onCreate: ({ editor }) => {
-        editorInstance = editor as Editor
-      }
-    })
-    editorStore = store
+  const initialDoc = blocksToDoc(blocks)
+  const editorStore = createEditor({
+    extensions: [
+      StarterKit.configure({
+        paragraph: false,
+        heading: false,
+        bulletList: false,
+        orderedList: false,
+        listItem: false,
+        blockquote: false,
+        codeBlock: false,
+        horizontalRule: false,
+        trailingNode: false
+      }),
+      ...SiltBlockExtensionsWithNodeViews,
+      UniqueBlockIds,
+      SiltBlockKeymaps,
+      Placeholder.configure({
+        placeholder: 'Type / for commands, or start writing…'
+      })
+    ],
+    content: initialDoc,
+    onUpdate: () => {
+      if (suppressUpdate) return
+      detectSlashCommand()
+      triggerAutoSave()
+    },
+    onFocus: () => {
+      isFocused = true
+      acquireFocus()
+      startHeartbeat()
+      notifyFocus()
+    },
+    onBlur: () => {
+      isFocused = false
+      stopHeartbeat()
+      void releaseFocus()
+      flushPendingSave()
+      onBlockBlur?.()
+    },
+    onCreate: ({ editor }) => {
+      editorInstance = editor as Editor
+    }
   })
 
   onDestroy(() => {
@@ -108,8 +103,6 @@
       clearTimeout(saveTimeout)
       saveTimeout = null
     }
-    editorInstance = null
-    editorStore = null
   })
 
   // --- External content sync ------------------------------------------------
@@ -179,19 +172,39 @@
     }
   }
 
-  function setAttrAtSelection(attr: string, value: unknown): void {
+  function changeBlockType(
+    type: string,
+    newAttrs: Record<string, unknown>
+  ): void {
     if (!editorInstance || editorInstance.isDestroyed) return
     const pos = editorInstance.state.selection.$from
     for (let d = pos.depth; d >= 1; d--) {
       const node = pos.node(d)
       if (['noteBlock', 'taskBlock', 'headerBlock'].includes(node.type.name)) {
-        const nodePos = pos.before(d)
-        const tr = editorInstance.state.tr.setNodeAttribute(
-          nodePos,
-          attr,
-          value
-        )
-        editorInstance.view.dispatch(tr)
+        const mergedAttrs = {
+          ...node.attrs,
+          ...newAttrs
+        }
+        if (type === 'taskBlock') {
+          delete (mergedAttrs as Record<string, unknown>).bullet
+        } else if (type === 'headerBlock') {
+          delete (mergedAttrs as Record<string, unknown>).bullet
+          delete (mergedAttrs as Record<string, unknown>).status
+          delete (mergedAttrs as Record<string, unknown>).owner
+          delete (mergedAttrs as Record<string, unknown>).start_date
+          delete (mergedAttrs as Record<string, unknown>).due_date
+          delete (mergedAttrs as Record<string, unknown>).priority
+        } else if (type === 'noteBlock') {
+          delete (mergedAttrs as Record<string, unknown>).status
+          delete (mergedAttrs as Record<string, unknown>).owner
+          delete (mergedAttrs as Record<string, unknown>).start_date
+          delete (mergedAttrs as Record<string, unknown>).due_date
+          delete (mergedAttrs as Record<string, unknown>).priority
+          if (mergedAttrs.bullet === undefined) {
+            ;(mergedAttrs as Record<string, unknown>).bullet = '- '
+          }
+        }
+        editorInstance.commands.setNode(type, mergedAttrs)
         return
       }
     }
@@ -201,15 +214,15 @@
     showSlashMenu = false
     if (!editorInstance || editorInstance.isDestroyed) return
 
-    // Delete the "/" character that triggered the menu.
     const sel = editorInstance.state.selection
-    const from = sel.$from.start() + sel.$from.parentOffset - 1
-    editorInstance.commands.deleteRange({ from, to: from + 1 })
+    const from = sel.$from.start()
+    const to = from + sel.$from.parentOffset
+    editorInstance.commands.deleteRange({ from, to })
 
     if (commandId === 'todo') {
-      setAttrAtSelection('status', 'TODO')
+      changeBlockType('taskBlock', { status: 'TODO' })
     } else if (commandId === 'h1') {
-      setAttrAtSelection('depth', 1)
+      changeBlockType('headerBlock', { depth: 1 })
     } else if (commandId === 'today') {
       const d = new Date()
       const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`

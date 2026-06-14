@@ -155,13 +155,14 @@ jobs:
 
       - name: Create GitHub Release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           echo "Attaching release assets:"
-          ls -la release-assets/
+          ls -laR release-assets/
+          # Use --target with the SHA of the bumped commit (where the tag actually lives).
           gh release create "${{ needs.prepare.outputs.tag }}" \
-            --target "$GITHUB_SHA" \
-            --title "${{ needs.prepare.outputs.version }}" \
+            --target "${{ needs.prepare.outputs.sha }}" \
+            --title "v${{ needs.prepare.outputs.version }}" \
             --generate-notes \
             release-assets/*

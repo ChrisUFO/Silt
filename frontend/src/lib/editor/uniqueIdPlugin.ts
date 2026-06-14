@@ -53,8 +53,8 @@ export const UniqueBlockIds = Extension.create({
       new Plugin({
         key: uniqueIdKey,
         appendTransaction: (transactions, oldState, newState) => {
-          // Only react to doc-changing transactions. Pure selection moves
-          // (transactions.every(t => !t.docChanged)) need no id fix-up.
+          if (transactions.some((t) => t.getMeta(uniqueIdKey))) return null
+
           const docChanged = transactions.some((t) => t.docChanged)
           if (!docChanged) return null
 

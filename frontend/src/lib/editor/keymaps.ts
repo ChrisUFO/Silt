@@ -1,5 +1,6 @@
 import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
+import { TextSelection } from '@tiptap/pm/state'
 import { settings } from '../../settings/store.svelte'
 import { matchHotkey } from '../../settings/hotkeys'
 
@@ -55,8 +56,7 @@ function focusBlockAt(editor: Editor, blockIndex: number): void {
   const endPos = pos + child.nodeSize - 1
   editor.commands.focus()
   const tr = editor.state.tr.setSelection(
-    // @ts-expect-error - TextSelection is re-exported via pm/state
-    editor.state.selection.constructor.create(editor.state.doc, endPos, endPos)
+    TextSelection.create(editor.state.doc, endPos, endPos)
   )
   editor.view.dispatch(tr)
 }
@@ -90,12 +90,7 @@ export const SiltBlockKeymaps = Extension.create({
         const newPos = insertPos + 1
         this.editor.commands.focus()
         const tr = this.editor.state.tr
-        // @ts-expect-error - TextSelection constructor
-        const sel = this.editor.state.selection.constructor.create(
-          this.editor.state.doc,
-          newPos,
-          newPos
-        )
+        const sel = TextSelection.create(this.editor.state.doc, newPos, newPos)
         this.editor.view.dispatch(tr.setSelection(sel))
         return true
       },

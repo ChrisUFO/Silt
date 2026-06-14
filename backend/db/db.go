@@ -901,6 +901,9 @@ func (dm *DatabaseManager) FetchPageBlocks(notebook, section, page string) ([]pa
 		b.FileDate = fileDate
 		blocks = append(blocks, b)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating page blocks: %w", err)
+	}
 	return blocks, nil
 }
 
