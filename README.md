@@ -1,6 +1,9 @@
 # Silt
 
-A lightweight, local-first hybrid note-taking and task-lifecycle engine built for speed, durability, and stream-of-consciousness collection.
+> Capture the flow. Map the connections. Let your thoughts settle.
+
+Silt is a simple, super-fast, and lightweight note-taking app designed to capture your stream-of-consciousness thoughts and map them to one another. Like silt carried by water, your daily notes are fleeting deposits that slowly settle, accumulate, and connect—ultimately building a fertile, structured foundation of knowledge.
+
 
 [![Engine Architecture](https://img.shields.io/badge/Architecture-Go%20%2B%20Wails%20%2B%20Svelte%205-blueviolet)](ARCHITECTURE.md)
 [![Storage Schema](https://img.shields.io/badge/Storage-Plaintext%20Markdown%20%2B%20SQLite%20Cache-blue)](SPECS.md)
