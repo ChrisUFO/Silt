@@ -3,6 +3,7 @@
   import {
     SaveFileBlocks,
     AcquireFocusLock,
+    RefreshFocusLock,
     ReleaseFocusLock
   } from '../../wailsjs/go/main/App.js'
   import CommandPalette from './CommandPalette.svelte'
@@ -60,6 +61,29 @@
   let showSlashMenu = $state(false)
   let showBlockPicker = $state(false)
   let hasFocusLock = false
+  // Heartbeat that extends the backend focus lease while the editor stays
+  // focused. The Go TTL is 60s; a 20s refresh keeps it comfortably alive
+  // and lets a crashed/unmounted editor self-heal (#38). Cleared on blur and
+  // component destroy.
+  let heartbeatInterval = $state<ReturnType<typeof setInterval> | null>(null)
+
+  function startHeartbeat() {
+    stopHeartbeat()
+    heartbeatInterval = setInterval(() => {
+      // RefreshFocusLock is a no-op if the lease already expired; a stale
+      // editor that lost focus without firing blur just stops refreshing.
+      RefreshFocusLock(notebook, section, page, fileDate).catch(() => {
+        // Ignore transient IPC errors — the next tick retries.
+      })
+    }, 20000)
+  }
+
+  function stopHeartbeat() {
+    if (heartbeatInterval !== null) {
+      clearInterval(heartbeatInterval)
+      heartbeatInterval = null
+    }
+  }
 
   // Enter write mode: swap the read view (RichText) for the contenteditable
   // and move focus into it.
@@ -67,7 +91,19 @@
     if (isFocused) return
     isFocused = true
     await tick()
-    editableEl?.focus()
+    // Initialize the contenteditable imperatively ONCE on entry. We
+    // deliberately do NOT bind {block.clean_text} inside the contenteditable:
+    // a reactive text binding there + handleInput writing clean_text back is
+    // a feedback loop — Svelte re-renders the text node on every keystroke,
+    // the browser's contenteditable DOM has diverged from Svelte's tracked
+    // node, and the re-render duplicates content (compounding per keystroke
+    // into "abcdefgabcdefabcdeabcdabcaba"). The contenteditable owns its
+    // text during focus; handleInput syncs OUT to clean_text (for save),
+    // never back in.
+    if (editableEl) {
+      editableEl.innerText = block.clean_text
+      editableEl.focus()
+    }
   }
 
   async function handleCommandSelect(commandId: string) {
@@ -151,6 +187,7 @@
     try {
       await AcquireFocusLock(notebook, section, page, fileDate)
       hasFocusLock = true
+      startHeartbeat()
     } catch (e) {
       console.error('Focus lock failed:', e)
     }
@@ -166,6 +203,7 @@
   // Handle blur
   async function handleBlur() {
     isFocused = false
+    stopHeartbeat()
     await releaseFocusLock()
 
     if (onBlockBlur) {
@@ -217,6 +255,7 @@
   }
 
   onDestroy(() => {
+    stopHeartbeat()
     void releaseFocusLock()
   })
 
@@ -477,9 +516,7 @@
         style="font-family: var(--editor-font-family); font-size: var(--editor-font-size); line-height: var(--editor-line-height);"
         class:text-text-muted={block.status === 'DONE'}
         class:line-through={block.status === 'DONE'}
-      >
-        {block.clean_text}
-      </div>
+      ></div>
     {:else}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div

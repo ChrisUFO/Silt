@@ -24,7 +24,6 @@ import (
 	"silt/backend/themes"
 	"silt/backend/vault"
 
-	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -32,8 +31,6 @@ const (
 	maxTimelineLimit     = 200
 	defaultTimelineLimit = 30
 )
-
-var updateTaskRegex = regexp.MustCompile(`^([\s]*)-\s\[[ x/]\]\s(?:TODO|DOING|DONE)\sTASK(.*)$`)
 
 var updateLineIDRegex = regexp.MustCompile(`<!-- id: ([a-f0-9\-]{36}) -->`)
 
@@ -114,19 +111,67 @@ func (a *App) shutdown(ctx context.Context) {
 	// down the DB, tracker, and watcher. Without this a fast window
 	// close could race an in-progress file write.
 	a.wg.Wait()
+	// Share the exact teardown path with CloseVault so both nil every
+	// service field. Nilling here matters: if a "change vault" IPC lands
+	// during OS-driven close (race), CloseVault's nothing-to-close guard
+	// sees the nil'd fields and becomes a no-op instead of double-closing
+	// already-closed handles.
+	a.teardownVaultServices()
+}
 
+// teardownVaultServices closes and nils every vault-scoped service in the
+// reverse order of initializeVaultServices. Shared by shutdown (app exit)
+// and CloseVault (workspace switch) so the two paths can't drift. Safe to
+// call when services are already nil (each close is guarded).
+func (a *App) teardownVaultServices() {
 	if a.watcher != nil {
+		// Drop every focus lease before tearing the watcher down so a clean
+		// exit can't strand a file under fsnotify suppression (#38).
+		a.watcher.ReleaseAllFocus()
 		_ = a.watcher.Close()
+		a.watcher = nil
 	}
 	if a.configWatcher != nil {
 		_ = a.configWatcher.Close()
+		a.configWatcher = nil
 	}
 	if a.tracker != nil {
 		a.tracker.Stop()
+		a.tracker = nil
 	}
+	// Close the read-only plugin handle too (it points at the closing index).
+	a.pluginRODBMu.Lock()
+	if a.pluginRODB != nil {
+		_ = a.pluginRODB.Close()
+		a.pluginRODB = nil
+	}
+	a.pluginRODBMu.Unlock()
 	if a.db != nil {
+		// Close runs PRAGMA wal_checkpoint(TRUNCATE) so the WAL is merged
+		// into the main index file on a clean close (#29).
 		_ = a.db.Close()
+		a.db = nil
 	}
+	a.coordinator = nil
+	a.vaultPath = ""
+}
+
+// CloseVault tears down the active vault's services in the reverse order of
+// initializeVaultServices (via the shared teardownVaultServices helper).
+// After it returns, IsVaultInitialized is false so the UI re-shows the
+// onboarding screen. It does NOT clear the saved settings.json path — the
+// user can re-open the same vault via InitializeVault / a new selection.
+// Idempotent: safe to call when no vault is open. Waits on any in-flight
+// Wails-bound calls (a.wg) so a close can't race an in-progress write.
+func (a *App) CloseVault() error {
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	if a.vaultPath == "" && a.db == nil {
+		return nil // nothing to close
+	}
+	a.teardownVaultServices()
+	return nil
 }
 
 func (a *App) initializeVaultServices(vaultPath string) error {
@@ -146,7 +191,16 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.configLoadErr = cfgErr
 	a.configMu.Unlock()
 
-	dbMgr, err := db.NewDatabaseManager()
+	// Persistent on-disk WAL index at <vault>/.system/index.sqlite. Survives
+	// restarts so a warm launch re-indexes only changed files (#29). Markdown
+	// remains the source of truth; deleting the 3 index files forces a clean
+	// full rebuild. The .system dir is created by ScaffoldVault.
+	systemDir := filepath.Join(vaultPath, ".system")
+	if err := os.MkdirAll(systemDir, 0755); err != nil {
+		return fmt.Errorf("failed to ensure .system dir: %w", err)
+	}
+	indexPath := filepath.Join(systemDir, "index.sqlite")
+	dbMgr, err := db.NewDatabaseManager(indexPath)
 	if err != nil {
 		return fmt.Errorf("failed to start database: %w", err)
 	}
@@ -154,30 +208,98 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	coord := core.NewExecutionCoordinator(dbMgr.SQLDB())
 	tracker := monitor.NewWriteTracker()
 
-	results, err := parser.ScanWorkspace(vaultPath, a.spacesPerTab)
+	results, walkWarnings, err := parser.ScanWorkspace(vaultPath, a.spacesPerTab)
 	if err != nil {
 		_ = dbMgr.Close()
 		return fmt.Errorf("failed to scan workspace: %w", err)
 	}
-	if len(results) > 0 {
-		var allWarnings []string
-		for _, res := range results {
-			if len(res.Warnings) > 0 {
-				allWarnings = append(allWarnings, res.Warnings...)
-			}
-		}
 
-		_, skipped, err := dbMgr.IndexScanResults(results)
-		if err != nil {
-			_ = dbMgr.Close()
-			return fmt.Errorf("failed to index scan results: %w", err)
+	// Incremental re-index: keep only files whose mtime+size differ from the
+	// last recorded index (or that were never indexed). On a cold start (no
+	// index file yet) every file is "changed" and gets a full index. Pruning
+	// stale `files` rows for paths no longer on disk handles deletes/renames.
+	var changed []parser.ScanResult
+	var seenPaths []string
+	for _, res := range results {
+		seenPaths = append(seenPaths, res.Path)
+		if res.Err != nil || res.Notebook == "" {
+			// Unreadable or unresolvable files are forwarded to the indexer so
+			// they appear in the skipped list; they do not get a files row.
+			changed = append(changed, res)
+			continue
 		}
-		if len(skipped) > 0 && a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "vault:init-warnings", skipped)
+		unchanged, uerr := dbMgr.IsFileUnchanged(res.Path, res.MTime.UnixNano(), res.Size)
+		if uerr != nil {
+			log.Printf("initializeVaultServices: IsFileUnchanged(%s): %v", res.Path, uerr)
+			changed = append(changed, res)
+			continue
 		}
-		if len(allWarnings) > 0 && a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "vault:init-warnings", allWarnings)
+		if unchanged {
+			continue
 		}
+		changed = append(changed, res)
+	}
+
+	// indexedCount = files that passed metadata validation and were actually
+	// written to the index (NOT len(changed); errored/unresolvable files in
+	// `changed` are reported in `skipped` and excluded from this count). Used
+	// below to decide whether a post-index WAL checkpoint is worth running.
+	indexedCount, skipped, err := dbMgr.IndexScanResults(changed)
+	if err != nil {
+		_ = dbMgr.Close()
+		return fmt.Errorf("failed to index scan results: %w", err)
+	}
+
+	// Record the freshly-indexed files' stats and prune paths that vanished
+	// since the last run (rename/delete). Only files that were actually
+	// indexed (valid metadata, no scan error) get a files row — a file that
+	// failed to parse shouldn't be marked "unchanged" next time.
+	var allWarnings []string
+	for _, res := range changed {
+		if res.Err != nil {
+			allWarnings = append(allWarnings, fmt.Sprintf("%s: %v", res.Path, res.Err))
+			continue
+		}
+		if res.Notebook == "" {
+			for _, w := range res.Warnings {
+				allWarnings = append(allWarnings, fmt.Sprintf("%s: %s", res.Path, w))
+			}
+			if len(res.Warnings) == 0 {
+				allWarnings = append(allWarnings, fmt.Sprintf("%s: missing notebook/section/page", res.Path))
+			}
+			continue
+		}
+		if res.MTime.IsZero() {
+			// No stat → can't record a skip key; leave it to be re-parsed
+			// next time rather than risk a false "unchanged".
+			continue
+		}
+		if err := dbMgr.MarkFileIndexed(nil, res.Path, res.MTime.UnixNano(), res.Size); err != nil {
+			log.Printf("initializeVaultServices: MarkFileIndexed(%s): %v", res.Path, err)
+		}
+	}
+	pruned, pruneErr := dbMgr.PruneStaleFiles(seenPaths)
+	if pruneErr != nil {
+		log.Printf("initializeVaultServices: PruneStaleFiles: %v", pruneErr)
+	}
+	for _, p := range pruned {
+		allWarnings = append(allWarnings, fmt.Sprintf("%s: removed from index (file no longer exists)", p))
+	}
+
+	// Merge the indexer's per-file skip list into the warning stream.
+	allWarnings = append(allWarnings, skipped...)
+	// Surface walk-level warnings (symlink skips, permission errors) from #32.
+	allWarnings = append(allWarnings, walkWarnings...)
+
+	if indexedCount > 0 {
+		// A checkpoint after the bulk insert keeps the WAL bounded for the
+		// session. No-op on in-memory.
+		if err := dbMgr.Checkpoint(); err != nil {
+			log.Printf("initializeVaultServices: post-index checkpoint: %v", err)
+		}
+	}
+	if len(allWarnings) > 0 && a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "vault:init-warnings", allWarnings)
 	}
 
 	watcher, err := monitor.NewDirectoryWatcher(vaultPath, dbMgr, tracker, coord, a.spacesPerTab)
@@ -349,37 +471,40 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 			return
 		}
 
-		lines := strings.Split(string(contentBytes), "\n")
-		lineIdx := findLineByBlockID(lines, blockID)
-		if lineIdx < 0 {
+		// Parse the whole file, flip the target task's status in the parsed
+		// slice, then re-render through the single serializer. This keeps
+		// UpdateBlockState on the same write path as every other writer
+		// (one on-disk format definition) and preserves unmanaged lines via
+		// the original body.
+		parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, safeFileDate, a.spacesPerTab)
+		if parseErr != nil {
+			writeErr = fmt.Errorf("failed to parse file for state update: %w", parseErr)
+			return
+		}
+		found := false
+		for i := range parsedBlocks {
+			if parsedBlocks[i].ID == blockID {
+				if parsedBlocks[i].Type != parser.BlockTask {
+					writeErr = fmt.Errorf("block %s is not a task", blockID)
+					return
+				}
+				parsedBlocks[i].Status = newState
+				found = true
+				break
+			}
+		}
+		if !found {
 			writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
 			return
 		}
 
-		targetLine := lines[lineIdx]
-
-		if !updateTaskRegex.MatchString(targetLine) {
-			writeErr = fmt.Errorf("target line does not match task syntax")
-			return
+		frontmatter, body := splitFrontmatter(string(contentBytes))
+		if frontmatter == "" {
+			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeFileDate))
+			body = string(contentBytes)
 		}
 
-		var newChar string
-		var newKeyword string
-		switch newState {
-		case "TODO":
-			newChar = " "
-			newKeyword = "TODO"
-		case "DOING":
-			newChar = "/"
-			newKeyword = "DOING"
-		case "DONE":
-			newChar = "x"
-			newKeyword = "DONE"
-		}
-
-		newLine := updateTaskRegex.ReplaceAllString(targetLine, fmt.Sprintf("${1}- [%s] %s TASK${2}", newChar, newKeyword))
-		lines[lineIdx] = newLine
-		newContent := strings.Join(lines, "\n")
+		newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
 
 		a.tracker.RegisterWrite(filePath)
 
@@ -390,14 +515,14 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 
 		// Re-parse with the sanitized metadata so the re-indexed row
 		// uses the same cleaned values that went into the file path.
-		blocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safePage, safeFileDate, a.spacesPerTab)
+		blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
 		if err == nil {
 			var idxErr error
 			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, meta.Date, blocks, meta.Tags, meta.Warnings...)
+				idxErr = a.db.IndexFileBlocks(remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, blocks, remeta.Tags, remeta.Warnings...)
 			})
 			if idxErr != nil {
-				log.Printf("UpdateBlockState: IndexFileBlocks failed for %s/%s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, meta.Date, idxErr)
+				log.Printf("UpdateBlockState: IndexFileBlocks failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
 			}
 		}
 	})
@@ -655,22 +780,36 @@ func (a *App) MutateBlock(blockID, newText string) error {
 			writeErr = err
 			return
 		}
-		lines := strings.Split(string(contentBytes), "\n")
-		lineIdx := findLineByBlockID(lines, blockID)
-		if lineIdx < 0 {
+
+		// Parse the whole file, mutate the target block in the slice, then
+		// re-render through the single serializer (RenderFileContent). This
+		// preserves unmanaged lines (code fences, prose) via the original
+		// body and keeps MutateBlock on the same write path as every other
+		// writer, so there is one on-disk format definition.
+		parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, safeFileDate, a.spacesPerTab)
+		if parseErr != nil {
+			writeErr = fmt.Errorf("failed to parse file for mutation: %w", parseErr)
+			return
+		}
+		found := false
+		for i := range parsedBlocks {
+			if parsedBlocks[i].ID == blockID {
+				parsedBlocks[i].CleanText = cleanText
+				found = true
+				break
+			}
+		}
+		if !found {
 			writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
 			return
 		}
 
-		// Round-trip through parse→format to preserve type/indent/status/metadata.
-		block, _, _ := parser.ParseLine(lines[lineIdx], lineIdx+1, a.spacesPerTab)
-		if block.ID == "" {
-			writeErr = fmt.Errorf("could not parse target line for block %s", blockID)
-			return
+		frontmatter, body := splitFrontmatter(string(contentBytes))
+		if frontmatter == "" {
+			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeFileDate))
 		}
-		block.CleanText = cleanText
-		lines[lineIdx] = parser.FormatBlockToLine(block, a.spacesPerTab)
-		newContent := strings.Join(lines, "\n")
+
+		newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
 
 		a.tracker.RegisterWrite(filePath)
 		if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
@@ -678,14 +817,17 @@ func (a *App) MutateBlock(blockID, newText string) error {
 			return
 		}
 
-		blocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safePage, safeFileDate, a.spacesPerTab)
+		// Re-parse the rendered output and reindex so the cache reflects the
+		// canonical on-disk state (RenderFileContent may have normalized the
+		// mutated line's format).
+		reblocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
 		if err == nil {
 			var idxErr error
 			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, meta.Date, blocks, meta.Tags, meta.Warnings...)
+				idxErr = a.db.IndexFileBlocks(remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, reblocks, remeta.Tags, remeta.Warnings...)
 			})
 			if idxErr != nil {
-				log.Printf("MutateBlock: IndexFileBlocks failed for %s/%s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, meta.Date, idxErr)
+				log.Printf("MutateBlock: IndexFileBlocks failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
 			}
 		}
 	})
@@ -727,6 +869,29 @@ func sanitizePathSegment(s string) string {
 		cleaned = ""
 	}
 	return strings.TrimSpace(cleaned)
+}
+
+// splitFrontmatter separates a leading YAML frontmatter block (--- ... ---)
+// from the body. It returns the frontmatter exactly as it appears in content
+// (including the trailing newline after the closing ---), and the body with
+// the frontmatter stripped. If content has no frontmatter, frontmatter is ""
+// and body is the full content. Callers pair this with parser.RenderFileContent
+// so every writer extracts frontmatter the same way.
+func splitFrontmatter(content string) (frontmatter, body string) {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return "", content
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			fm := strings.Join(lines[:i+1], "\n") + "\n"
+			body := strings.Join(lines[i+1:], "\n")
+			return fm, body
+		}
+	}
+	// Opening --- with no closing ---: treat the whole thing as body so we
+	// don't silently drop user content.
+	return "", content
 }
 
 // isPathWithinVault reports whether target is the same as or a descendant of
@@ -935,7 +1100,10 @@ func (a *App) QueryBlocksByTag(tagPath string) ([]parser.TaskResult, error) {
 	return res, err
 }
 
-// SearchBlocks fuzzy searches blocks and headings matching the query.
+// SearchBlocks fuzzy searches blocks and headings matching the query. Returns
+// the first page (offset 0, limit 50) of FTS5-ranked results for backwards
+// compatibility with the original binding; the Svelte search modal that needs
+// pagination/snippets calls SearchBlocksPaged instead.
 func (a *App) SearchBlocks(query string) ([]parser.TaskResult, error) {
 	if a.db == nil {
 		return nil, fmt.Errorf("vault database not loaded")
@@ -948,6 +1116,26 @@ func (a *App) SearchBlocks(query string) ([]parser.TaskResult, error) {
 	var err error
 	a.coordinator.WithDBRead(func() {
 		res, err = a.db.SearchBlocks(query)
+	})
+
+	return res, err
+}
+
+// SearchBlocksPaged runs the FTS5 search and returns a ranked, paginated
+// envelope with highlighted snippets, the total match count, and a HasMore
+// flag. offset/limit control the page (defaults applied by the caller).
+func (a *App) SearchBlocksPaged(query string, offset, limit int) (parser.SearchResult, error) {
+	if a.db == nil {
+		return parser.SearchResult{}, fmt.Errorf("vault database not loaded")
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var res parser.SearchResult
+	var err error
+	a.coordinator.WithDBRead(func() {
+		res, err = a.db.SearchBlocksPaged(query, offset, limit)
 	})
 
 	return res, err
@@ -996,6 +1184,31 @@ func (a *App) ReleaseFocusLock(notebook, section, page, fileDate string) error {
 		return fmt.Errorf("path escapes vault")
 	}
 	a.watcher.UnlockFocus(filePath)
+	return nil
+}
+
+// RefreshFocusLock extends an existing focus lease for a file. Called by the
+// Svelte editor's heartbeat while it stays focused (#38); a no-op if the
+// lease already expired (the editor must re-acquire).
+func (a *App) RefreshFocusLock(notebook, section, page, fileDate string) error {
+	if a.watcher == nil {
+		return fmt.Errorf("watcher not running")
+	}
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection := sanitizePathSegment(section)
+	safePage := sanitizePathSegment(page)
+	safeFileDate := sanitizePathSegment(fileDate)
+	if safeNotebook == "" || safePage == "" || safeFileDate == "" {
+		return fmt.Errorf("invalid path metadata")
+	}
+	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage, safeFileDate+".md")
+	if !isPathWithinVault(filePath, a.vaultPath) {
+		return fmt.Errorf("path escapes vault")
+	}
+	a.watcher.RefreshFocus(filePath)
 	return nil
 }
 
@@ -1123,20 +1336,18 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 		formattedDate = t.Format("Monday, January 2, 2006")
 	}
 
-	headerID := uuid.New().String()
-	taskID := uuid.New().String()
-
-scaffoldContent := fmt.Sprintf(`---
-notebook: %s
-section: %s
-page: %s
-date: %s
-tags: []
----
-# %s <!-- id: %s -->
-
-- [ ] TODO TASK [Chris] Start writing in %s <!-- id: %s -->
-`, strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeDate), formattedDate, headerID, safePage, taskID)
+	// Build the scaffold through the single serializer so even the very
+	// first write to a new page uses the canonical on-disk format (no inline
+	// fmt.Sprintf parallel serializer that could drift from the parser).
+	// RenderFileContent assigns the UUIDs, so the blocks start ID-less.
+	scaffoldBlocks := []parser.ParsedBlock{
+		{Type: parser.BlockHeader, Depth: 1, CleanText: formattedDate},
+		{Type: parser.BlockTask, Status: "TODO", Owner: "Chris", Priority: 3,
+			CleanText: "Start writing in " + safePage},
+	}
+	scaffoldFrontmatter := fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
+		strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeDate))
+	scaffoldContent := parser.RenderFileContent(scaffoldBlocks, "", scaffoldFrontmatter, a.spacesPerTab)
 
 	a.wg.Add(1)
 	defer a.wg.Done()
@@ -1198,99 +1409,22 @@ func (a *App) SaveFileBlocks(notebook, section, page, fileDate string, blocks []
 			return
 		}
 
-		frontmatter := ""
-		bodyStart := 0
-		var lines []string
-		if err == nil {
-			lines = strings.Split(string(contentBytes), "\n")
-			if len(lines) > 0 && strings.TrimSpace(lines[0]) == "---" {
-				var fmParts []string
-				fmParts = append(fmParts, lines[0])
-				for i := 1; i < len(lines); i++ {
-					fmParts = append(fmParts, lines[i])
-					if strings.TrimSpace(lines[i]) == "---" {
-						bodyStart = i + 1
-						break
-					}
-				}
-				if len(fmParts) > 1 && strings.TrimSpace(fmParts[len(fmParts)-1]) == "---" {
-					frontmatter = strings.Join(fmParts, "\n") + "\n"
-				}
-			}
-		}
+		// Split frontmatter from body. The body (frontmatter stripped) is
+		// handed to RenderFileContent so it can preserve unmanaged lines
+		// (code fences, blanks, prose) in their relative position to the
+		// managed blocks. The frontmatter is emitted verbatim; if the file
+		// had none, synthesize the default so the note stays self-describing.
+		frontmatter, body := splitFrontmatter(string(contentBytes))
 
 		if frontmatter == "" {
 			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeFileDate))
+			body = string(contentBytes)
 		}
 
-		updatedByID := make(map[string]parser.ParsedBlock, len(blocks))
-		orderedBlocks := make([]parser.ParsedBlock, 0, len(blocks))
-		for _, block := range blocks {
-			if block.ID == "" {
-				block.ID = uuid.New().String()
-			}
-			updatedByID[block.ID] = block
-			orderedBlocks = append(orderedBlocks, block)
-		}
-
-		// Distinguish deleted managed blocks from unmanaged lines that
-		// happen to contain a UUID-shaped comment. Without this, a user-
-		// typed note quoting a commit hash would be silently dropped.
-		oldBlockIDs := make(map[string]bool)
-		if len(lines) > 0 {
-			oldBlocks, _, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, safeFileDate, a.spacesPerTab)
-			if parseErr == nil {
-				for _, b := range oldBlocks {
-					oldBlockIDs[b.ID] = true
-				}
-			}
-		}
-
-		preservedBefore := make(map[string][]string)
-		var pendingPreserved []string
-		inCodeBlock := false
-		for i := bodyStart; i < len(lines); i++ {
-			line := lines[i]
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "```") {
-				inCodeBlock = !inCodeBlock
-				pendingPreserved = append(pendingPreserved, line)
-				continue
-			}
-			if inCodeBlock || trimmed == "" {
-				pendingPreserved = append(pendingPreserved, line)
-				continue
-			}
-
-			matches := updateLineIDRegex.FindStringSubmatch(line)
-			if len(matches) > 1 {
-				blockID := matches[1]
-				if _, ok := updatedByID[blockID]; ok {
-					if _, assigned := preservedBefore[blockID]; assigned {
-						continue
-					}
-					preservedBefore[blockID] = append(preservedBefore[blockID], pendingPreserved...)
-					pendingPreserved = nil
-					continue
-				}
-				if oldBlockIDs[blockID] {
-					continue
-				}
-			}
-
-			pendingPreserved = append(pendingPreserved, line)
-		}
-
-		var markdownLines []string
-		for _, block := range orderedBlocks {
-			if preserved, ok := preservedBefore[block.ID]; ok {
-				markdownLines = append(markdownLines, preserved...)
-			}
-			markdownLines = append(markdownLines, parser.FormatBlockToLine(block, a.spacesPerTab))
-		}
-		markdownLines = append(markdownLines, pendingPreserved...)
-
-		newContent := frontmatter + strings.Join(markdownLines, "\n")
+		// RenderFileContent is the single serializer: it assigns any missing
+		// block IDs, weaves preserved unmanaged lines around the managed
+		// blocks, and emits the canonical per-block format.
+		newContent := parser.RenderFileContent(blocks, body, frontmatter, a.spacesPerTab)
 
 		a.tracker.RegisterWrite(filePath)
 
@@ -1329,24 +1463,26 @@ const maxPluginQueryRows = 5000
 
 // --- Plugin SDK bindings -------------------------------------------------
 
-// pluginRODSN is the DSN used to open a second, read-only *sql.DB handle to
-// the same shared in-memory index. The shared in-memory cache is identified
-// by the "file::memory:?cache=shared" prefix; setting PRAGMA query_only on
-// that handle causes SQLite to reject any write at the engine level.
-const pluginRODSN = "file::memory:?cache=shared"
-
-// openPluginRODB lazily opens a read-only handle to the in-memory index for
-// use by PluginRawQuery. The handle is capped at one connection to match the
-// main DB's pool size. On success the handle is cached; on failure it is NOT
-// cached — the next call retries — so a transient startup error doesn't
-// permanently break plugin queries.
+// openPluginRODB lazily opens a read-only handle to the same on-disk index
+// (or the in-memory shared cache before a vault is open) for use by
+// PluginRawQuery. The handle is capped at one connection to match the main
+// DB's pool size. query_only=ON causes SQLite to reject any write at the
+// engine level — the primary guarantee that plugins can't mutate the index.
+// On success the handle is cached; on failure it is NOT cached — the next
+// call retries — so a transient startup error doesn't permanently break
+// plugin queries. On a vault switch (CloseVault) the cached handle is closed
+// and the next call re-opens against the new vault's index.
 func (a *App) openPluginRODB() (*sql.DB, error) {
 	a.pluginRODBMu.Lock()
 	defer a.pluginRODBMu.Unlock()
 	if a.pluginRODB != nil {
 		return a.pluginRODB, nil
 	}
-	ro, err := sql.Open("sqlite", pluginRODSN)
+	dsn := "file::memory:?cache=shared"
+	if a.db != nil && a.db.IsOnDisk() {
+		dsn = a.db.Path()
+	}
+	ro, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open read-only plugin DB: %w", err)
 	}

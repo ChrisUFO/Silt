@@ -344,8 +344,124 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 	return blocks, meta, newContent, modifiedAny, nil
 }
 
-// FormatBlockToLine converts a ParsedBlock back into a markdown line.
-func FormatBlockToLine(block ParsedBlock, spacesPerTab int) string {
+// RenderFileContent is the canonical serializer for a Silt note file — the
+// single source of truth for turning ParsedBlocks (plus frontmatter and any
+// unmanaged prose) back into file content. Every writer (SaveFileBlocks,
+// MutateBlock, CreatePage) goes through this function so the on-disk block
+// format has exactly one definition and cannot drift between serializers.
+//
+//   - frontmatter is emitted verbatim. Pass the full frontmatter block
+//     including its trailing newline (e.g. "---\n...\n---\n"), or "" for none.
+//   - blocks is the authoritative ordered list of managed blocks to write.
+//     Blocks without an ID are assigned a fresh UUIDv4 before rendering, so a
+//     brand-new editor block reaches disk with a stable identity.
+//   - originalBody is the file body with frontmatter already stripped, used
+//     to preserve unmanaged lines (fenced code blocks, blank lines, prose
+//     that never carried a managed block ID) in their relative position to
+//     the managed blocks. Pass "" when there is nothing to preserve (e.g. a
+//     brand-new page). Unmanaged lines attach to the managed block that
+//     follows them; trailing unmanaged lines are appended after the last
+//     block. Managed lines from originalBody whose IDs are no longer in
+//     `blocks` are dropped (the block was deleted); lines that merely look
+//     like a UUID comment but never parsed as a managed block are preserved.
+//
+// The per-block line format is produced by the package-internal renderBlock,
+// which lives next to ParseLine so a format change has exactly one place to
+// update. The round-trip identity tests in parser_test.go guarantee that
+// ParseFileContent(RenderFileContent(ParseFileContent(src))) is stable.
+func RenderFileContent(blocks []ParsedBlock, originalBody, frontmatter string, spacesPerTab int) string {
+	if spacesPerTab <= 0 {
+		spacesPerTab = 4
+	}
+
+	// Ensure every block reaches disk with a stable ID.
+	for i := range blocks {
+		if blocks[i].ID == "" {
+			blocks[i].ID = generateUUIDv4()
+		}
+	}
+
+	orderedByID := make(map[string]ParsedBlock, len(blocks))
+	for _, b := range blocks {
+		orderedByID[b.ID] = b
+	}
+
+	// Determine which IDs were managed in the original body so we can tell
+	// "this UUID line was a managed block the user deleted" (drop it) from
+	// "this UUID-shaped HTML comment is just prose the user typed" (keep it).
+	// Without this distinction, quoting a commit hash in a note would silently
+	// delete the line on the next save.
+	oldManagedIDs := map[string]bool{}
+	if originalBody != "" {
+		oldBlocks, _, _, _, parseErr := ParseFileContent(originalBody, "", "", "", "", spacesPerTab)
+		if parseErr == nil {
+			for _, b := range oldBlocks {
+				oldManagedIDs[b.ID] = true
+			}
+		}
+	}
+
+	// Walk the original body, bucketing unmanaged lines (code fences, blanks,
+	// prose) by the managed block ID that follows them. This mirrors the
+	// algorithm SaveFileBlocks used to inline, now centralized here so every
+	// writer benefits from preserved user content.
+	preservedBefore := make(map[string][]string)
+	var pendingPreserved []string
+	inCodeBlock := false
+	if originalBody != "" {
+		for _, line := range strings.Split(originalBody, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "```") {
+				inCodeBlock = !inCodeBlock
+				pendingPreserved = append(pendingPreserved, line)
+				continue
+			}
+			if inCodeBlock || trimmed == "" {
+				pendingPreserved = append(pendingPreserved, line)
+				continue
+			}
+			matches := IDRegex.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				blockID := matches[1]
+				if _, ok := orderedByID[blockID]; ok {
+					if _, assigned := preservedBefore[blockID]; !assigned {
+						preservedBefore[blockID] = append(preservedBefore[blockID], pendingPreserved...)
+						pendingPreserved = nil
+						continue
+					}
+				}
+				if oldManagedIDs[blockID] {
+					// Deleted managed block: drop it. Its pending unmanaged
+					// lines stay pending for the next surviving block.
+					continue
+				}
+			}
+			pendingPreserved = append(pendingPreserved, line)
+		}
+	}
+
+	// Emit frontmatter (verbatim) + woven body (preserved + rendered blocks).
+	var bodyLines []string
+	for _, b := range blocks {
+		if pre, ok := preservedBefore[b.ID]; ok {
+			bodyLines = append(bodyLines, pre...)
+		}
+		bodyLines = append(bodyLines, renderBlock(b, spacesPerTab))
+	}
+	bodyLines = append(bodyLines, pendingPreserved...)
+
+	return frontmatter + strings.Join(bodyLines, "\n")
+}
+
+// renderBlock converts a single ParsedBlock back into its canonical markdown
+// line. It is the sole block→line code path in the codebase (the only thing
+// that produces on-disk block syntax), kept next to ParseLine so any format
+// tweak has one place to update.
+//
+// Newly created editor blocks arrive with an empty RawText; they are emitted
+// as "- " bullet notes so the outliner round-trips. Existing notes preserve
+// their original bullet marker ("- ", "* ", "+ ") or plain-text style.
+func renderBlock(block ParsedBlock, spacesPerTab int) string {
 	if spacesPerTab <= 0 {
 		spacesPerTab = 4
 	}

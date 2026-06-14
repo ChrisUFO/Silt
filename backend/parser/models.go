@@ -165,4 +165,18 @@ type TaskResult struct {
 	DueDate      string    `json:"due_date,omitempty"`
 	Priority     int       `json:"priority,omitempty"`
 	Tags         []string  `json:"tags,omitempty"`
+	// Snippet is the FTS5 snippet (with <mark>...</mark> highlights) for
+	// search results; empty for non-search queries.
+	Snippet      string    `json:"snippet,omitempty"`
+}
+
+// SearchResult is the paginated envelope returned by SearchBlocksPaged: the
+// ranked results, the total match count (for "showing N of M"), and a HasMore
+// flag so the frontend can stop fetching once everything is loaded.
+type SearchResult struct {
+	Results []TaskResult `json:"results"`
+	Total   int          `json:"total"`
+	Offset  int          `json:"offset"`
+	Limit   int          `json:"limit"`
+	HasMore bool         `json:"has_more"`
 }

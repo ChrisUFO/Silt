@@ -1,16 +1,20 @@
 package db
 
 import (
+	"database/sql"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"silt/backend/parser"
 )
 
 func newTestDB(t *testing.T) *DatabaseManager {
 	t.Helper()
-	dm, err := NewDatabaseManager()
+	dm, err := NewDatabaseManager("")
 	if err != nil {
 		t.Fatalf("failed to create DatabaseManager: %v", err)
 	}
@@ -669,6 +673,642 @@ func TestQueryTagHierarchy_DistinctCountsAtOrBeneath(t *testing.T) {
 		if got.Count != c.want {
 			t.Errorf("path %q: got count %d, want %d", c.path, got.Count, c.want)
 		}
+	}
+}
+
+// --- Phase 3: persistent on-disk WAL index + incremental re-indexing (#29) ---
+
+// newOnDiskDB opens a DatabaseManager against a fresh on-disk path in the
+// test's temp dir. Returns the manager and the .sqlite path. Cleanup closes
+// the manager and removes the index files.
+func newOnDiskDB(t *testing.T) (*DatabaseManager, string) {
+	t.Helper()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "index.sqlite")
+	dm, err := NewDatabaseManager(dbPath)
+	if err != nil {
+		t.Fatalf("NewDatabaseManager(on-disk): %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+	if !dm.IsOnDisk() {
+		t.Fatalf("expected on-disk DB, got in-memory")
+	}
+	return dm, dbPath
+}
+
+func TestFilesTable_ColdStartPopulatesAndWarmStartSkips(t *testing.T) {
+	dm, dbPath := newOnDiskDB(t)
+
+	path := "/vault/Work/Journal/Daily/2026-06-14.md"
+	mtime := time.Now().UnixNano()
+	const size int64 = 4096
+
+	// Cold start: file never indexed → unchanged=false.
+	unchanged, err := dm.IsFileUnchanged(path, mtime, size)
+	if err != nil {
+		t.Fatalf("IsFileUnchanged cold: %v", err)
+	}
+	if unchanged {
+		t.Fatal("cold start should report file as changed")
+	}
+
+	// Simulate a successful index: mark it.
+	if err := dm.MarkFileIndexed(nil, path, mtime, size); err != nil {
+		t.Fatalf("MarkFileIndexed: %v", err)
+	}
+
+	// Warm restart (same mtime+size): unchanged=true → skip.
+	unchanged, err = dm.IsFileUnchanged(path, mtime, size)
+	if err != nil {
+		t.Fatalf("IsFileUnchanged warm: %v", err)
+	}
+	if !unchanged {
+		t.Fatal("warm start with identical mtime+size should report unchanged")
+	}
+
+	// Close + reopen the on-disk DB to prove the files table persists.
+	if err := dm.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	dm2, err := NewDatabaseManager(dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer dm2.Close()
+
+	unchanged, err = dm2.IsFileUnchanged(path, mtime, size)
+	if err != nil {
+		t.Fatalf("IsFileUnchanged after reopen: %v", err)
+	}
+	if !unchanged {
+		t.Fatal("files table did not persist across restart — warm start broke")
+	}
+
+	// Modified file (mtime bumped): unchanged=false → reindex.
+	unchanged, err = dm2.IsFileUnchanged(path, mtime+1, size)
+	if err != nil {
+		t.Fatalf("IsFileUnchanged modified: %v", err)
+	}
+	if unchanged {
+		t.Fatal("changed mtime should report file as changed")
+	}
+	// Size change alone also triggers reindex.
+	unchanged, err = dm2.IsFileUnchanged(path, mtime, size+1)
+	if err != nil {
+		t.Fatalf("IsFileUnchanged size: %v", err)
+	}
+	if unchanged {
+		t.Fatal("changed size should report file as changed")
+	}
+}
+
+func TestPruneStaleFiles_DropsRenamedAndDeletedPaths(t *testing.T) {
+	dm, _ := newOnDiskDB(t)
+
+	old := "/vault/Work/Journal/Daily/2026-06-13.md"
+	keep := "/vault/Work/Journal/Daily/2026-06-14.md"
+	now := time.Now().UnixNano()
+	if err := dm.MarkFileIndexed(nil, old, now, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := dm.MarkFileIndexed(nil, keep, now, 200); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a scan that only sees `keep` (old was renamed/deleted).
+	pruned, err := dm.PruneStaleFiles([]string{keep})
+	if err != nil {
+		t.Fatalf("PruneStaleFiles: %v", err)
+	}
+	if len(pruned) != 1 || pruned[0] != old {
+		t.Fatalf("expected prune [old], got %v", pruned)
+	}
+
+	known, err := dm.KnownFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := known[old]; exists {
+		t.Error("old path was not pruned from files table")
+	}
+	if _, exists := known[keep]; !exists {
+		t.Error("keep path was incorrectly pruned")
+	}
+}
+
+func TestPruneStaleFiles_EmptyScanClearsAll(t *testing.T) {
+	dm, _ := newOnDiskDB(t)
+	if err := dm.MarkFileIndexed(nil, "/a.md", 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := dm.MarkFileIndexed(nil, "/b.md", 2, 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dm.PruneStaleFiles(nil); err != nil {
+		t.Fatalf("PruneStaleFiles(nil): %v", err)
+	}
+	known, err := dm.KnownFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(known) != 0 {
+		t.Fatalf("expected empty files table after pruning all, got %d rows", len(known))
+	}
+}
+
+func TestOnDiskWAL_CreatesWALFiles(t *testing.T) {
+	dm, dbPath := newOnDiskDB(t)
+
+	// A write should create the WAL sidecar files (WAL mode is persistent).
+	if err := dm.MarkFileIndexed(nil, "/x.md", time.Now().UnixNano(), 10); err != nil {
+		t.Fatal(err)
+	}
+	walPath := dbPath + "-wal"
+	if _, err := os.Stat(walPath); err != nil {
+		t.Errorf("expected WAL file at %s after write, got: %v", walPath, err)
+	}
+}
+
+func TestOnDiskWAL_CheckpointOnCloseCollapsesWAL(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "index.sqlite")
+	dm, err := NewDatabaseManager(dbPath)
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	for i := 0; i < 50; i++ {
+		if err := dm.MarkFileIndexed(nil, "/f"+string(rune('a'+i%26))+".md", int64(i), int64(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Close runs PRAGMA wal_checkpoint(TRUNCATE).
+	if err := dm.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("main DB file missing after close: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Error("main DB file is empty — checkpoint did not merge WAL into the main file")
+	}
+	walInfo, walErr := os.Stat(dbPath + "-wal")
+	if walErr == nil && walInfo.Size() > 0 {
+		// After TRUNCATE checkpoint the wal file should be empty (0 bytes);
+		// a non-empty wal means checkpoint did not run.
+		t.Errorf("WAL file is %d bytes after close+checkpoint; expected 0 or absent", walInfo.Size())
+	}
+}
+
+func TestOnDiskWAL_DeleteIndexForcesCleanRebuild(t *testing.T) {
+	dm, dbPath := newOnDiskDB(t)
+	path := "/vault/nb/pg/2026-06-14.md"
+	mtime := time.Now().UnixNano()
+	if err := dm.MarkFileIndexed(nil, path, mtime, 512); err != nil {
+		t.Fatal(err)
+	}
+	if err := dm.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete the 3 index files (the documented recovery path).
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := os.Remove(dbPath + suffix); err != nil && !os.IsNotExist(err) {
+			t.Fatalf("remove %s: %v", suffix, err)
+		}
+	}
+
+	// Reopen: should be a clean DB with no files table data.
+	dm2, err := NewDatabaseManager(dbPath)
+	if err != nil {
+		t.Fatalf("reopen after delete: %v", err)
+	}
+	defer dm2.Close()
+	unchanged, err := dm2.IsFileUnchanged(path, mtime, 512)
+	if err != nil {
+		t.Fatalf("IsFileUnchanged: %v", err)
+	}
+	if unchanged {
+		t.Error("deleted index should rebuild from scratch — file should not be 'unchanged'")
+	}
+	known, err := dm2.KnownFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(known) != 0 {
+		t.Errorf("expected empty files table after rebuild, got %d rows", len(known))
+	}
+}
+
+// TestPluginRODB_ReadsOnDiskIndex confirms a second read-only connection to
+// the on-disk file sees data the main connection wrote (WAL multi-connection
+// visibility). This is the property PluginRawQuery depends on.
+func TestPluginRODB_ReadsOnDiskIndex(t *testing.T) {
+	dm, dbPath := newOnDiskDB(t)
+	blocks := []parser.ParsedBlock{sampleTaskBlock("aaaaaaaa-1111-1111-1111-111111111111", 1)}
+	if err := dm.IndexFileBlocks("NB", "", "PG", "2026-06-14", blocks, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Open a second read-only handle the way openPluginRODB does.
+	ro, err := openRawReadonly(t, dbPath)
+	if err != nil {
+		t.Fatalf("open readonly: %v", err)
+	}
+	defer ro.Close()
+
+	var got int
+	if err := ro.QueryRow("SELECT count(*) FROM blocks").Scan(&got); err != nil {
+		t.Fatalf("readonly count: %v", err)
+	}
+	if got != 1 {
+		t.Errorf("read-only handle saw %d blocks, expected 1 (WAL visibility failed)", got)
+	}
+	// query_only must reject writes.
+	if _, err := ro.Exec("DELETE FROM blocks"); err == nil {
+		t.Error("read-only handle accepted a write — query_only is not enforced")
+	}
+}
+
+// openRawReadonly opens a second *sql.DB handle to dbPath with query_only=ON,
+// mirroring what app.openPluginRODB does for the plugin SDK. Used to verify a
+// read-only connection sees WAL-committed data and cannot write.
+func openRawReadonly(t *testing.T, dbPath string) (*sql.DB, error) {
+	t.Helper()
+	ro, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, err
+	}
+	ro.SetMaxOpenConns(1)
+	if _, err := ro.Exec("PRAGMA query_only = ON"); err != nil {
+		ro.Close()
+		return nil, err
+	}
+	return ro, nil
+}
+
+// BenchmarkWarmStart_5000Files measures the cost of the warm-restart diff
+// loop (IsFileUnchanged per file) against a pre-seeded 5k-row files table.
+// This is the new hot path added by #29; it must stay cheap so a warm restart
+// of a thousands-of-pages vault remains fast.
+func BenchmarkWarmStart_5000Files(b *testing.B) {
+	dir := b.TempDir()
+	dbPath := filepath.Join(dir, "index.sqlite")
+	dm, err := NewDatabaseManager(dbPath)
+	if err != nil {
+		b.Fatalf("NewDatabaseManager: %v", err)
+	}
+	defer dm.Close()
+
+	const n = 5000
+	now := time.Now().UnixNano()
+	for i := 0; i < n; i++ {
+		p := "/vault/nb" + itoa(i) + "/pg/file.md"
+		if err := dm.MarkFileIndexed(nil, p, now+int64(i), int64(i)); err != nil {
+			b.Fatalf("seed: %v", err)
+		}
+	}
+	// Snapshot the seeded stats so the benchmark loop can re-query them
+	// (simulating ScanWorkspace handing the same mtime/size back).
+	known, err := dm.KnownFiles()
+	if err != nil {
+		b.Fatalf("KnownFiles: %v", err)
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for range b.N {
+		for p, fs := range known {
+			if _, err := dm.IsFileUnchanged(p, fs.MTime, fs.Size); err != nil {
+				b.Fatalf("IsFileUnchanged: %v", err)
+			}
+		}
+	}
+}
+
+// itoa is a tiny allocation-free int→string to keep the benchmark seed loop
+// cheap (fmt.Sprintf would dominate the seed time and skew nothing here, but
+// this avoids pulling fmt into the hot seed path).
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	pos := len(buf)
+	neg := i < 0
+	if neg {
+		i = -i
+	}
+	for i > 0 {
+		pos--
+		buf[pos] = byte('0' + i%10)
+		i /= 10
+	}
+	if neg {
+		pos--
+		buf[pos] = '-'
+	}
+	return string(buf[pos:])
+}
+
+// --- Phase 4: FTS5 search (#39) ---
+
+// indexSearchable seeds a DB with a handful of blocks across two pages so the
+// FTS ranking/grouping/pagination tests have realistic data. Returns the dm.
+func indexSearchable(t *testing.T) *DatabaseManager {
+	t.Helper()
+	dm := newTestDB(t)
+	// Page A (Work/Journal/Daily) — three blocks, "sprint planning" appears
+	// most in the first one so bm25 should rank it above the others.
+	a1 := parser.ParsedBlock{ID: "a1a1a1a1-1111-1111-1111-111111111111", Type: parser.BlockNote, CleanText: "sprint planning notes for the sprint planning meeting", LineNumber: 1}
+	a2 := parser.ParsedBlock{ID: "a2a2a2a2-2222-2222-2222-222222222222", Type: parser.BlockTask, CleanText: "sprint review prep", Status: "TODO", LineNumber: 2}
+	a3 := parser.ParsedBlock{ID: "a3a3a3a3-3333-3333-3333-333333333333", Type: parser.BlockNote, CleanText: "a totally unrelated line about weather", LineNumber: 3}
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", []parser.ParsedBlock{a1, a2, a3}, []string{"work"}); err != nil {
+		t.Fatalf("index page A: %v", err)
+	}
+	// Page B (Work/Journal/Retros) — one highly relevant block from a different
+	// page, used to verify per-page grouping surfaces both pages.
+	b1 := parser.ParsedBlock{ID: "b1b1b1b1-1111-1111-1111-111111111111", Type: parser.BlockNote, CleanText: "last sprint retrospective action items", LineNumber: 1}
+	if err := dm.IndexFileBlocks("Work", "Journal", "Retros", "2026-06-13", []parser.ParsedBlock{b1}, []string{"work"}); err != nil {
+		t.Fatalf("index page B: %v", err)
+	}
+	return dm
+}
+
+func TestSearch_FTS5SmokeAndSync(t *testing.T) {
+	dm := indexSearchable(t)
+	// The triggers must have kept blocks_fts in sync: a search for "sprint"
+	// returns rows from both indexed pages without an explicit rebuild.
+	res, err := dm.SearchBlocksPaged("sprint", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total == 0 {
+		t.Fatal("FTS5 returned no results — triggers did not sync blocks_fts")
+	}
+}
+
+func TestSearch_RankingPutsMostRelevantFirst(t *testing.T) {
+	dm := indexSearchable(t)
+	res, err := dm.SearchBlocksPaged("sprint planning", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if len(res.Results) == 0 {
+		t.Fatal("no results")
+	}
+	// a1 mentions both "sprint" and "planning" multiple times → highest bm25.
+	if res.Results[0].ID != "a1a1a1a1-1111-1111-1111-111111111111" {
+		t.Errorf("expected most-relevant block first, got %s (clean=%q)", res.Results[0].ID, res.Results[0].CleanContent)
+	}
+}
+
+func TestSearch_SnippetContainsHighlightMarkers(t *testing.T) {
+	dm := indexSearchable(t)
+	res, err := dm.SearchBlocksPaged("weather", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if len(res.Results) == 0 {
+		t.Fatal("no results for 'weather'")
+	}
+	if !strings.Contains(res.Results[0].Snippet, "<mark>") || !strings.Contains(res.Results[0].Snippet, "</mark>") {
+		t.Errorf("snippet missing <mark> highlight: %q", res.Results[0].Snippet)
+	}
+	if !strings.Contains(res.Results[0].Snippet, "weather") {
+		t.Errorf("snippet does not contain the matched term: %q", res.Results[0].Snippet)
+	}
+}
+
+func TestSearch_MultiTermIsImplicitAND(t *testing.T) {
+	dm := indexSearchable(t)
+	// "sprint weather" must AND: only blocks containing BOTH survive. No
+	// single block has both terms, so the result set is empty.
+	res, err := dm.SearchBlocksPaged("sprint weather", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 0 {
+		t.Errorf("AND of disjoint terms should return 0, got %d", res.Total)
+	}
+	// "sprint review" matches a2 only.
+	res, err = dm.SearchBlocksPaged("sprint review", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 1 || res.Results[0].ID != "a2a2a2a2-2222-2222-2222-222222222222" {
+		t.Errorf("expected single 'sprint review' hit on a2, got total=%d first=%s", res.Total, firstID(res.Results))
+	}
+}
+
+func TestSearch_PerPageGroupingCapsResultsPerPage(t *testing.T) {
+	// Index 5 same-page blocks all matching "alpha" so grouping must cap them.
+	dm := newTestDB(t)
+	var blocks []parser.ParsedBlock
+	for i := 0; i < 5; i++ {
+		blocks = append(blocks, parser.ParsedBlock{
+			ID:        blockID("caf", i),
+			Type:      parser.BlockNote,
+			CleanText: "alpha beta gamma item number",
+			LineNumber: i + 1,
+		})
+	}
+	if err := dm.IndexFileBlocks("NB", "", "PG", "2026-06-14", blocks, nil); err != nil {
+		t.Fatal(err)
+	}
+	res, err := dm.SearchBlocksPaged("alpha", 0, 50)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total > searchMaxPerGroup {
+		t.Errorf("per-page grouping failed: total=%d, expected <= %d", res.Total, searchMaxPerGroup)
+	}
+}
+
+func TestSearch_PaginationAndHasMore(t *testing.T) {
+	dm := indexSearchable(t)
+	// "sprint" matches a1, a2 (page A) + b1 (page B). After per-page grouping
+	// (<=3/page) all three survive. Page size 2 → HasMore on the first page.
+	page1, err := dm.SearchBlocksPaged("sprint", 0, 2)
+	if err != nil {
+		t.Fatalf("page1: %v", err)
+	}
+	if len(page1.Results) != 2 {
+		t.Errorf("page1 expected 2 results, got %d", len(page1.Results))
+	}
+	if !page1.HasMore {
+		t.Error("page1 HasMore should be true when total > offset+limit")
+	}
+	if page1.Total < 3 {
+		t.Errorf("total expected >=3, got %d", page1.Total)
+	}
+	page2, err := dm.SearchBlocksPaged("sprint", 2, 2)
+	if err != nil {
+		t.Fatalf("page2: %v", err)
+	}
+	if page2.HasMore {
+		t.Error("page2 HasMore should be false when offset+limit >= total")
+	}
+	// No overlap between pages.
+	seen := map[string]bool{}
+	for _, r := range page1.Results {
+		seen[r.ID] = true
+	}
+	for _, r := range page2.Results {
+		if seen[r.ID] {
+			t.Errorf("block %s appeared on both pages", r.ID)
+		}
+	}
+}
+
+func TestSearch_EmptyQueryReturnsEmpty(t *testing.T) {
+	dm := indexSearchable(t)
+	res, err := dm.SearchBlocksPaged("   ", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 0 || len(res.Results) != 0 {
+		t.Errorf("empty query should return no results, got total=%d len=%d", res.Total, len(res.Results))
+	}
+}
+
+func TestSearch_TagHydrationSurvivesFTS(t *testing.T) {
+	dm := newTestDB(t)
+	b := parser.ParsedBlock{
+		ID: "dddddddd-1111-1111-1111-111111111111", Type: parser.BlockTask,
+		CleanText: "ship the release", Status: "TODO",
+		RawText: "- [ ] TODO TASK ship the release #dev/release <!-- id: dddddddd-1111-1111-1111-111111111111 -->",
+		LineNumber: 1,
+	}
+	if err := dm.IndexFileBlocks("Work", "", "Daily", "2026-06-14", []parser.ParsedBlock{b}, []string{"dev/release"}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := dm.SearchBlocksPaged("release", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(res.Results))
+	}
+	if len(res.Results[0].Tags) == 0 {
+		t.Errorf("tag hydration broke post-FTS: %+v", res.Results[0])
+	}
+}
+
+func TestSearch_RebuildFTSIndexRepairs(t *testing.T) {
+	dm := indexSearchable(t)
+	// A forced rebuild must not error and must preserve searchability.
+	if err := dm.RebuildFTSIndex(); err != nil {
+		t.Fatalf("RebuildFTSIndex: %v", err)
+	}
+	res, err := dm.SearchBlocksPaged("sprint", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged after rebuild: %v", err)
+	}
+	if res.Total == 0 {
+		t.Error("rebuild lost all FTS data")
+	}
+}
+
+func TestSearch_UpdateReplacesOldFTSContent(t *testing.T) {
+	// Re-indexing a page (delete-then-insert) must replace the old FTS row,
+	// not duplicate it. Search for the old term should drop to 0 after the
+	// block's text changes.
+	dm := newTestDB(t)
+	orig := parser.ParsedBlock{ID: "eeeeeeee-1111-1111-1111-111111111111", Type: parser.BlockNote, CleanText: "needle in a haystack", LineNumber: 1}
+	if err := dm.IndexFileBlocks("NB", "", "PG", "2026-06-14", []parser.ParsedBlock{orig}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := dm.SearchBlocksPaged("needle", 0, 10); res.Total != 1 {
+		t.Fatalf("pre-update: expected 1 needle, got %d", res.Total)
+	}
+	updated := parser.ParsedBlock{ID: orig.ID, Type: parser.BlockNote, CleanText: "the needle is gone now replaced by thread", LineNumber: 1}
+	if err := dm.IndexFileBlocks("NB", "", "PG", "2026-06-14", []parser.ParsedBlock{updated}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := dm.SearchBlocksPaged("needle", 0, 10); res.Total == 0 {
+		// "needle" still present in the updated text, so this should still hit.
+		t.Errorf("update lost the FTS row entirely")
+	}
+	// A term that was ONLY in the old text must no longer match.
+	if res, _ := dm.SearchBlocksPaged("haystack", 0, 10); res.Total != 0 {
+		t.Errorf("stale FTS row: 'haystack' still matches after update (total=%d)", res.Total)
+	}
+}
+
+// blockID builds a deterministic UUID-shaped id from a 3-char prefix and an
+// index, for the grouping test's batch of blocks.
+func blockID(prefix string, i int) string {
+	p := prefix + "00000000000000000000000000000" // pad
+	p = p[:8] + "-1111-1111-1111-111111111111"
+	// overwrite first chars with prefix to keep ids distinct
+	b := []byte(p)
+	for j := 0; j < len(prefix) && j < 8; j++ {
+		b[j] = prefix[j]
+	}
+	b[7] = byte('a' + i%26)
+	return string(b)
+}
+
+func firstID(rs []parser.TaskResult) string {
+	if len(rs) == 0 {
+		return ""
+	}
+	return rs[0].ID
+}
+
+// TestBuildFTSQuery_PreservesUnicode verifies the MATCH-query builder keeps
+// Unicode word characters (CJK, accented Latin) so non-English search works
+// against the unicode61-tokenized index. The previous ASCII-only filter
+// stripped them, silently returning zero results for "café" / "中文".
+func TestBuildFTSQuery_PreservesUnicode(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"café", "café*"},
+		{"über road", "über* road*"},
+		{"中文 笔记", "中文* 笔记*"},
+		{"кирриллица", "кирриллица*"},
+		// FTS5 query-syntax chars (ASCII punctuation) are still stripped.
+		{`"inject" OR (*)`, "inject* OR*"},
+		// <2-char noise dropped; FTS5 syntax stripped even when ASCII.
+		{"a * b", ""}, // "a" too short, "*" all-stripped, "b" too short
+	}
+	for _, c := range cases {
+		got := buildFTSQuery(c.in)
+		if got != c.want {
+			t.Errorf("buildFTSQuery(%q) = %q; want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestSearch_UnicodeContentMatches exercises the end-to-end path for the
+// scripts the default unicode61 tokenizer handles as whole words: accented
+// Latin (é is part of the word, tokenized as one token). This is exactly the
+// case the old ASCII-only buildFTSQuery broke ("café" → "caf").
+//
+// NOTE: multi-character CJK search (e.g. "会議") needs a trigram/ICU
+// tokenizer — unicode61 has no CJK word-segmentation dictionary and splits
+// CJK into single-character tokens, so a 2-char query finds nothing. The
+// buildFTSQuery fix preserves CJK in the query string (covered by
+// TestBuildFTSQuery_PreservesUnicode); end-to-end CJK search is tracked as a
+// follow-up tokenizer change, not a regression here.
+func TestSearch_UnicodeContentMatches(t *testing.T) {
+	dm := newTestDB(t)
+	b := parser.ParsedBlock{
+		ID: "ffffffff-1111-1111-1111-111111111111", Type: parser.BlockNote,
+		CleanText: "résumé review for the café launch", LineNumber: 1,
+	}
+	if err := dm.IndexFileBlocks("NB", "", "PG", "2026-06-14", []parser.ParsedBlock{b}, nil); err != nil {
+		t.Fatal(err)
+	}
+	// accented-Latin term that the old filter would have stripped to "caf"/"resum".
+	res, err := dm.SearchBlocksPaged("café", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 1 {
+		t.Errorf("expected the accented-Latin block to match the accented query; got total=%d (old ASCII filter would have returned 0)", res.Total)
 	}
 }
 

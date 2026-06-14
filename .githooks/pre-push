@@ -97,5 +97,12 @@ else
   echo "No frontend files changed. Skipping Svelte/Vite compilation check."
 fi
 
+# NOTE on Wails bindings: `frontend/wailsjs/` is gitignored (a build artifact,
+# not committed), so there is no committed state to detect drift against.
+# CI (`.github/workflows/ci.yml`) regenerates the bindings fresh on every run
+# and verifies the frontend still type-checks/builds against them — that is
+# the real Go↔binding consistency guarantee. Developers run `npm run generate`
+# locally (documented in CONTRIBUTING.md) to refresh their own working tree.
+
 echo "Pre-push checks passed successfully!"
 exit 0

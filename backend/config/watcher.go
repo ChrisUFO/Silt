@@ -18,6 +18,14 @@ import (
 // reload).
 const selfWriteWindow = 500 * time.Millisecond
 
+// reloadDebounce coalesces a burst of fsnotify events for config.yaml into a
+// single reload. A logical write emits multiple events (truncate+write, or
+// temp+rename), and reloading on the FIRST event can read mid-write stale or
+// empty bytes (which Load falls back to Defaults() for) — surfacing a
+// spurious default-value callback ahead of the real one. Waiting for a short
+// quiet period guarantees reload reads the settled file.
+const reloadDebounce = 120 * time.Millisecond
+
 // ConfigWatcher hot-reloads <vault>/.system/config.yaml. Self-loop prevention
 // is a local time-window: SaveSystemConfig calls RegisterSelfWrite() before
 // its atomic save, and the watcher ignores every config.yaml event until the
@@ -106,6 +114,9 @@ func (cw *ConfigWatcher) Close() error {
 
 func (cw *ConfigWatcher) loop() {
 	defer cw.wg.Done()
+	// debounce fires once after `reloadDebounce` of event quiet; each new
+	// event resets it. nil when no reload is pending.
+	var debounce <-chan time.Time
 	for {
 		select {
 		case <-cw.stopCh:
@@ -132,9 +143,20 @@ func (cw *ConfigWatcher) loop() {
 			// A rename/remove is expected during atomic save (temp + rename);
 			// the subsequent create/write carries the real reload. Recreate
 			// (delete + create externally) is caught here too.
-			if ev.Op&(fsnotify.Create|fsnotify.Write) != 0 {
-				cw.reload()
+			if ev.Op&(fsnotify.Create|fsnotify.Write) == 0 {
+				continue
 			}
+			// (Re)start the debounce so a burst of events for one logical
+			// write coalesces into a single reload of the settled file.
+			//
+			// Ordering invariant: the isSelfWrite guard above MUST stay before
+			// this point. Events reaching here are EXTERNAL Create/Writes
+			// (self-writes were already continued above). Reordering the
+			// guards would make self-saves reset the debounce pointlessly.
+			debounce = time.After(reloadDebounce)
+		case <-debounce:
+			debounce = nil
+			cw.reload()
 		case err, ok := <-cw.watcher.Errors:
 			if !ok {
 				return

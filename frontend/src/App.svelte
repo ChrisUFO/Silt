@@ -2,7 +2,8 @@
   import { onMount } from 'svelte'
   import {
     IsVaultInitialized,
-    InitializeVault
+    InitializeVault,
+    CloseVault
   } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
   import { fade } from 'svelte/transition'
@@ -167,6 +168,23 @@
     }
   }
 
+  // Change Vault: tear down the active vault and re-show the onboarding
+  // screen so the user can pick (or re-pick) a workspace folder (#33). The
+  // backend CloseVault waits on any in-flight writes and checkpoints the WAL.
+  async function handleChangeVault() {
+    try {
+      await CloseVault()
+      // Re-query rather than assume — CloseVault is the source of truth.
+      isInitialized = await IsVaultInitialized()
+      activeNotebook = ''
+      activeSection = ''
+      activePage = ''
+      activeView = 'notes'
+    } catch (e) {
+      console.error('Failed to close vault:', e)
+    }
+  }
+
   function handleSearchJump(
     notebook: string,
     section: string,
@@ -291,6 +309,7 @@
           activePage = pg
         }}
         onSelectView={(v) => (activeView = v)}
+        onCloseVault={handleChangeVault}
       />
 
       <!-- Content viewport -->

@@ -37,12 +37,19 @@ for file in $STAGED_FILES; do
   echo "  - $file"
 done
 
-# Run Prettier check on the staged files
-npx prettier --check $STAGED_FILES
-RESULT=$?
-
-if [ $RESULT -ne 0 ]; then
-  echo "ERROR: Prettier check failed on staged files! Please format them before committing."
+# Auto-format (autocorrect) the staged frontend files with Prettier, then
+# re-stage them so the formatting fix rides along with the commit instead of
+# blocking it. Prettier, prettier-plugin-svelte, and .prettierrc all live in
+# frontend/ (the repo root has no package.json), so this MUST run from there —
+# otherwise npx resolves a config-less prettier that can't parse Svelte syntax
+# and fails on every .svelte file. Strip the leading "frontend/" from each
+# path so they resolve from within frontend/.
+FE_FILES=$(echo "$STAGED_FILES" | sed 's|^frontend/||')
+if (cd frontend && npx prettier --write $FE_FILES); then
+  # Re-stage any files Prettier reformatted so the commit includes the fix.
+  git add $STAGED_FILES
+else
+  echo "ERROR: Prettier failed to format staged frontend files; see output above."
   exit 1
 fi
 

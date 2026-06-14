@@ -1,53 +1,98 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { SearchBlocks } from '../../wailsjs/go/main/App.js'
+  import { SearchBlocksPaged } from '../../wailsjs/go/main/App.js'
+
+  interface TaskResult {
+    id: string
+    notebook: string
+    section: string
+    page: string
+    file_date: string
+    clean_content: string
+    status?: string
+    snippet?: string
+  }
+  interface SearchResult {
+    results: TaskResult[]
+    total: number
+    offset: number
+    limit: number
+    has_more: boolean
+  }
 
   interface Props {
     onClose: () => void
-    onJump: (res: any) => void
+    onJump: (res: TaskResult) => void
   }
 
   let { onClose, onJump }: Props = $props()
 
   let query = $state('')
-  let results = $state<any[]>([])
+  let results = $state<TaskResult[]>([])
   let selectedIdx = $state(0)
   let inputEl = $state<HTMLInputElement | null>(null)
+  let listEl = $state<HTMLDivElement | null>(null)
   let loading = $state(false)
+  let total = $state(0)
+  let hasMore = $state(false)
+  let offset = $state(0)
+  const pageSize = 20
 
-  // Re-run search whenever query text changes
+  // Re-run search whenever query text changes (debounced). Resets to the first
+  // page so the modal always shows the top-ranked matches for the current text.
   $effect(() => {
     const trimmed = query.trim()
     if (!trimmed) {
       results = []
       selectedIdx = 0
+      total = 0
+      hasMore = false
+      offset = 0
       loading = false
       return
     }
 
     const timeout = window.setTimeout(() => {
-      performSearch(trimmed)
+      offset = 0
+      performSearch(trimmed, 0, /*replace=*/ true)
     }, 175)
 
     return () => window.clearTimeout(timeout)
   })
 
-  async function performSearch(q: string) {
-    const trimmed = q.trim()
-
+  async function performSearch(q: string, off: number, replace: boolean) {
     loading = true
     try {
-      const hits = await SearchBlocks(trimmed)
-      if (query.trim() === trimmed) {
-        results = hits || []
+      const res: SearchResult = await SearchBlocksPaged(q, off, pageSize)
+      // Guard against a stale response landing after a newer query/offset.
+      if (query.trim() !== q) return
+      if (replace) {
+        results = res.results || []
         selectedIdx = 0
+      } else {
+        results = [...results, ...(res.results || [])]
       }
+      total = res.total
+      hasMore = res.has_more
+      offset = off
     } catch (e) {
       console.error('Search query failed:', e)
     } finally {
-      if (query.trim() === trimmed) {
-        loading = false
-      }
+      if (query.trim() === q) loading = false
+    }
+  }
+
+  function loadMore() {
+    if (loading || !hasMore) return
+    performSearch(query.trim(), offset + pageSize, false)
+  }
+
+  function handleListScroll() {
+    if (!listEl || loading || !hasMore) return
+    const { scrollTop, scrollHeight, clientHeight } = listEl
+    // Trigger the next page when the user scrolls within ~120px of the bottom.
+    if (scrollHeight - scrollTop - clientHeight < 120) {
+      loadMore()
     }
   }
 
@@ -56,11 +101,13 @@
       e.preventDefault()
       if (results.length > 0) {
         selectedIdx = (selectedIdx + 1) % results.length
+        scrollSelectedIntoView()
       }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       if (results.length > 0) {
         selectedIdx = (selectedIdx - 1 + results.length) % results.length
+        scrollSelectedIntoView()
       }
     } else if (e.key === 'Enter') {
       e.preventDefault()
@@ -73,9 +120,35 @@
     }
   }
 
-  function selectResult(res: any) {
+  function scrollSelectedIntoView() {
+    // Defer until after the selectedIdx class flips the DOM.
+    queueMicrotask(() => {
+      if (!listEl) return
+      const el = listEl.querySelector(
+        `[data-idx="${selectedIdx}"]`
+      ) as HTMLElement | null
+      el?.scrollIntoView({ block: 'nearest' })
+    })
+  }
+
+  function selectResult(res: TaskResult) {
     onJump(res)
     onClose()
+  }
+
+  // sanitizeSnippet HTML-escapes the FTS5 snippet, then restores ONLY the
+  // <mark>/</mark> highlight tags the snippet() function emits. This keeps
+  // user-authored note text from injecting arbitrary HTML into the modal
+  // while still rendering the relevance highlight.
+  function sanitizeSnippet(snip: string): string {
+    if (!snip) return ''
+    const esc = snip
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+    return esc.replace(/&lt;\/?mark&gt;/g, (m) =>
+      m.includes('/') ? '</mark>' : '<mark>'
+    )
   }
 
   onMount(() => {
@@ -83,7 +156,6 @@
       inputEl.focus()
     }
 
-    // Attach keyboard listener
     window.addEventListener('keydown', handleKeyDown, true)
     return () => {
       window.removeEventListener('keydown', handleKeyDown, true)
@@ -116,7 +188,7 @@
         bind:this={inputEl}
         bind:value={query}
         type="text"
-        placeholder="Fuzzy search notebooks, sections, or task content..."
+        placeholder="Search notebooks, sections, or task content..."
         class="bg-transparent border-none outline-none text-text-primary text-[15px] font-body-md w-full focus:ring-0 placeholder:text-text-muted"
       />
       {#if loading}
@@ -129,7 +201,11 @@
     </div>
 
     <!-- Search Results List -->
-    <div class="flex-1 overflow-y-auto custom-scrollbar py-2">
+    <div
+      bind:this={listEl}
+      onscroll={handleListScroll}
+      class="flex-1 overflow-y-auto custom-scrollbar py-2"
+    >
       {#if query.trim() === ''}
         <div class="text-text-muted text-center py-10 font-body-md select-none">
           Type queries to find headers, notes, or checklist items...
@@ -139,8 +215,9 @@
           No matches found for "{query}"
         </div>
       {:else}
-        {#each results as res, idx}
+        {#each results as res, idx (res.id + idx)}
           <button
+            data-idx={idx}
             onclick={() => selectResult(res)}
             class="w-full px-5 py-3 border-none flex flex-col gap-1 text-left cursor-pointer transition-colors focus:outline-none"
             class:bg-accent-primary-glow={idx === selectedIdx}
@@ -159,10 +236,14 @@
               <span class="material-symbols-outlined text-[10px]"
                 >chevron_right</span
               >
+              <span>{res.page}</span>
+              <span class="material-symbols-outlined text-[10px]"
+                >chevron_right</span
+              >
               <span class="text-accent-primary-start">{res.file_date}</span>
             </div>
 
-            <!-- Content preview -->
+            <!-- Content preview with FTS5 highlight snippet -->
             <div
               class="font-body-md text-sm text-text-primary flex items-center gap-2"
             >
@@ -175,11 +256,47 @@
                     : 'radio_button_unchecked'}
                 </span>
               {/if}
-              <span>{res.clean_content}</span>
+              {#if res.snippet}
+                <!-- Sanitized in-script: only <mark> tags from FTS5 survive. -->
+                <span>{@html sanitizeSnippet(res.snippet)}</span>
+              {:else}
+                <span>{res.clean_content}</span>
+              {/if}
             </div>
           </button>
         {/each}
+
+        {#if hasMore}
+          <div
+            class="text-text-muted text-center py-3 text-[11px] font-body-md select-none"
+          >
+            {loading ? 'Loading more…' : 'Scroll for more results'}
+          </div>
+        {/if}
       {/if}
     </div>
+
+    <!-- Result count footer -->
+    {#if query.trim() !== '' && total > 0}
+      <div
+        class="px-4 py-2 border-t border-border-muted text-[10px] text-text-muted font-label-sm flex items-center justify-between bg-void/30"
+      >
+        <span>{total} match{total === 1 ? '' : 'es'}</span>
+        <span class="opacity-60">↑↓ navigate · ⏎ open · esc close</span>
+      </div>
+    {/if}
   </div>
 </div>
+
+<style>
+  :global(mark) {
+    background: color-mix(
+      in srgb,
+      var(--accent-primary-start) 30%,
+      transparent
+    );
+    color: var(--text-primary);
+    border-radius: 3px;
+    padding: 0 2px;
+  }
+</style>

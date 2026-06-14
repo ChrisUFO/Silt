@@ -1,5 +1,9 @@
 # Testing & Verification — Sprint 1 (Foundation)
 
+> See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the contribution workflow,
+> pre-push hook setup (`git config core.hooksPath .githooks`), and the
+> `npm run generate` Wails-binding regeneration step.
+
 ## Automated Tests
 
 Run with: `go test -race -count=1 ./...`
@@ -18,7 +22,8 @@ Run with: `go test -race -count=1 ./...`
 
 ### Benchmark
 
-Run with: `go test -bench=. -count=3 ./backend/parser/`
+Run with: `go test -bench=. -count=3 ./backend/parser/` (cold scan) and
+`go test -bench=. -count=3 ./backend/db/` (warm-restart diff).
 
 **Phase 3 startup budget:** < 450ms for 1,000 daily-note files.
 
@@ -27,6 +32,35 @@ Baseline (Ryzen AI MAX+, Go 1.25, Windows): **~280ms** — within budget.
 ```
 BenchmarkScanWorkspace_1000Files    1    ~252–334ms/op
 ```
+
+**Hardening sprint (#29) warm-restart diff budget:** the on-disk WAL index
+makes a warm restart skip unchanged files. The new `BenchmarkWarmStart_5000Files`
+measures just the `IsFileUnchanged` diff loop (the new hot path) against a
+5,000-row `files` table:
+
+```
+BenchmarkWarmStart_5000Files-32    ~48ms/op    ~3.6MB/op    ~120k allocs/op
+```
+
+That is the DB-diff portion of a warm restart of a 5k-page vault — well under
+the budget, on top of which only the `os.Stat` cost of `ScanWorkspace` is
+unavoidable (the markdown stays the source of truth).
+
+## Hardening Sprint — Coverage Added (#29 #30 #31 #32 #33 #38 #39 #40)
+
+| Package | New tests | What is covered |
+|---|---|---|
+| `silt` (main) | `CloseVault_TearsDownServices`, `CloseVault_Idempotent`, `CloseVault_ReopenUsesWarmRestart` | #33 reverse-order teardown, idempotency, close→reopen warm path |
+| `backend/core` | `ReleaseFileMutex_EntryDeleted`, `..._NextAcquireGetsFreshEntry`, `..._NoDeadlockWithInFlightHolder`, `..._ConcurrentCallersSerialize` (all `-race`) | #30 generation-based io-mutex eviction |
+| `backend/db` | `FilesTable_ColdStartPopulatesAndWarmStartSkips`, `PruneStaleFiles_DropsRenamedAndDeletedPaths`, `PruneStaleFiles_EmptyScanClearsAll`, `OnDiskWAL_CreatesWALFiles`, `OnDiskWAL_CheckpointOnCloseCollapsesWAL`, `OnDiskWAL_DeleteIndexForcesCleanRebuild`, `PluginRODB_ReadsOnDiskIndex`, `BenchmarkWarmStart_5000Files` | #29 persistent WAL index, files table, incremental diff, recovery, plugin RO visibility |
+| `backend/db` | `Search_FTS5SmokeAndSync`, `..._RankingPutsMostRelevantFirst`, `..._SnippetContainsHighlightMarkers`, `..._MultiTermIsImplicitAND`, `..._PerPageGroupingCapsResultsPerPage`, `..._PaginationAndHasMore`, `..._EmptyQueryReturnsEmpty`, `..._TagHydrationSurvivesFTS`, `..._RebuildFTSIndexRepairs`, `..._UpdateReplacesOldFTSContent` | #39 FTS5 ranking/snippets/grouping/pagination/migration |
+| `backend/monitor` | `FocusLease_AcquireThenLocked`, `..._ExpiryRecoversSuppression`, `..._RefreshKeepsItAlive`, `..._RefreshNoOpWhenExpired`, `..._ReleaseAllClearsEverything`, `..._ConcurrentAccessIsRaceClean` | #38 TTL focus leases + sweeper + shutdown release |
+| `backend/parser` | `RenderFileContent_RoundTripIdentity` (task/note/header, nested, code-fence + body preservation), `RenderFileContent_DeletedBlockDropped`, `RenderFileContent_ScaffoldSnapshot`, `WalkMarkdown_SelfReferencingSymlinkDoesNotLoop`, `..._MutualSymlinkCycleIsSkipped`, `..._OneHopSymlinkIsSkippedWithWarning`, `ScanWorkspace_NoCrashOnSymlinkLoop` | #40 single-serializer round-trip; #32 symlink loop handling |
+
+Frontend: `npm run check` reports **0 errors**. SearchModal.svelte now renders
+sanitized FTS5 snippets (`<mark>` highlights), scroll-to-load-more pagination,
+and a result-count footer. BlockRenderer.svelte adds the 20s focus-lease
+heartbeat (#38). Sidebar.svelte adds the "Change Vault" affordance (#33).
 
 ## Manual Verification
 
@@ -49,10 +83,11 @@ Per Phase 6 of `PLAN.md`:
 
 ## Known Gaps (deferred to future sprints)
 
-- No Wails integration test (requires `wails dev` runtime, see #32)
+- No Wails integration test (requires `wails dev` runtime)
 - No watcher e2e test against real fsnotify events
-- No symlink-loop detection in `ScanWorkspace` (see #32 follow-up)
-- No `ClearVault` / switch-workspace path (see #33)
+- ~~No symlink-loop detection in `ScanWorkspace` (see #32 follow-up)~~ — **Resolved in the hardening sprint**: `parser.WalkMarkdown` skips symlinks explicitly with a warning (#32)
+- ~~No `ClearVault` / switch-workspace path (see #33)~~ — **Resolved in the hardening sprint**: `App.CloseVault` + the sidebar "Change Vault" affordance (#33)
+- ~~Index rebuilt from scratch on every startup~~ — **Resolved**: persistent on-disk WAL index + incremental `files`-table diff (#29)
 
 ---
 

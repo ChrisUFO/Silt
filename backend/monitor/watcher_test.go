@@ -3,6 +3,7 @@ package monitor
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,7 +18,7 @@ func TestDirectoryWatcher_ReindexFileHoldsFileLock(t *testing.T) {
 	// read and the watcher's eventual write.
 	vaultPath := t.TempDir()
 
-	dm, err := db.NewDatabaseManager()
+	dm, err := db.NewDatabaseManager("")
 	if err != nil {
 		t.Fatalf("NewDatabaseManager: %v", err)
 	}
@@ -84,7 +85,7 @@ func TestDirectoryWatcher_ReindexFileIndexesFile(t *testing.T) {
 	// have broken.
 	vaultPath := t.TempDir()
 
-	dm, err := db.NewDatabaseManager()
+	dm, err := db.NewDatabaseManager("")
 	if err != nil {
 		t.Fatalf("NewDatabaseManager: %v", err)
 	}
@@ -141,7 +142,7 @@ func TestDirectoryWatcher_ReindexFileIndexesFile(t *testing.T) {
 func TestDirectoryWatcher_FocusLockSuppressesReindex(t *testing.T) {
 	vaultPath := t.TempDir()
 
-	dm, err := db.NewDatabaseManager()
+	dm, err := db.NewDatabaseManager("")
 	if err != nil {
 		t.Fatalf("NewDatabaseManager: %v", err)
 	}
@@ -213,4 +214,152 @@ func TestDirectoryWatcher_FocusLockSuppressesReindex(t *testing.T) {
 		"- [ ] TODO TASK unlocked content <!-- id: cccc2222-cccc-cccc-cccc-cccccccccccc -->\n")
 
 	waitForBlock("cccc2222-cccc-cccc-cccc-cccccccccccc", 1, 3*time.Second)
+}
+
+// --- Phase 5b: TTL focus leases (#38) ---
+
+// newWatcherForLeaseTest builds a watcher with a short TTL so lease expiry
+// tests don't have to wait 60s. The watcher is NOT started (no fsnotify
+// subscription / no sweeper goroutine) — the tests drive the lease map and
+// sweeper directly.
+func newWatcherForLeaseTest(t *testing.T, ttl time.Duration) *DirectoryWatcher {
+	t.Helper()
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+	tracker := NewWriteTracker()
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	dw, err := NewDirectoryWatcher(t.TempDir(), dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+	dw.focusTTL = ttl
+	t.Cleanup(func() { _ = dw.Close() })
+	return dw
+}
+
+func TestFocusLease_AcquireThenLocked(t *testing.T) {
+	dw := newWatcherForLeaseTest(t, 60*time.Second)
+	p := "/vault/a.md"
+	if dw.IsFocusLocked(p) {
+		t.Fatal("should be unlocked before acquire")
+	}
+	dw.LockFocus(p)
+	if !dw.IsFocusLocked(p) {
+		t.Fatal("should be locked after acquire")
+	}
+}
+
+func TestFocusLease_ExpiryRecoversSuppression(t *testing.T) {
+	// A lease with a sub-second TTL must read as unlocked once it expires,
+	// so a crashed/unmounted editor self-heals without an explicit release.
+	dw := newWatcherForLeaseTest(t, 30*time.Millisecond)
+	p := "/vault/b.md"
+	dw.LockFocus(p)
+	if !dw.IsFocusLocked(p) {
+		t.Fatal("should be locked immediately after acquire")
+	}
+	time.Sleep(60 * time.Millisecond)
+	if dw.IsFocusLocked(p) {
+		t.Fatal("expired lease should read as unlocked")
+	}
+	// The sweeper reaps the stale entry; IsFocusLocked is already correct
+	// but the map entry should also go away.
+	dw.sweepExpiredLeases()
+	dw.focusMu.RLock()
+	_, present := dw.focusLeases[p]
+	dw.focusMu.RUnlock()
+	if present {
+		t.Error("sweeper did not reap the expired lease")
+	}
+}
+
+func TestFocusLease_RefreshKeepsItAlive(t *testing.T) {
+	dw := newWatcherForLeaseTest(t, 40*time.Millisecond)
+	p := "/vault/c.md"
+	dw.LockFocus(p)
+	// Refresh well within the TTL, a few times, long enough that an
+	// unrefreshed lease would have expired.
+	for i := 0; i < 5; i++ {
+		time.Sleep(20 * time.Millisecond)
+		dw.RefreshFocus(p)
+	}
+	if !dw.IsFocusLocked(p) {
+		t.Fatal("refreshed lease should still be alive")
+	}
+}
+
+func TestFocusLease_RefreshNoOpWhenExpired(t *testing.T) {
+	// If the editor lost focus and the lease lapsed, a late heartbeat must
+	// NOT silently re-acquire suppression (the editor must re-Acquire).
+	dw := newWatcherForLeaseTest(t, 20*time.Millisecond)
+	p := "/vault/d.md"
+	dw.LockFocus(p)
+	time.Sleep(50 * time.Millisecond)
+	dw.RefreshFocus(p) // late refresh after expiry
+	if dw.IsFocusLocked(p) {
+		t.Fatal("late refresh resurrected an expired lease — should require re-acquire")
+	}
+}
+
+func TestFocusLease_ReleaseAllClearsEverything(t *testing.T) {
+	dw := newWatcherForLeaseTest(t, 60*time.Second)
+	dw.LockFocus("/vault/e.md")
+	dw.LockFocus("/vault/f.md")
+	dw.ReleaseAllFocus()
+	for _, p := range []string{"/vault/e.md", "/vault/f.md"} {
+		if dw.IsFocusLocked(p) {
+			t.Errorf("ReleaseAllFocus left %s locked", p)
+		}
+	}
+}
+
+// TestFocusLease_ConcurrentAccessIsRaceClean exercises acquire/refresh/
+// release/sweep/IsFocusLocked concurrently to flush any data race in the
+// lease map handoff (run under -race).
+func TestFocusLease_ConcurrentAccessIsRaceClean(t *testing.T) {
+	dw := newWatcherForLeaseTest(t, 50*time.Millisecond)
+	const n = 50
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			p := "/vault/g" + itoa(i) + ".md"
+			dw.LockFocus(p)
+			dw.RefreshFocus(p)
+			_ = dw.IsFocusLocked(p)
+			dw.UnlockFocus(p)
+		}(i)
+	}
+	// Sweeper running concurrently with the acquirers.
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				dw.sweepExpiredLeases()
+			}
+		}
+	}()
+	wg.Wait()
+	close(done)
+}
+
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	pos := len(buf)
+	for i > 0 {
+		pos--
+		buf[pos] = byte('0' + i%10)
+		i /= 10
+	}
+	return string(buf[pos:])
 }
