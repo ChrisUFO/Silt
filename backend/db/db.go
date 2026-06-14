@@ -15,24 +15,49 @@ import (
 )
 
 type DatabaseManager struct {
-	db *sql.DB
+	db   *sql.DB
+	path string // "" for the in-memory shared-cache DB; otherwise the on-disk file path
 }
 
-func NewDatabaseManager() (*DatabaseManager, error) {
-	// Open a shared in-memory SQLite database.
-	// We use cache=shared so multiple connections can access it if needed,
-	// and it persists as long as the main connection remains open.
-	sqlDB, err := sql.Open("sqlite", "file::memory:?cache=shared")
+// FileStat records the last-seen filesystem attributes of an indexed file, used
+// to skip unchanged files on a warm restart (#29). MTime is Unix nanoseconds
+// so it round-trips losslessly across SQLite's INTEGER storage.
+type FileStat struct {
+	MTime     int64
+	Size      int64
+	IndexedAt int64
+}
+
+// NewDatabaseManager opens the Silt index. Pass the on-disk path (typically
+// `<vault>/.system/index.sqlite`) for the production persistent WAL database,
+// or "" for an ephemeral in-memory shared-cache DB (used by tests and before a
+// vault is open).
+//
+// On-disk databases run in WAL mode (journal_mode is persistent in the file
+// header, so it is set once and inherited by every subsequent connection,
+// including the plugin read-only handle). The remaining pragmas
+// (synchronous=NORMAL, temp_store=MEMORY, mmap_size, busy_timeout, cache_size,
+// foreign_keys) are per-connection and are re-applied on every open. On an
+// in-memory DB, `journal_mode=WAL` is a safe no-op (SQLite keeps "memory").
+func NewDatabaseManager(dbPath string) (*DatabaseManager, error) {
+	dsn := dbPath
+	if dsn == "" {
+		// cache=shared lets a second connection (pluginRawQuery's read-only
+		// handle) attach to the same ephemeral DB during tests.
+		dsn = "file::memory:?cache=shared"
+	}
+	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open SQLite: %w", err)
 	}
 
-	// Cap the connection pool at one. SQLite serializes writers internally;
-	// allowing multiple Go-level connections would only obscure the
-	// locking story without giving us concurrency we could actually use.
+	// Cap the connection pool at one. The ExecutionCoordinator already
+	// serializes all DB access at the Go level; a larger pool would only
+	// obscure the locking story without yielding usable concurrency. WAL
+	// still helps (OS-level sync blocking moves to the WAL append path).
 	sqlDB.SetMaxOpenConns(1)
 
-	dm := &DatabaseManager{db: sqlDB}
+	dm := &DatabaseManager{db: sqlDB, path: dbPath}
 	if err := dm.initSchema(); err != nil {
 		sqlDB.Close()
 		return nil, err
@@ -43,33 +68,80 @@ func NewDatabaseManager() (*DatabaseManager, error) {
 
 // SQLDB exposes the underlying *sql.DB handle. Callers MUST serialize access
 // through core.ExecutionCoordinator (e.g. WithDBRead/WithDBWrite) to avoid
-// race conditions on the shared in-memory database.
+// race conditions on the shared database.
 func (dm *DatabaseManager) SQLDB() *sql.DB {
 	return dm.db
 }
 
+// Path returns the on-disk index path ("" for the in-memory DB). Used by the
+// watcher/app to open the plugin read-only handle against the same file.
+func (dm *DatabaseManager) Path() string {
+	return dm.path
+}
+
+// IsOnDisk reports whether the index is a persistent on-disk database (true)
+// or an ephemeral in-memory one (false).
+func (dm *DatabaseManager) IsOnDisk() bool {
+	return dm.path != ""
+}
+
 func (dm *DatabaseManager) Close() error {
-	if dm.db != nil {
-		return dm.db.Close()
+	if dm.db == nil {
+		return nil // already closed (idempotent)
 	}
-	return nil
+	// Nil the field first so a second Close (e.g. test cleanup after a manual
+	// close) is a no-op instead of double-checkpointing.
+	db := dm.db
+	dm.db = nil
+	// Merge any pending WAL frames into the main file on a clean close so the
+	// WAL does not grow unbounded across sessions. On in-memory databases this
+	// is a no-op. A checkpoint failure is logged but not surfaced: SQLite
+	// auto-checkpoints anyway and recovers on next open.
+	if _, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE);"); err != nil {
+		log.Printf("db.Close: wal_checkpoint failed: %v", err)
+	}
+	return db.Close()
+}
+
+// Checkpoint forces a WAL checkpoint (TRUNCATE). Called on shutdown and after
+// the startup reindex pass to keep the WAL file bounded. No-op on in-memory.
+func (dm *DatabaseManager) Checkpoint() error {
+	_, err := dm.db.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
+	return err
 }
 
 func (dm *DatabaseManager) initSchema() error {
-	// Enable foreign key constraints
-	_, err := dm.db.Exec("PRAGMA foreign_keys = ON;")
-	if err != nil {
+	// Foreign-key enforcement is per-connection.
+	if _, err := dm.db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
 		return fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
 
-	// Optimize pragmas for in-memory speed
-	_, err = dm.db.Exec("PRAGMA journal_mode = MEMORY;")
-	if err != nil {
+	// journal_mode is persistent in the DB file header; on an in-memory DB
+	// SQLite silently keeps "memory" (the call still succeeds). Setting WAL
+	// here means the first on-disk open creates a WAL-mode file and every
+	// later connection — including the plugin read-only handle — inherits it
+	// without re-running the pragma.
+	if _, err := dm.db.Exec("PRAGMA journal_mode = WAL;"); err != nil {
 		return fmt.Errorf("failed to set journal mode: %w", err)
 	}
-	_, err = dm.db.Exec("PRAGMA synchronous = OFF;")
-	if err != nil {
-		return fmt.Errorf("failed to set synchronous: %w", err)
+	// Per-connection pragmas. synchronous=NORMAL is safe under WAL (the WAL
+	// itself preserves durability across app crashes; only an OS crash can
+	// lose the last few transactions, an acceptable trade for local-first
+	// speed). mmap_size memory-maps the file for faster reads on large
+	// indexes; cache_size is the per-connection page cache (negative = KB,
+	// so -64000 ≈ 64 MB). busy_timeout makes a contended write wait rather
+	// than fail instantly.
+	pragmas := []string{
+		"PRAGMA synchronous = NORMAL;",
+		"PRAGMA temp_store = MEMORY;",
+		"PRAGMA mmap_size = 268435456;", // 256 MiB mmap threshold
+		"PRAGMA cache_size = -64000;",   // 64 MiB page cache
+		"PRAGMA busy_timeout = 5000;",
+	}
+	for _, p := range pragmas {
+		if _, err := dm.db.Exec(p); err != nil {
+			return fmt.Errorf("failed to apply pragma %q: %w", p, err)
+		}
 	}
 
 	// Blocks Table
@@ -122,6 +194,23 @@ func (dm *DatabaseManager) initSchema() error {
 		return fmt.Errorf("failed to create tags table: %w", err)
 	}
 
+	// Files Table — records the last-seen mtime + size of every indexed file
+	// so a warm restart can skip re-parsing/re-indexing unchanged files (#29).
+	// Lives in the same (on-disk, WAL) database as the blocks index so it
+	// persists across restarts naturally. Keyed by absolute path; a renamed
+	// file is treated as a new path, with the stale old path pruned by
+	// PruneStaleFiles on the next startup scan.
+	createFilesTable := `
+	CREATE TABLE IF NOT EXISTS files (
+		path       TEXT PRIMARY KEY,
+		mtime      INTEGER NOT NULL,
+		size       INTEGER NOT NULL,
+		indexed_at INTEGER NOT NULL
+	);`
+	if _, err := dm.db.Exec(createFilesTable); err != nil {
+		return fmt.Errorf("failed to create files table: %w", err)
+	}
+
 	// Create covered indexes
 	indexes := []string{
 		"CREATE INDEX IF NOT EXISTS idx_blocks_file ON blocks(notebook, section, page, file_date);",
@@ -140,6 +229,117 @@ func (dm *DatabaseManager) initSchema() error {
 	}
 
 	return nil
+}
+
+// IsFileUnchanged reports whether the file at `path` was previously indexed
+// with the exact same mtime (Unix nanoseconds) and size. A warm restart uses
+// this to skip re-parsing files the user has not touched since the last index.
+func (dm *DatabaseManager) IsFileUnchanged(path string, mtime, size int64) (bool, error) {
+	var fmtime, fsize int64
+	err := dm.db.QueryRow("SELECT mtime, size FROM files WHERE path = ?", path).Scan(&fmtime, &fsize)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to query files table: %w", err)
+	}
+	return fmtime == mtime && fsize == size, nil
+}
+
+// MarkFileIndexed records that the file at `path` was fully indexed with the
+// given mtime/size. If tx is non-nil the upsert joins the caller's transaction
+// (used by the bulk startup reindex so all per-file rows commit atomically);
+// otherwise it runs against the shared connection.
+func (dm *DatabaseManager) MarkFileIndexed(tx *sql.Tx, path string, mtime, size int64) error {
+	now := time.Now().UnixNano()
+	if tx != nil {
+		_, err := tx.Exec(
+			"INSERT INTO files (path, mtime, size, indexed_at) VALUES (?, ?, ?, ?) "+
+				"ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, size=excluded.size, indexed_at=excluded.indexed_at",
+			path, mtime, size, now)
+		return err
+	}
+	_, err := dm.db.Exec(
+		"INSERT INTO files (path, mtime, size, indexed_at) VALUES (?, ?, ?, ?) "+
+			"ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, size=excluded.size, indexed_at=excluded.indexed_at",
+		path, mtime, size, now)
+	return err
+}
+
+// PruneStaleFiles deletes `files` rows for paths that are no longer present on
+// disk (the file was deleted, moved, or renamed). `seenPaths` is the complete
+// set of file paths the latest vault scan observed. Returns the pruned paths so
+// callers can surface them as one-time init warnings (a renamed file shows up
+// as "pruned old path + indexed new path").
+func (dm *DatabaseManager) PruneStaleFiles(seenPaths []string) ([]string, error) {
+	// Build the parameter list for the "NOT IN (...)" clause. A single
+	// round-trip DELETE keeps this cheap even for thousands of files.
+	if len(seenPaths) == 0 {
+		// No files on disk at all: drop every recorded row.
+		_, err := dm.db.Exec("DELETE FROM files")
+		return nil, err
+	}
+	placeholders := make([]string, len(seenPaths))
+	args := make([]interface{}, len(seenPaths))
+	for i, p := range seenPaths {
+		placeholders[i] = "?"
+		args[i] = p
+	}
+
+	// Collect the about-to-be-pruned paths first so we can report them.
+	rows, err := dm.db.Query(
+		"SELECT path FROM files WHERE path NOT IN ("+strings.Join(placeholders, ",")+")", args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query stale files: %w", err)
+	}
+	var pruned []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		pruned = append(pruned, p)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	if len(pruned) > 0 {
+		if _, err := dm.db.Exec(
+			"DELETE FROM files WHERE path NOT IN ("+strings.Join(placeholders, ",")+")", args...); err != nil {
+			return nil, fmt.Errorf("failed to prune stale files: %w", err)
+		}
+	}
+	return pruned, nil
+}
+
+// ForgetFile deletes the files-table row for a single path. Called by the
+// watcher when a file is removed or renamed so the next startup scan does not
+// treat the path as "unchanged" and skip re-indexing the new occupant.
+func (dm *DatabaseManager) ForgetFile(path string) error {
+	_, err := dm.db.Exec("DELETE FROM files WHERE path = ?", path)
+	return err
+}
+
+// KnownFiles returns the full path→FileStat map currently recorded in the
+// index. Used for diagnostics (e.g. surfacing how many files are tracked).
+func (dm *DatabaseManager) KnownFiles() (map[string]FileStat, error) {
+	rows, err := dm.db.Query("SELECT path, mtime, size, indexed_at FROM files")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query known files: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]FileStat)
+	for rows.Next() {
+		var path string
+		var fs FileStat
+		if err := rows.Scan(&path, &fs.MTime, &fs.Size, &fs.IndexedAt); err != nil {
+			return nil, err
+		}
+		out[path] = fs
+	}
+	return out, nil
 }
 
 // ExtractTags finds inline tags starting with # followed by a letter, ignoring numeric priorities.

@@ -140,22 +140,26 @@ func EnsureBlockID(line string) (string, string, bool) {
 
 3. SQLite Schema & Query Optimization Layer
 
-SQLite acts strictly as an volatile, in-memory index. If the application is restarted, the index is entirely rebuilt from the Markdown directories in < 450ms.
+SQLite is a persistent on-disk index in WAL mode at `<vault>/.system/index.sqlite` (+ `.sqlite-wal` + `.sqlite-shm`). On restart only files whose `mtime`+`size` differ from the last successful index are re-parsed and re-indexed; a cold start (no index file yet, or the 3 index files deleted by the user) performs a full scan and rebuild. Markdown remains the source of truth — the index is disposable and disposable only; deleting the 3 `.system/index.sqlite*` files is the documented recovery path. This durable, incremental model is what lets Silt scale to dozens of notebooks and thousands of pages without rebuilding the whole index on every launch.
 
-> **PENDING AMENDMENT (Phase 3 of the hardening sprint, #29):** this contract
-> is changing. The index is moving from in-memory to a persistent on-disk
-> WAL-mode database at `<vault>/.system/index.sqlite`, with a `files` table
-> recording each indexed file's `path`/`mtime`/`size`/`indexed_at`. On restart
-> only changed files are re-indexed (mtime+size diff against `files`); cold
-> start (no index file, or the 3 index files deleted) performs a full scan and
-> rebuild. Markdown remains the source of truth; the index is disposable. The
-> full rationale, pragma set (`journal_mode=WAL`, `synchronous=NORMAL`,
-> `temp_store=MEMORY`, `mmap_size`, `busy_timeout`, `cache_size`), and the
-> NFS/SMB caveat land with the Phase 3 implementation.
+The connection is opened by `db.NewDatabaseManager(dbPath)` (pass `""` for an ephemeral in-memory shared-cache DB, used in tests and before a vault is open). The pragmas below run on every open. `journal_mode=WAL` is persistent in the file header, so once the first on-disk open creates a WAL-mode file, every later connection — including the plugin SDK's read-only handle — inherits it without re-running the pragma.
 
--- Disable disk synchandles for maximum in-memory speed
-PRAGMA journal_mode = MEMORY;
-PRAGMA synchronous = OFF;
+```sql
+-- WAL: persistent in the DB file header (set once, inherited by all connections).
+-- On an in-memory DB SQLite silently keeps "memory" — the call is a safe no-op.
+PRAGMA journal_mode = WAL;
+-- Per-connection (re-applied on every open):
+PRAGMA synchronous  = NORMAL;   -- safe under WAL; the WAL itself survives app crashes
+PRAGMA temp_store   = MEMORY;
+PRAGMA mmap_size    = 268435456; -- 256 MiB mmap threshold for faster reads on large indexes
+PRAGMA cache_size   = -64000;    -- 64 MiB per-connection page cache (negative = KB)
+PRAGMA busy_timeout = 5000;      -- contended writes wait rather than failing instantly
+PRAGMA foreign_keys = ON;
+```
+
+Concurrency: WAL allows unlimited readers alongside a single writer; readers never block writers and the writer never blocks readers. The Go-level `core.ExecutionCoordinator` still serializes all access (`SetMaxOpenConns(1)` retained) so the locking story stays simple; relaxing reads to a second pool is an optional follow-up, not required for correctness. Clean shutdown runs `PRAGMA wal_checkpoint(TRUNCATE)` (in `DatabaseManager.Close` and after each startup re-index pass) so the WAL does not grow unbounded across sessions; on a crash, SQLite auto-recovery replays the WAL on the next open.
+
+Caveat: WAL relies on shared memory and therefore does **not** work on network filesystems (NFS/SMB). Local-first single-user desktop is the supported deployment; a vault on a network mount will fail to open the index with a clear error rather than silently corrupt.
 
 -- Blocks Table
 CREATE TABLE blocks (
@@ -193,6 +197,17 @@ CREATE TABLE tags (
     level_2 TEXT,            -- 'milestone-one'
     PRIMARY KEY(block_id, raw_path),
     FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
+);
+
+-- File-stats cache (incremental re-indexing, #29). Keyed by absolute path;
+-- a renamed file is a new path, with the stale old row pruned by the next
+-- startup scan. Persists in the same on-disk DB so a warm restart skips
+-- re-parsing any file whose mtime+size match the last successful index.
+CREATE TABLE files (
+    path       TEXT PRIMARY KEY,
+    mtime      INTEGER NOT NULL, -- Unix nanoseconds
+    size       INTEGER NOT NULL,
+    indexed_at INTEGER NOT NULL  -- Unix nanoseconds
 );
 
 -- Create covered indexes for dynamic query performance

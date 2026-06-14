@@ -24,6 +24,13 @@ type ScanResult struct {
 	Tags     []string
 	Warnings []string
 	Err      error
+
+	// MTime and Size are the file's modification time and byte size at scan
+	// time. The DB's files table records them so a warm restart can skip
+	// re-parsing any file whose mtime+size match the last successful index
+	// (#29). Both are zero when the file could not be stat'd.
+	MTime time.Time
+	Size  int64
 }
 
 // ScanWorkspace scans the vault directory recursively and returns all parsed file blocks and metadata.
@@ -140,16 +147,33 @@ func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult
 
 	// Extract date from filename if possible, otherwise use modification date
 	dateStr := ""
+	// info captures the file's stat for both the date fallback and the
+	// MTime/Size fields used by the incremental re-indexer (#29).
+	var info os.FileInfo
 	if matches := DateFileRegex.FindStringSubmatch(filename); len(matches) > 1 {
 		dateStr = matches[1]
 	} else {
 		// Use modification time
-		info, err := os.Stat(path)
+		var err error
+		info, err = os.Stat(path)
 		if err == nil {
 			dateStr = info.ModTime().Format("2006-01-02")
 		} else {
 			dateStr = time.Now().Format("2006-01-02")
 		}
+	}
+
+	// Stat the file (if not already) to populate MTime/Size for the
+	// incremental re-indexer. A failure here is non-fatal: the file is still
+	// parsed, it just won't be skippable on the next restart.
+	if info == nil {
+		if st, err := os.Stat(path); err == nil {
+			info = st
+		}
+	}
+	if info != nil {
+		res.MTime = info.ModTime()
+		res.Size = info.Size()
 	}
 
 	// 2. Read and parse file content

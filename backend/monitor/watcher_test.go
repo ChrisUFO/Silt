@@ -17,7 +17,7 @@ func TestDirectoryWatcher_ReindexFileHoldsFileLock(t *testing.T) {
 	// read and the watcher's eventual write.
 	vaultPath := t.TempDir()
 
-	dm, err := db.NewDatabaseManager()
+	dm, err := db.NewDatabaseManager("")
 	if err != nil {
 		t.Fatalf("NewDatabaseManager: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestDirectoryWatcher_ReindexFileIndexesFile(t *testing.T) {
 	// have broken.
 	vaultPath := t.TempDir()
 
-	dm, err := db.NewDatabaseManager()
+	dm, err := db.NewDatabaseManager("")
 	if err != nil {
 		t.Fatalf("NewDatabaseManager: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestDirectoryWatcher_ReindexFileIndexesFile(t *testing.T) {
 func TestDirectoryWatcher_FocusLockSuppressesReindex(t *testing.T) {
 	vaultPath := t.TempDir()
 
-	dm, err := db.NewDatabaseManager()
+	dm, err := db.NewDatabaseManager("")
 	if err != nil {
 		t.Fatalf("NewDatabaseManager: %v", err)
 	}

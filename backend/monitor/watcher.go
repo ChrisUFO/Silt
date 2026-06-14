@@ -261,6 +261,15 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 		dw.coordinator.WithDBWrite(func() {
 			if err := dw.dm.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, meta.Date, blocks, meta.Tags, meta.Warnings...); err != nil {
 				log.Printf("reindexFile: IndexFileBlocks failed for %s: %v", path, err)
+				return
+			}
+			// Keep the files table warm during the session: a successful
+			// reindex records the file's current mtime/size so the next
+			// *startup* scan can skip it (#29).
+			if st, err := os.Stat(path); err == nil {
+				if err := dw.dm.MarkFileIndexed(nil, path, st.ModTime().UnixNano(), st.Size()); err != nil {
+					log.Printf("reindexFile: MarkFileIndexed failed for %s: %v", path, err)
+				}
 			}
 		})
 	})
@@ -276,5 +285,9 @@ func (dw *DirectoryWatcher) clearIndexForFile(path string) {
 	// can race an in-flight query and produce database-locked errors.
 	dw.coordinator.WithDBWrite(func() {
 		_ = dw.dm.ClearFileBlocks(nil, notebook, section, page, dateStr)
+		// Drop the files row so a future startup scan doesn't think the
+		// deleted/renamed file is still "unchanged" and skip re-indexing the
+		// new occupant of that path.
+		_ = dw.dm.ForgetFile(path)
 	})
 }

@@ -112,7 +112,16 @@ func (a *App) shutdown(ctx context.Context) {
 }
 
 func (a *App) initializeVaultServices(vaultPath string) error {
-	dbMgr, err := db.NewDatabaseManager()
+	// Persistent on-disk WAL index at <vault>/.system/index.sqlite. Survives
+	// restarts so a warm launch re-indexes only changed files (#29). Markdown
+	// remains the source of truth; deleting the 3 index files forces a clean
+	// full rebuild. The .system dir is created by ScaffoldVault.
+	systemDir := filepath.Join(vaultPath, ".system")
+	if err := os.MkdirAll(systemDir, 0755); err != nil {
+		return fmt.Errorf("failed to ensure .system dir: %w", err)
+	}
+	indexPath := filepath.Join(systemDir, "index.sqlite")
+	dbMgr, err := db.NewDatabaseManager(indexPath)
 	if err != nil {
 		return fmt.Errorf("failed to start database: %w", err)
 	}
@@ -125,25 +134,87 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		_ = dbMgr.Close()
 		return fmt.Errorf("failed to scan workspace: %w", err)
 	}
-	if len(results) > 0 {
-		var allWarnings []string
-		for _, res := range results {
-			if len(res.Warnings) > 0 {
-				allWarnings = append(allWarnings, res.Warnings...)
-			}
-		}
 
-		_, skipped, err := dbMgr.IndexScanResults(results)
-		if err != nil {
-			_ = dbMgr.Close()
-			return fmt.Errorf("failed to index scan results: %w", err)
+	// Incremental re-index: keep only files whose mtime+size differ from the
+	// last recorded index (or that were never indexed). On a cold start (no
+	// index file yet) every file is "changed" and gets a full index. Pruning
+	// stale `files` rows for paths no longer on disk handles deletes/renames.
+	var changed []parser.ScanResult
+	var seenPaths []string
+	for _, res := range results {
+		seenPaths = append(seenPaths, res.Path)
+		if res.Err != nil || res.Notebook == "" {
+			// Unreadable or unresolvable files are forwarded to the indexer so
+			// they appear in the skipped list; they do not get a files row.
+			changed = append(changed, res)
+			continue
 		}
-		if len(skipped) > 0 && a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "vault:init-warnings", skipped)
+		unchanged, uerr := dbMgr.IsFileUnchanged(res.Path, res.MTime.UnixNano(), res.Size)
+		if uerr != nil {
+			log.Printf("initializeVaultServices: IsFileUnchanged(%s): %v", res.Path, uerr)
+			changed = append(changed, res)
+			continue
 		}
-		if len(allWarnings) > 0 && a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "vault:init-warnings", allWarnings)
+		if unchanged {
+			continue
 		}
+		changed = append(changed, res)
+	}
+
+	indexedCount, skipped, err := dbMgr.IndexScanResults(changed)
+	if err != nil {
+		_ = dbMgr.Close()
+		return fmt.Errorf("failed to index scan results: %w", err)
+	}
+
+	// Record the freshly-indexed files' stats and prune paths that vanished
+	// since the last run (rename/delete). Only files that were actually
+	// indexed (valid metadata, no scan error) get a files row — a file that
+	// failed to parse shouldn't be marked "unchanged" next time.
+	var allWarnings []string
+	for _, res := range changed {
+		if res.Err != nil {
+			allWarnings = append(allWarnings, fmt.Sprintf("%s: %v", res.Path, res.Err))
+			continue
+		}
+		if res.Notebook == "" {
+			for _, w := range res.Warnings {
+				allWarnings = append(allWarnings, fmt.Sprintf("%s: %s", res.Path, w))
+			}
+			if len(res.Warnings) == 0 {
+				allWarnings = append(allWarnings, fmt.Sprintf("%s: missing notebook/section/page", res.Path))
+			}
+			continue
+		}
+		if res.MTime.IsZero() {
+			// No stat → can't record a skip key; leave it to be re-parsed
+			// next time rather than risk a false "unchanged".
+			continue
+		}
+		if err := dbMgr.MarkFileIndexed(nil, res.Path, res.MTime.UnixNano(), res.Size); err != nil {
+			log.Printf("initializeVaultServices: MarkFileIndexed(%s): %v", res.Path, err)
+		}
+	}
+	pruned, pruneErr := dbMgr.PruneStaleFiles(seenPaths)
+	if pruneErr != nil {
+		log.Printf("initializeVaultServices: PruneStaleFiles: %v", pruneErr)
+	}
+	for _, p := range pruned {
+		allWarnings = append(allWarnings, fmt.Sprintf("%s: removed from index (file no longer exists)", p))
+	}
+
+	// Merge the indexer's per-file skip list into the warning stream.
+	allWarnings = append(allWarnings, skipped...)
+
+	if indexedCount > 0 {
+		// A checkpoint after the bulk insert keeps the WAL bounded for the
+		// session. No-op on in-memory.
+		if err := dbMgr.Checkpoint(); err != nil {
+			log.Printf("initializeVaultServices: post-index checkpoint: %v", err)
+		}
+	}
+	if len(allWarnings) > 0 && a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "vault:init-warnings", allWarnings)
 	}
 
 	watcher, err := monitor.NewDirectoryWatcher(vaultPath, dbMgr, tracker, coord, a.spacesPerTab)
@@ -1238,24 +1309,26 @@ const maxPluginQueryRows = 5000
 
 // --- Plugin SDK bindings -------------------------------------------------
 
-// pluginRODSN is the DSN used to open a second, read-only *sql.DB handle to
-// the same shared in-memory index. The shared in-memory cache is identified
-// by the "file::memory:?cache=shared" prefix; setting PRAGMA query_only on
-// that handle causes SQLite to reject any write at the engine level.
-const pluginRODSN = "file::memory:?cache=shared"
-
-// openPluginRODB lazily opens a read-only handle to the in-memory index for
-// use by PluginRawQuery. The handle is capped at one connection to match the
-// main DB's pool size. On success the handle is cached; on failure it is NOT
-// cached — the next call retries — so a transient startup error doesn't
-// permanently break plugin queries.
+// openPluginRODB lazily opens a read-only handle to the same on-disk index
+// (or the in-memory shared cache before a vault is open) for use by
+// PluginRawQuery. The handle is capped at one connection to match the main
+// DB's pool size. query_only=ON causes SQLite to reject any write at the
+// engine level — the primary guarantee that plugins can't mutate the index.
+// On success the handle is cached; on failure it is NOT cached — the next
+// call retries — so a transient startup error doesn't permanently break
+// plugin queries. On a vault switch (CloseVault) the cached handle is closed
+// and the next call re-opens against the new vault's index.
 func (a *App) openPluginRODB() (*sql.DB, error) {
 	a.pluginRODBMu.Lock()
 	defer a.pluginRODBMu.Unlock()
 	if a.pluginRODB != nil {
 		return a.pluginRODB, nil
 	}
-	ro, err := sql.Open("sqlite", pluginRODSN)
+	dsn := "file::memory:?cache=shared"
+	if a.db != nil && a.db.IsOnDisk() {
+		dsn = a.db.Path()
+	}
+	ro, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open read-only plugin DB: %w", err)
 	}

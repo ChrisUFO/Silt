@@ -21,7 +21,7 @@ func newTestApp(t *testing.T) *App {
 		t.Fatalf("ScaffoldVault: %v", err)
 	}
 
-	dm, err := db.NewDatabaseManager()
+	dm, err := db.NewDatabaseManager("")
 	if err != nil {
 		t.Fatalf("NewDatabaseManager: %v", err)
 	}
