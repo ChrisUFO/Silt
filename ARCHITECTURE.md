@@ -246,6 +246,28 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 func (a *App) ListNavigation() (NavigationTree, error)
 
 
+4.4 Theme Engine IPC & Pipeline
+
+The theme engine is a four-stage pipeline (DESIGN.md §7 / SPECS.md §6.4): canonical schema -> settings persistence -> loader -> runtime injection. It lives in backend/themes and frontend/src/theme and reuses the existing App-binding -> JSON RPC -> Svelte store IPC topology; it does NOT touch SQLite or the file write lock (the only disk write is AppSettings, via the atomic settings.json writer).
+
+backend/themes package:
+- theme.go — Go structs mirroring the canonical modes-based schema; Theme.Flatten(mode) -> map[string]string of CSS custom-property names (--bg-void, --accent-primary-start, ...) for one mode. HexToRGB converts bg.void to a native RGBA for the webview background.
+- validate.go — Validate(*Theme) returns structured per-field ValidationErrors (missing tokens, malformed colors). schema_version is informational (forward compatible).
+- loader.go — LoadTheme, ListThemes (on-disk *.json + the embedded default, deduped by id, per-file load errors collected), ResolveActive (active id -> theme, falling back to the embedded default).
+- default.go — the canonical default theme (cyber_forest.json) embedded via embed.FS so the app always has a guaranteed-correct fallback (works before a vault exists / when the themes dir is wiped / when the active id is invalid). ScaffoldVault writes this same embedded JSON.
+
+Wails-bound App methods (all three auto-exposed via the single `Bind: { app }`):
+- ListThemes() -> ListThemesResult { themes: []ThemeInfo, errors: []ThemeLoadError }
+- GetActiveTheme() -> ActiveThemeResult { id, name, mode, tokens, dark_tokens, light_tokens, bg_void }. Reads AppSettings, resolves the theme (default fallback), returns BOTH dark+light maps so the frontend resolves "system" locally without a second round-trip. Works before a vault is open (serves the embedded default).
+- ApplyTheme(id, mode) -> ActiveThemeResult. Validates id+mode, persists atomically to settings.json, emits a `theme:changed` Wails event, returns the new maps. Unknown id / invalid mode -> structured error, not persisted.
+
+Frontend (frontend/src/theme):
+- store.svelte.ts — $state store holding the active id/mode + dark/light maps; subscribes to GetActiveTheme/ApplyTheme; resolves "system" via prefers-color-scheme and re-resolves live on OS-theme change; re-paints on the `theme:changed` event.
+- inject.ts — injectTokens rewrites a single generated `<style id="silt-theme">:root{...}</style>` element (one DOM write -> one recalc -> same-tick repaint, no flicker/reload/remount). index.css :root values are startup fallbacks only.
+
+Launch background: main.go resolves BackgroundColour from the embedded default theme's bg.void (sync LoadSettings + embed.FS, before wails.Run) so the pre-CSS flash tracks the active theme mode.
+
+
 5. Svelte 5 Frontend Architecture
 
 The frontend uses Svelte 5’s fine-grained compiler to handle rapid content editing and real-time drag-and-drop operations without triggering bulk UI re-renders.

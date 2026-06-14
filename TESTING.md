@@ -13,7 +13,8 @@ Run with: `go test -race -count=1 ./...`
 | `backend/db` | Block insertion with cascade, replacement, empty re-index, frontmatter tag attachment (loop-index fix), metadata-change re-index stability, tag deduplication, N+1 fix verification, pagination and empty timeline, filter combinations, tag hydration, IndexScanResults skip-collection | DatabaseManager |
 | `backend/monitor` | Tracker immediate check, cooldown timeout, expired entry cleanup, background sweeper, prune expired, stop idempotency, concurrent PruneExpired, reindexFile lock-holding test, reindexFile end-to-end | DirectoryWatcher, WriteTracker |
 | `backend/parser` | ID injection, date normalization (4 cases), line parsing (task/header/note), file content parsing (frontmatter metadata, parent-child), code block ID protection (single + multiple fences), YAML frontmatter error surfacing | AST parser |
-| `backend/vault` | Settings round-trip (atomic write + load), corrupt JSON error path | Settings durability |
+| `backend/vault` | Settings round-trip + new theme fields (active_theme/theme_mode), backward-compat (legacy settings.json → defaults), first-run defaults, theme-mode normalization, corrupt JSON error path | Settings durability & theme persistence |
+| `backend/themes` | Validate (valid theme, missing token, bad color, missing identity, unparseable JSON), isValidColor forms, HexToRGB, ParseDefault (embedded default valid), Flatten (dark/light differ + pixel-identity), BGVoid (dark/light/system→dark), ListThemes (empty dir, missing dir, on-disk+malformed), ResolveActive (known/unknown/empty id → default) | Canonical schema, embed fallback, loader, validator |
 
 ### Benchmark
 
@@ -72,7 +73,7 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` (frontend, sve
 | `backend/monitor` | watcher 3-level `resolveFileMetadata` + reindex/focus-lock updated to the page model | DirectoryWatcher |
 | `backend/vault` | blank-start scaffolding (no default Work/Journal), plugins README written | Settings durability |
 
-Frontend: `npm run check` reports **0 errors** across the smart-graph components (RichText, BlockReferenceChip, EmbedPortal, BlockPickerModal, TagsExplorer, TagTreeNode), the plugin SDK (`frontend/src/plugins/*`), first-party Agenda/Calendar plugins, and the new titlebar/sidebar/App shell.
+Frontend: `npm run check` reports **0 errors** across the smart-graph components (RichText, BlockReferenceChip, EmbedPortal, BlockPickerModal, TagsExplorer, TagTreeNode), the plugin SDK (`frontend/src/plugins/*`), first-party Agenda/Calendar plugins, the titlebar/sidebar/App shell, and the theme engine (`frontend/src/theme/*`).
 
 ## Manual Verification Matrix (`wails dev`)
 
@@ -84,9 +85,17 @@ Frontend: `npm run check` reports **0 errors** across the smart-graph components
 6. **Agenda (#17):** Agenda view shows overdue/today/tomorrow/upcoming; mark-done works; click jumps to source.
 7. **Calendar (#18):** month + week grids with due-date tasks; prev/next/today navigation; click a task jumps to source.
 8. **Plugin install:** Plugin Manager → install a sample `.silt-plugin` → it appears + loads; enable/disable + uninstall work.
+9. **Theme engine (Sprint 5):**
+   - On launch the shell paints the embedded default theme with no pre-CSS flash (webview background = `bg.void`).
+   - `GetActiveTheme` returns dark+light token maps; the injector overrides `index.css :root` same-tick (inspect `:root` → computed `--bg-void` is the theme's value, not the fallback).
+   - `ApplyTheme(id, "light")` switches to light mode in one paint frame (no reload/remount); `document.documentElement` computed `--bg-void` changes to the light value.
+   - `ThemeMode = "system"` follows the OS dark/light preference live (toggle OS theme → shell re-paints with no IPC round-trip).
+   - Theme + mode persist across restart (settings.json).
+   - Missing/empty themes dir or a deleted `cyber_forest.json` → the embedded default still loads.
+   - A malformed `*.json` dropped in `.system/themes/` is rejected with a structured error (surfaced in `ListThemes.errors`) and never crashes the app.
 
 ## Sprint 3 Known Gaps
 
 - Third-party plugins get full SDK access but a dedicated rendered-UI surface for arbitrary third-party components ships in a follow-up (Silt cannot compile Svelte at runtime); first-party plugins are the rendered-view references.
 - Drag-to-reorder in the navigator/kanban deferred to a future sprint.
-- Real-time theme-swap reactivity of the titlebar depends on the not-yet-built theme-injector pipeline (DESIGN.md §7); the titlebar binds to the existing CSS tokens so it inherits themes automatically once that lands.
+- ~~Real-time theme-swap reactivity of the titlebar depends on the not-yet-built theme-injector pipeline (DESIGN.md §7)~~ — **Resolved in Sprint 5**: the theme injector (frontend/src/theme) rewrites `:root` tokens same-tick, so every token-bound surface (including the titlebar) now re-themes live.

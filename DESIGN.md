@@ -282,26 +282,30 @@ Kanban Card Drag-Reorder: Uses compile-time svelte/animate (using Svelte's nativ
 
 7. Dynamic Theme Injection Runtime
 
-To support user-defined styling, Silt implements a runtime CSS Custom Property injector:
+To support user-defined styling, Silt implements a runtime CSS Custom Property injector. The active theme and dark/light mode are persisted in AppSettings (user-global settings.json) and resolved over the Wails IPC bridge; a Svelte theme store injects the resolved token map onto :root in a single paint frame.
 
-                  +--------------------------------+
-                  |  Go Backend: cyber_forest.json  |
-                  +--------------------------------+
-                                  │
-                                  ▼ [Serialized JSON Map]
-                  +--------------------------------+
-                  |    Wails IPC Transport Layer   |
-                  +--------------------------------+
-                                  │
-                                  ▼
+```
+                +------------------------------------------+
+                | Go: backend/themes (embed.FS default +    |
+                |     on-disk *.json loader + validator)    |
+                +------------------------------------------+
+                                   │  ListThemes / GetActiveTheme / ApplyTheme
+                                   ▼  [ActiveThemeResult: dark+light token maps]
+                +------------------------------------------+
+                |       Wails IPC Transport Layer           |
+                +------------------------------------------+
+                                   │
+                                   ▼
 +-----------------------------------------------------------------------+
-| Svelte Framework Root Element                                         |
-|                                                                       |
-|   - Binds variables dynamically to root scope:                        |
-|     document.documentElement.style.setProperty('--bg-void', '#080b09');|
-|                                                                       |
-|   - Re-evaluates typography fonts and rhythm parameters.               |
+| Svelte theme store (frontend/src/theme)                               |
+|  - resolves "system" via prefers-color-scheme (both maps in hand)     |
+|  - injectTokens: rewrites ONE <style id="silt-theme">:root{...} block |
+|    (one DOM write -> one recalc -> same-tick repaint, no flicker)     |
+|  - index.css :root values are startup fallbacks only                  |
 +-----------------------------------------------------------------------+
+```
+
+A canonical default theme (cyber_forest) is embedded in the Go binary so the app always renders correctly before a vault exists or when the themes directory is wiped. The native webview BackgroundColour is resolved at launch from that embedded theme's `bg.void`, eliminating any pre-CSS flash that matches no token.
 
 
 8. Accessibility (A11Y) & Keyboard Navigation Compliance
