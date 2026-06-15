@@ -3,6 +3,7 @@ package templates
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -270,6 +271,11 @@ func TestGetTemplate_ReadDirError(t *testing.T) {
 }
 
 func TestListTemplates_RealIOError(t *testing.T) {
+	// POSIX permission/dir-as-file semantics are not enforced on Windows;
+	// os.ReadDir on a file path may succeed where it fails on Linux/macOS.
+	if runtime.GOOS == "windows" {
+		t.Skip("os.ReadDir on a file path does not error on Windows")
+	}
 	// Same idea: a file path passed as dir → os.ReadDir returns a non-IsNotExist
 	// error → ListTemplates returns that error (not just the builtins).
 	tmpFile := filepath.Join(t.TempDir(), "not-a-dir")
