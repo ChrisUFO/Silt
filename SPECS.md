@@ -6,7 +6,7 @@ A Local-First, High-Performance Hybrid Note & Task Management Lifecycle Architec
 
 1.1 Problem Statement
 
-Modern personal knowledge management (PKM) and task-management tools are fundamentally split. Hierarchical tools (such as Microsoft OneNote) excel at spatial partitioning and structured organization but fail at temporal journaling, lightweight processing, and open formats. On the other hand, outline graph-based systems (such as Logseq or Obsidian) offer friction-free, daily logging but struggle to natively integrate rich task metadata directly into the block-stream. Relying on complex, third-party plugin ecosystems to connect notes and tasks introduces structural instability, speed degradation, and unpredictable data-serialization standards.
+Modern personal knowledge management (PKM) and task-management tools are fundamentally split. Hierarchical tools excel at spatial partitioning and structured organization but fail at temporal journaling, lightweight processing, and open formats. On the other hand, outline graph-based systems offer friction-free, daily logging but struggle to natively integrate rich task metadata directly into the block-stream. Relying on complex, third-party plugin ecosystems to connect notes and tasks introduces structural instability, speed degradation, and unpredictable data-serialization standards.
 
 1.2 The System Vision: Silt
 
@@ -78,19 +78,19 @@ Reactive Feedback Loop: The backend broadcasts a UI state event to ensure other 
 
 3. File Directory Structure & Storage Engine
 
-3.1 The Virtualized Infinite Scroll Stream
+3.1 The Single-File Page Model
 
-While the user experiences each Section as a single, endless, scrollable timeline, storing an entire section in one massive file is a technical anti-pattern. Parsing multiple megabytes of plaintext on every keystroke introduces severe performance drops and increases the scale of potential data loss during a write failure.
+While the user experiences each Page as a single, endless, scrollable document, storing an entire page in one file is practical because a page is a focused topic (not an unbounded daily journal). Each block within the page carries its own `file_date` in the trailing `<!-- id: uuid @ YYYY-MM-DD -->` comment, preserving the temporal dimension the agenda and calendar views rely on.
 
-Solution: Daily files are serialized discretely to disk inside the structured notebook folders. The Go engine reads these small daily files on demand, streaming them to a virtualized list container in Svelte. The files are dynamically stitched together at the viewport boundaries, creating the illusion of a single continuous document.
+The Go engine parses the single `.md` file on load and streams the blocks to the TipTap editor in Svelte. Writes are debounced and serialized atomically (temp file + fsync + rename) so a crash never corrupts the file. Blocks from different dates coexist in the same page file — the date is per-block, not per-file.
 
 3.2 Physical Directory Layout
 
-Silt uses a OneNote-style three-level hierarchy — **Notebook > Section > Page** — mapped directly onto folders on disk, where the **Section layer is optional**:
+Silt uses a three-level hierarchy — **Notebook > Section > Page** — mapped directly onto folders on disk, where the **Section layer is optional**:
 
 - A **Notebook** is a top-level folder directly under the vault root. Users open existing notebook folders or create new ones from the notebook selector. Multiple notebooks can be open at once.
 - A **Section** is an optional grouping folder within a Notebook. Sections are shown even when empty, so a freshly created section appears immediately.
-- A **Page** is a folder that directly contains `.md` files and is the **streaming unit**: the daily note files inside it are stitched into a single infinite-scroll timeline in the editor. A page may live directly under a Notebook (no section) or nested within a Section.
+- A **Page** is a single `.md` file and is the **streaming unit**: the editor renders one TipTap instance per page. Each block within the page carries its own `file_date` in the trailing comment, so blocks from different dates coexist in one file. A page may live directly under a Notebook (no section) or nested within a Section.
 
 ```
 VaultRoot/
@@ -110,18 +110,13 @@ VaultRoot/
 │       ├── my-meeting-template.md
 │       └── sprint-review.md
 ├── Work/                          ← Notebook
-│   ├── Inbox/                     ← Page directly under the Notebook (no section)
-│   │   └── 2026-06-13.md
+│   ├── Inbox.md                   ← Page directly under the Notebook (no section)
 │   └── Projects/                  ← Section
-│       ├── WebsiteRedesign/       ← Page (streams the .md files below)
-│       │   ├── 2026-06-11.md
-│       │   └── 2026-06-13.md
-│       └── MobileApp/
-│           └── 2026-06-13.md
+│       ├── WebsiteRedesign.md     ← Page (single file; blocks carry per-block dates)
+│       └── MobileApp.md
 └── Personal/                      ← another Notebook
     └── Journal/
-        └── Daily/
-            └── 2026-06-13.md
+        └── Daily.md
 ```
 
 Path resolution: the **notebook** is the top folder under the vault; the **page** is the folder directly containing the `.md` file; the **section** is the path between them (`""` when the page sits directly under the notebook). Frontmatter values override path-derived defaults. Files at shallower depths (e.g. a stray `.md` directly in a Notebook folder) are skipped with a warning at startup (fail-loudly).
@@ -131,7 +126,7 @@ Silt starts blank — no default notebook or section is created. The user create
 
 3.3 File Boundary Specification & Frontmatter Standard
 
-Every daily file contains a strict YAML metadata block bounded by triple dashes (---). This block allows indexers to map orphaned or moved files without reading the entire file directory tree:
+Every page file contains a strict YAML metadata block bounded by triple dashes (---). This block allows indexers to map orphaned or moved files without reading the entire file directory tree:
 
 ```
 ---
@@ -445,7 +440,18 @@ The active `notebook/section/page` from the navigator is bound into the context;
 
 To enforce architectural parity, the user interface contains no custom code for the default Calendar, Kanban, or Agenda dashboards. They use the exact same SDK constraints as any third-party developer plugin:
 
-Kanban Plugin: Uses the sqliteQuery context hook to pull records: SELECT * FROM tasks INNER JOIN blocks ON tasks.block_id = blocks.id WHERE blocks.section = ? and utilizes updateBlockState to modify card indices.
+Kanban Plugin: Uses the sqliteQuery context hook to pull records scoped to the active navigation level (vault / notebook / section / page). The user selects the scope via a segmented control in the board header. The WHERE clause is built per scope:
+
+```sql
+-- vault scope (all notebooks)
+SELECT * FROM tasks INNER JOIN blocks ON tasks.block_id = blocks.id WHERE 1=1
+
+-- section scope
+SELECT * FROM tasks INNER JOIN blocks ON tasks.block_id = blocks.id
+WHERE blocks.notebook = ? AND blocks.section = ?
+```
+
+Status changes are committed via updateBlockState, which writes the new checkbox state to the source markdown file and re-indexes the block.
 
 Calendar Plugin: Pulls dates using range constraints and exposes interactive timeline components.
 

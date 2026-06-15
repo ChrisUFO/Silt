@@ -11,18 +11,16 @@ Silt is a simple, super-fast, and lightweight note-taking app designed to captur
 
 **Silt** bridges the gap between structured namespace notebooks and chronological block-based daily streams. It treats human-readable plaintext files as the absolute database of record, while utilizing a native desktop runtime cache to project your logs into fully interactive **Agenda**, **Calendar**, and **Kanban** board interfaces.
 
-Notes are organized **Notebook › Section › Page** (OneNote-style): each Page is a streaming timeline of daily Markdown files stitched into one continuous document. The Section layer is optional — pages can live directly under a notebook. Silt starts blank — you create or open notebooks and build your own hierarchy.
+Notes are organized **Notebook › Section › Page**: each Page is a single Markdown file whose blocks carry their own dates. The Section layer is optional — pages can live directly under a notebook. Silt starts blank — you create or open notebooks and build your own hierarchy.
 
 ---
 
 ## Key Highlights
 
-- **Notebook › Section › Page hierarchy** — OneNote-style folders on disk; a Page streams its daily files into one infinite-scroll timeline.
-<<<<<<< HEAD
+- **Notebook › Section › Page hierarchy** — folders on disk; each Page is a single `.md` file with per-block dates.
 - **Smart Graph** — slash-delimited hierarchical tags (`#work/project/milestone-one`), global block references (`((uuid))`) with hover previews, and live dual-bound embeds (`{{embed:uuid}}`).
 - **Themeable** — the entire shell is driven by a single JSON theme (colors + optional fonts). Five first-class themes ship built-in (Cyber Forest default, Terra Noir, Linen, Stark, Graphite). Ship your own palette by dropping a `.json` into `<vault>/.system/themes/` or importing it from **Settings → Appearance**. See the [authoring guide](./docs/THEMING.md).
-- **Page Templates** — ten first-class templates ship built-in (Daily Note, Meeting Notes, ADR, …). Drop a `.md` into `<vault>/.system/templates/` to add your own. Insert as a new page or at the cursor via `Ctrl+Shift+T` or `/template`. See the [authoring guide](./docs/TEMPLATES.md).
-- **Plugin SDK + first-party plugins** — Agenda (rolling task timeline) and Calendar (month/week grids) are built on the same `PluginContext` SDK as third-party plugins. Install community plugins from `.silt-plugin` archives via the in-app Plugin Manager.
+- **Plugin SDK + first-party plugins** — Agenda (rolling task timeline), Calendar (month/week grids), and Kanban (drag-and-drop task board with multi-level scope) are built on the same `PluginContext` SDK as third-party plugins. All plugins can be enabled/disabled from the Plugin Manager; install community plugins from `.silt-plugin` archives.
 - **No File Lock-In** — Your data lives in flat directories of basic Markdown `.md` files.
 - **Zero-Bloat Performance** — No Electron. Idle allocation sits below 65MB RAM with sub-16ms input rendering.
 - **Inline Task Machine** — Turn any block bullet into a state-managed task using dense, human-writable shorthand.
@@ -41,7 +39,6 @@ Each concern has a single source of truth. Refer to the file that owns the topic
 | [**DESIGN.md**](DESIGN.md) | Design system: Refined Cyber-Ink vision, color tokens, typography, component specs, motion, accessibility. |
 | [**docs/PLUGIN_DEVELOPMENT.md**](docs/PLUGIN_DEVELOPMENT.md) | How to author, package (`.silt-plugin`), and install Silt plugins — with the full PluginContext SDK reference. |
 | [**docs/THEMING.md**](docs/THEMING.md) | How to author, import, and select Silt themes — the canonical token schema reference and a copy-pasteable blank template. |
-| [**docs/TEMPLATES.md**](docs/TEMPLATES.md) | How to author, install, and insert Silt page templates — the placeholder syntax, frontmatter schema, and a copy-pasteable blank template. |
 | [**TESTING.md**](TESTING.md) | Test coverage matrix, benchmarks, manual verification checklist, known gaps. |
 
 ---

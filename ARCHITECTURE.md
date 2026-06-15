@@ -46,7 +46,7 @@ The Go runtime orchestrates system access, monitors local storage directories, p
 
 2.1 File System Monitor (fsnotify Pipeline)
 
-To allow interoperability with external plain-text editors (e.g., VS Code, Obsidian), the Go backend implements an active directory watcher using github.com/fsnotify/fsnotify.
+To allow interoperability with external plain-text editors (e.g., VS Code), the Go backend implements an active directory watcher using github.com/fsnotify/fsnotify.
 
 The Feedback Loop Prevention Strategy
 
@@ -536,10 +536,29 @@ A dedicated fsnotify watcher observes the .system parent directory (not the file
 
 8.3 Settings Menu (frontend)
 
-The settings store (settings/store.svelte.ts) is a $state object exposing loadConfig/saveConfig, dirty tracking, and a config:changed / config:error subscription. The SettingsShell is a full-screen frosted overlay with a left tab rail (General / Appearance / Plugins / About), roving keyboard navigation (Arrow/Home/End, Esc to close), and ARIA tablist semantics. GeneralTab edits a local draft (Save/Revert) so an external hot-reload cannot fight a half-edited form; if an external change lands while the draft is dirty, the draft is preserved and a non-blocking "reload" notice is shown (never a silent clobber). The Plugins tab (#65) is the single plugin UI: rich cards (first-party bundled vs. third-party installed), enable/disable, uninstall (first-party protected), inline load errors, an expandable detail panel with per-plugin settings, and the .silt-plugin install flow. The standalone PluginManagerModal was removed in favour of this tab; the titlebar extension icon opens Settings → Plugins.
+The settings store (settings/store.svelte.ts) is a $state object exposing loadConfig/saveConfig, dirty tracking, and a config:changed / config:error subscription. The SettingsShell is a full-screen frosted overlay with a left tab rail (General / Appearance / Plugins / About), roving keyboard navigation (Arrow/Home/End, Esc to close), and ARIA tablist semantics. GeneralTab edits a local draft (Save/Revert) so an external hot-reload cannot fight a half-edited form; if an external change lands while the draft is dirty, the draft is preserved and a non-blocking "reload" notice is shown (never a silent clobber). The Plugins tab (#65) is the single plugin UI: rich cards (first-party bundled vs. third-party installed), enable/disable (all plugins — first-party via config.yaml `plugins.disabled` list, third-party via `.disabled` sentinel), uninstall (third-party only), inline load errors, an expandable detail panel with per-plugin settings, and the .silt-plugin install flow. The standalone PluginManagerModal was removed in favour of this tab; the titlebar extension icon opens Settings → Plugins.
 
 8.4 Editor Config Consumer (frontend)
 
 The editor-token pipeline (settings/editor-tokens.svelte.ts) mirrors the theme injector pattern (§4.4): editor.* config values (font_family, mono_font_family, font_size_px, line_height) are injected as CSS custom properties (--editor-font-family, --editor-mono-font-family, --editor-font-size, --editor-line-height) on :root via a dedicated <style id="silt-editor"> element, separate from the theme injector's <style id="silt-theme">. initEditorTokens() uses $effect.root to watch the reactive settings store, so config changes apply live (one DOM write → one recalculation → same-tick repaint) without a reload or remount. The index.css :root values are startup fallbacks only.
 
 BlockRenderer (the live block editor) consumes the full editor.* config surface: typography flows through the CSS variables (font-family, font-size, line-height on the contenteditable and read-mode divs); auto_save_delay_ms drives the triggerAutoSave debounce (0 = immediate, no timer); focus_highlight_ancestors gates the guide-rail active highlight; and indent_block / unindent_block hotkeys are matched via matchHotkey (settings/hotkeys.ts) so users can remap or disable them from Settings → General. The cycle_view_layout hotkey is wired in App.svelte's global keydown handler alongside open_search and toggle_sidebar, cycling through the main views (notes → tags → agenda → calendar → kanban).
+
+
+9. Performance Budgets & System Tray
+
+9.1 Boot-Scanner Budget (Hard Regression Gate)
+
+TestScanWorkspace_BudgetRegression (backend/parser/parser_test.go) seeds 1,000 small page files and asserts ScanWorkspace completes in under 450ms (baseline ~280ms on Ryzen AI MAX+ / Go 1.25 / Windows). The test runs in the normal `go test -race ./...` CI gate (skipped under `-short`) so a regression is caught immediately, not only when someone runs `-bench`.
+
+9.2 Atomic-Write Safety (Kill-Mid-Write WAL Recovery)
+
+TestAtomicWrite_KillMidWriteRecoversViaWAL (backend/db/db_test.go) simulates a destructive exit (SIGKILL / power loss) by closing the raw `*sql.DB` handle WITHOUT the `PRAGMA wal_checkpoint(TRUNCATE)` that `DatabaseManager.Close` performs. A subsequent `NewDatabaseManager` (the "next launch") auto-replays the WAL, recovering every committed block. The test also asserts zero stray `*.tmp` files in the vault directory. TestWriteFileAtomic_NoTruncatedFilesOnKill verifies 100 concurrent atomic writes to different files leave no truncated content.
+
+9.3 UI Frame-Budget Probe
+
+frontend/src/lib/perf/frame-budget.ts provides `measureFrameBudget(label, fn)` — a dev-only probe (gated on `?perf=1` in the URL; zero-cost pass-through otherwise) that wraps a callback in `performance.mark`/`measure` + `requestAnimationFrame` and logs the elapsed time against the 16ms frame budget. Instrumented on the three highest-stress paths: Kanban drag-drop settle, TipTap editor transaction (docToBlocks), and theme-token injection.
+
+9.4 System Tray (Deferred)
+
+Wails v2.12 has an internal `menu.TrayMenu` struct but does NOT expose a public runtime API to register tray menus from application code. The system tray icon + minimize-to-tray feature is blocked by this API gap and will be revisited when Wails v3 (which has full tray support) is adopted. The production build pipeline (`wails build --clean`), memory budget (<65MB idle), and cross-platform artifacts (Windows NSIS + portable zip, Linux AppImage + .deb) are the deliverables for issue #23.

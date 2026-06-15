@@ -88,7 +88,7 @@ Per Phase 6 of `PLAN.md`:
 
 ---
 
-# Sprint 3 — Smart Graph, Plugin SDK & OneNote-style Hierarchy
+# Sprint 3 — Smart Graph, Plugin SDK & 3-Level Hierarchy
 
 ## Automated Tests
 
@@ -332,7 +332,7 @@ for the engine + picker UX. Sprint 7 adds:
    parses with the canonical validator at each step.
 2. **Muted-text contrast (post-fix):** in dark mode, sidebar metadata
    and note tag labels (muted text) are visibly legible against panels;
-   a contrast-tool spot-check on any muted label reports ≥ 4.5:1.
+   a    contrast-tool spot-check on any muted label reports ≥ 4.5:1.
 3. **Default-theme snapshot stability:** the shipped default looks
    unchanged except the muted gray is one notch lighter (dark) / darker
    (light); no other token moved.
@@ -440,4 +440,49 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test`
 6. Drop a custom `.md` into `<vault>/.system/templates/` → it appears in the picker without a restart (watcher hot-reload).
 7. Smart-graph passthrough: author a template body containing `{{embed:abc-123}}` → insert → the embed token survives rendering intact.
 
+
+---
+# Sprint 4 — Kanban Board, Performance, Tests & Polish (#19, #21, #22, #23)
+
+## Automated Tests
+
+Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (frontend, Vitest).
+
+### Go coverage added this sprint
+
+| Package | Tests | What is covered |
+|---|---|---|
+| `backend/parser` | `TestParseLine_EdgeCases` (minimal task, DOING/DONE states, partial metadata, priority-without-owner), `TestScanWorkspace_BudgetRegression` (hard <450ms/1k files gate), `TestWriteFileAtomic_NoTruncatedFilesOnKill` (100 concurrent writes, zero truncated, zero stray temp) | AST edge cases + boot-scanner budget regression + atomic-write durability |
+| `backend/db` | `TestAtomicWrite_KillMidWriteRecoversViaWAL` (destructive-exit WAL replay + zero stray temp files), `TestIndexer_KanbanQueryPath` (exact Kanban SQL ordering + section scoping) | WAL crash recovery + Kanban query regression guard |
+
+### Frontend coverage added this sprint
+
+| File | Tests | What is covered |
+|---|---|---|
+| `frontend/src/plugins/first-party/silt-kanban/Kanban.test.ts` (8 tests) | 3-lane render, task bucketing, default page-scope, scope-change re-query, click → navigate-to-block, ArrowRight keyboard status change, error revert, empty state | Kanban plugin IPC boundary |
+| `frontend/src/plugins/first-party/silt-agenda/Agenda.test.ts` (4 tests) | Date-bucket loading, mark-done → ctx.updateBlockState, click → navigate-to-block, empty state | Agenda plugin IPC boundary |
+| `frontend/src/plugins/first-party/silt-calendar/Calendar.test.ts` (3 tests) | Month-grid rendering, Today button, click → navigate-to-block | Calendar plugin IPC boundary |
+| `frontend/src/components/PluginView.test.ts` (3 tests) | Happy-path render, load-error path, not-registered empty state | Plugin host view |
+| `frontend/src/components/Sidebar.test.ts` (2 tests) | Collapse render, Change Vault handler | Sidebar interactions |
+
+`npm test` now runs **66 vitest tests** across 11 files (was 46 across 6). `npm run check` reports **0 errors**.
+
+### Dead-code cleanup
+
+- Removed the stale page-timeline surface (`FetchPageTimeline`, `FetchTimelineDays`, `DayGroup`, their tests, and the `maxTimelineLimit`/`defaultTimelineLimit` constants). The live editor uses `FetchPageBlocks`; the timeline API was dead code left over from the per-day file model removal.
+
+## Manual Verification Matrix (`wails dev`)
+
+1. **Kanban board (#19):** Navigate to a section with mixed TODO/DOING/DONE tasks → switch to the Kanban view → 3 columns render with correct counts.
+2. **Kanban scope selector:** Switch between Vault / Notebook / Section / Page → the board re-queries and the card set narrows/widens; the breadcrumb shows the active scope. Default scope follows the active navigation (navigate to a page → board defaults to page scope).
+3. **Kanban drag-and-drop:** Drag a card TODO → DOING → file on disk reads `[/] DOING TASK ...`. Drag DOING → DONE → file reads `[x] DONE TASK ...`. Reload → persisted state reflects the markdown.
+4. **Kanban keyboard:** Focus a card → ArrowRight moves it to the next lane; ArrowLeft moves back. Enter/click navigates to the source block.
+5. **Plugin disable:** Settings → Plugins → toggle off Kanban → the Kanban view shows the "not registered" empty state. Toggle back on → it reappears. Works for both first-party and third-party plugins.
+6. **Frame-budget probe (#21):** Open `wails dev` with `?perf=1` appended to the URL. Perform Kanban drag-drop, editor typing, and theme switching → console logs each measurement with ✓ (<16ms) or ⚠️ (>16ms).
+7. **Production build (#23):** `./build.sh --no-bump` (Windows) or `./build-linux.sh --no-bump` (Linux) produces the platform artifacts. Launch the binary, open a vault with ≥10 pages, idle 60s → peak RSS < 65MB (Task Manager on Windows, `ps -o rss=` on Linux).
+
+## Known Gaps (deferred)
+
+- **System tray (#23):** Wails v2.12 has an internal `TrayMenu` struct but no public runtime API to register tray menus. The tray icon + minimize-to-tray feature is blocked by this API gap; deferred to Wails v3 adoption.
+- **Sidebar tree-render test:** The Sidebar's `loadNavigation` runs in `onMount`, which does not fire reliably under Svelte 5 + testing-library/jsdom (unlike `$effect`, which Kanban/Agenda/Calendar use). Tree rendering is covered by manual verification; the Sidebar test covers collapse + Change Vault.
 

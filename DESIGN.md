@@ -4,7 +4,7 @@ Core Design System, Component Tokens, & Interaction Specification
 
 1. Design Vision: Refined Cyber-Ink
 
-Most digital workspace applications fall into one of two visual extremes: flat, sterile minimalism that feels clinical (e.g., default Logseq or Obsidian) or over-saturated, high-contrast neon layouts that induce cognitive fatigue during multi-hour reading/writing sessions.
+Most digital workspace applications fall into one of two visual extremes: flat, sterile minimalism that feels clinical (e.g., default note-taking apps) or over-saturated, high-contrast neon layouts that induce cognitive fatigue during multi-hour reading/writing sessions.
 
 Silt implements "Refined Cyber-Ink"—a design framework engineered for deep, distraction-free focus:
 
