@@ -20,6 +20,7 @@
   import type { ParsedBlock } from '../lib/editor'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import { settings } from '../settings/store.svelte'
+  import { measureFrameBudget } from '../lib/perf/frame-budget'
   import CommandPalette from './CommandPalette.svelte'
 
   interface Props {
@@ -142,7 +143,9 @@
 
   async function doSave(): Promise<void> {
     if (!editorInstance || editorInstance.isDestroyed) return
-    const updatedBlocks = docToBlocks(editorInstance.getJSON())
+    const updatedBlocks = measureFrameBudget('tiptap-transaction', () =>
+      docToBlocks(editorInstance.getJSON())
+    )
     try {
       await SaveFileBlocks(notebook, section, page, updatedBlocks)
     } catch (e) {

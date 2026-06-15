@@ -9,6 +9,8 @@
 // no component remount. The index.css :root values are retained as startup
 // fallbacks only; the first call here overrides them once IPC returns.
 
+import { measureFrameBudget } from '../lib/perf/frame-budget'
+
 const STYLE_ID = 'silt-theme'
 
 /**
@@ -16,6 +18,12 @@ const STYLE_ID = 'silt-theme'
  * write so the repaint is same-tick.
  */
 export function injectTokens(tokens: Record<string, string>): void {
+  measureFrameBudget('theme-inject', () => {
+    injectTokensInner(tokens)
+  })
+}
+
+function injectTokensInner(tokens: Record<string, string>): void {
   let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null
   if (!el) {
     el = document.createElement('style')

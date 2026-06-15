@@ -610,6 +610,33 @@ func BenchmarkScanWorkspace_1000Files(b *testing.B) {
 	}
 }
 
+// TestScanWorkspace_BudgetRegression asserts the boot scanner stays within
+// the 450ms / 1,000-file budget (Sprint 1 spec, TESTING.md). The benchmark
+// above measures the same workload but only runs under -bench; this test
+// runs under the normal -race CI gate so a regression is caught immediately.
+// Skipped under -short for quick test runs.
+func TestScanWorkspace_BudgetRegression(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping budget regression in short mode")
+	}
+	dir := t.TempDir()
+	writeBenchVault(t, dir, 1000)
+
+	start := time.Now()
+	_, _, err := ScanWorkspace(dir, 4)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("ScanWorkspace: %v", err)
+	}
+	// Budget: <450ms for 1,000 files (baseline ~280ms on Ryzen AI MAX+ /
+	// Go 1.25 / Windows per TESTING.md; 450ms allows headroom for slower
+	// CI runners and the race detector).
+	if elapsed > 450*time.Millisecond {
+		t.Fatalf("ScanWorkspace regressed: %v > 450ms/1k files", elapsed)
+	}
+	t.Logf("ScanWorkspace 1k files: %v (budget 450ms)", elapsed)
+}
+
 // Helper shared by the benchmark — writes N small daily-note files under
 // Work/Journal/Daily/ (notebook/section/page) so the scanner has realistic
 // 3-level structure to walk.

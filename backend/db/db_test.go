@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -807,6 +808,66 @@ func TestOnDiskWAL_DeleteIndexForcesCleanRebuild(t *testing.T) {
 	}
 	if len(known) != 0 {
 		t.Errorf("expected empty files table after rebuild, got %d rows", len(known))
+	}
+}
+
+// TestAtomicWrite_KillMidWriteRecoversViaWAL simulates a destructive exit
+// (SIGKILL / power loss): the DB handle is closed WITHOUT the checkpoint
+// that DatabaseManager.Close() performs, leaving the WAL un-checkpointed
+// on disk. A subsequent NewDatabaseManager (the "next launch") must
+// auto-replay the WAL, recovering every committed block. Also asserts no
+// stray temp files are left in the vault directory (#21).
+func TestAtomicWrite_KillMidWriteRecoversViaWAL(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "index.sqlite")
+
+	// Phase 1: open on-disk WAL DB, seed 100 blocks in a single page.
+	dm, err := NewDatabaseManager(dbPath)
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	var blocks []parser.ParsedBlock
+	for i := range 100 {
+		id := fmt.Sprintf("00000000-0000-0000-0000-%012d", i)
+		blocks = append(blocks, sampleNoteBlock(id, i+1))
+	}
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	// CRASH: close the raw *sql.DB WITHOUT checkpointing (simulates
+	// SIGKILL/power loss — WAL is abandoned, not checkpointed).
+	// DatabaseManager.Close() runs PRAGMA wal_checkpoint(TRUNCATE) first;
+	// we bypass that by closing the raw handle directly.
+	if err := dm.db.Close(); err != nil {
+		t.Fatalf("raw close: %v", err)
+	}
+
+	// Phase 2: assert no stray temp files in the vault dir.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("stray temp file after crash: %s", e.Name())
+		}
+	}
+
+	// Phase 3: reopen (the "next launch"). SQLite auto-replays the WAL
+	// on the first connection — all committed blocks must be visible.
+	dm2, err := NewDatabaseManager(dbPath)
+	if err != nil {
+		t.Fatalf("reopen NewDatabaseManager: %v", err)
+	}
+	defer dm2.Close()
+
+	var count int
+	if err := dm2.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks").Scan(&count); err != nil {
+		t.Fatalf("count after WAL replay: %v", err)
+	}
+	if count != 100 {
+		t.Errorf("expected 100 blocks after WAL replay, got %d", count)
 	}
 }
 

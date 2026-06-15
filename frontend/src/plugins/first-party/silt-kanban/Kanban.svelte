@@ -4,6 +4,7 @@
   import { cubicOut } from 'svelte/easing'
   import type { PluginContext, PluginManifest, TaskStatus } from '../../sdk'
   import { settings } from '../../../settings/store.svelte'
+  import { measureFrameBudget } from '../../../lib/perf/frame-budget'
 
   interface Props {
     ctx: PluginContext
@@ -211,7 +212,9 @@
     const insertAt = targetIndex >= 0 ? targetIndex : targetLane.length
     targetLane.splice(insertAt, 0, updatedCard)
     newLanes[toStatus] = targetLane
-    lanes = newLanes
+    measureFrameBudget('kanban-drop', () => {
+      lanes = newLanes
+    })
 
     liveMessage = `Task moved to ${toStatus === 'TODO' ? 'To Do' : toStatus === 'DOING' ? 'In Progress' : 'Done'}`
 
