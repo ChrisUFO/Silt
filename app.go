@@ -23,6 +23,7 @@ import (
 	"silt/backend/monitor"
 	"silt/backend/parser"
 	"silt/backend/plugins"
+	"silt/backend/templates"
 	"silt/backend/themes"
 	"silt/backend/vault"
 
@@ -69,6 +70,12 @@ type App struct {
 	// startup load runs before the frontend subscribes to config:error, so
 	// that event is typically lost; GetConfigLoadError surfaces this one-shot.
 	configLoadErr error
+
+	// templateWatcher hot-reloads <vault>/.system/templates/ so the picker
+	// stays live when a user adds/edits/deletes a custom template externally.
+	// Started in initializeVaultServices, stopped in teardownVaultServices
+	// (mirrors configWatcher).
+	templateWatcher *templates.TemplateWatcher
 
 	// pluginRODB is a lazy read-only handle to the in-memory index, used
 	// exclusively by PluginRawQuery so a plugin can never mutate the index
@@ -132,6 +139,10 @@ func (a *App) teardownVaultServices() {
 		a.watcher.ReleaseAllFocus()
 		_ = a.watcher.Close()
 		a.watcher = nil
+	}
+	if a.templateWatcher != nil {
+		_ = a.templateWatcher.Close()
+		a.templateWatcher = nil
 	}
 	if a.configWatcher != nil {
 		_ = a.configWatcher.Close()
@@ -338,6 +349,23 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		} else {
 			cw.Start()
 			a.configWatcher = cw
+		}
+	}
+
+	// Start hot-reload of .system/templates/ so the picker stays live when a
+	// user adds/edits/deletes a custom template externally (the same posture
+	// as the config and theme watchers). The onChange callback invalidates the
+	// cache and emits templates:changed; the frontend store re-lists.
+	if a.ctx != nil {
+		tw, tErr := templates.NewTemplateWatcher(a.templatesDir(), func() {
+			templates.InvalidateTemplateCache()
+			runtime.EventsEmit(a.ctx, "templates:changed", struct{}{})
+		})
+		if tErr != nil {
+			log.Printf("template watcher disabled: %v", tErr)
+		} else {
+			tw.Start()
+			a.templateWatcher = tw
 		}
 	}
 
@@ -819,6 +847,191 @@ func (a *App) ExportActiveTheme(dstPath string) error {
 		return fmt.Errorf("failed to load settings: %w", err)
 	}
 	return themes.ExportThemeToPath(a.themesDir(), settings.ActiveTheme, dstPath)
+}
+
+// templatesDir returns the on-disk user-template directory, mirroring themesDir.
+// Returns "" when no vault is open (the embedded set is still served).
+func (a *App) templatesDir() string {
+	if a.vaultPath == "" {
+		return ""
+	}
+	return filepath.Join(a.vaultPath, ".system", "templates")
+}
+
+// ListTemplates enumerates available templates (on-disk user templates + the
+// embedded first-class set, deduped with on-disk winning) and any per-file
+// load errors. Works before a vault is open (returns just the embedded set,
+// mirroring ListThemes).
+func (a *App) ListTemplates() (*templates.ListTemplatesResult, error) {
+	return templates.ListTemplates(a.templatesDir())
+}
+
+// GetTemplate resolves a single template by id (on-disk then embedded) and
+// returns the full Template including Body. Used by the picker to render a
+// live preview + drive the placeholder form. Returns a user-facing error when
+// the id is on neither tier.
+func (a *App) GetTemplate(id string) (templates.Template, error) {
+	if id == "" {
+		return templates.Template{}, fmt.Errorf("template id is required")
+	}
+	t, err := templates.CachedGetTemplate(a.templatesDir(), id)
+	if err != nil {
+		return templates.Template{}, err
+	}
+	return *t, nil
+}
+
+// RenderTemplate renders the template with the given id, substituting the four
+// default placeholders (date/time/iso_date/weekday from the current local time)
+// plus any caller-supplied vars. Smart-graph syntax ({{embed:uuid}}, ((uuid)))
+// passes through untouched. Non-fatal warnings (unknown placeholders) are
+// logged, not returned — Wails exposes only the first non-error return value,
+// and the picker preview intentionally ignores forward-compat warnings.
+func (a *App) RenderTemplate(id string, vars map[string]string) (string, error) {
+	if id == "" {
+		return "", fmt.Errorf("template id is required")
+	}
+	t, err := templates.CachedGetTemplate(a.templatesDir(), id)
+	if err != nil {
+		return "", err
+	}
+	rendered, warnings := templates.Render(t, vars, templates.RenderOptions{})
+	for _, w := range warnings {
+		log.Printf("templates: RenderTemplate(%q) warning: %s", id, w)
+	}
+	return rendered, nil
+}
+
+// SaveUserTemplate validates t, rejects any builtin:// id (read-only), and
+// writes the canonical form atomically to <vault>/.system/templates/<id>.md.
+// The template watcher's self-write window is armed so the resulting fsnotify
+// events do not trigger a redundant reload. Emits templates:changed so the
+// picker re-lists immediately. Mirrors App.ImportTheme.
+func (a *App) SaveUserTemplate(t templates.Template) error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	if a.templateWatcher != nil {
+		a.templateWatcher.RegisterSelfWrite()
+	}
+	if err := templates.SaveTemplate(a.templatesDir(), &t); err != nil {
+		log.Printf("templates: SaveUserTemplate(%q) failed: %v", t.ID, err)
+		return err
+	}
+	templates.InvalidateTemplateCache(t.ID)
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "templates:changed", struct{}{})
+	}
+	log.Printf("templates: SaveUserTemplate → saved %q", t.ID)
+	return nil
+}
+
+// DeleteUserTemplate removes the on-disk user template with the given id.
+// Builtin ids are rejected (read-only). Emits templates:changed. Idempotent
+// (deleting an already-deleted template is a no-op success).
+func (a *App) DeleteUserTemplate(id string) error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	if a.templateWatcher != nil {
+		a.templateWatcher.RegisterSelfWrite()
+	}
+	if err := templates.DeleteTemplate(a.templatesDir(), id); err != nil {
+		log.Printf("templates: DeleteUserTemplate(%q) failed: %v", id, err)
+		return err
+	}
+	templates.InvalidateTemplateCache(id)
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "templates:changed", struct{}{})
+	}
+	log.Printf("templates: DeleteUserTemplate → removed %q", id)
+	return nil
+}
+
+// ReloadTemplates forces a re-scan of the templates directory + cache flush.
+// Used by the template watcher's onChange callback (external edit detected) and
+// available as a manual refresh affordance. Emits templates:changed.
+func (a *App) ReloadTemplates() error {
+	templates.InvalidateTemplateCache()
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "templates:changed", struct{}{})
+	}
+	return nil
+}
+
+// CreatePageFromTemplate creates a new page pre-filled with a rendered
+// template's body. It composes with the existing CreatePage write path: render
+// the template, prepend the standard frontmatter (SPECS §3.3), write atomically
+// (temp + rename, SPECS §7.1) under the file-write lock + self-write tracker,
+// and index the resulting blocks via ParseFileContent so task/embed/tag
+// pipelines pick them up immediately. Returns the resolved date string.
+func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateID string, vars map[string]string) (string, error) {
+	if a.vaultPath == "" || a.db == nil {
+		return "", fmt.Errorf("vault not loaded")
+	}
+	if templateID == "" {
+		return "", fmt.Errorf("template id is required")
+	}
+	t, err := templates.CachedGetTemplate(a.templatesDir(), templateID)
+	if err != nil {
+		return "", err
+	}
+	rendered, warnings := templates.Render(t, vars, templates.RenderOptions{})
+	for _, w := range warnings {
+		log.Printf("templates: CreatePageFromTemplate(%q) warning: %s", templateID, w)
+	}
+
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection := sanitizePathSegment(section)
+	safePage := sanitizePathSegment(page)
+	if safeNotebook == "" || safePage == "" {
+		return "", fmt.Errorf("notebook and page names are required (section is optional)")
+	}
+	safeDate := sanitizePathSegment(dateStr)
+	if safeDate == "" {
+		safeDate = time.Now().Format("2006-01-02")
+	}
+
+	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
+	if !isPathWithinVault(filePath, a.vaultPath) {
+		return "", fmt.Errorf("path escapes vault")
+	}
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return "", fmt.Errorf("failed to create parent directory: %w", err)
+	}
+	if _, err := os.Stat(filePath); err == nil {
+		return safeDate, nil // already exists — don't clobber
+	}
+
+	scaffoldFrontmatter := fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
+		strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeDate))
+	content := scaffoldFrontmatter + rendered
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var writeErr error
+	a.coordinator.LockFileWrite(filePath, func() {
+		a.tracker.RegisterWrite(filePath)
+		if err := parser.WriteFileAtomic(filePath, []byte(content)); err != nil {
+			writeErr = err
+			return
+		}
+		blocks, meta, _, _, perr := parser.ParseFileContent(content, safeNotebook, safeSection, safePage, safeDate, a.spacesPerTab)
+		if perr == nil {
+			var idxErr error
+			a.coordinator.WithDBWrite(func() {
+				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
+			})
+			if idxErr != nil {
+				log.Printf("CreatePageFromTemplate: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
+			}
+		}
+	})
+	if writeErr != nil {
+		return "", fmt.Errorf("failed to write templated page: %w", writeErr)
+	}
+	return safeDate, nil
 }
 
 
