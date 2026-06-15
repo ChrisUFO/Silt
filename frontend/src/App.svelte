@@ -3,7 +3,9 @@
   import {
     IsVaultInitialized,
     InitializeVault,
-    CloseVault
+    CloseVault,
+    GetSidebarWidth,
+    SetSidebarWidth
   } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
   import { fade } from 'svelte/transition'
@@ -26,6 +28,7 @@
   import { initTemplates } from './templates/store.svelte'
   import TemplatePicker from './templates/TemplatePicker.svelte'
   import { matchHotkey } from './settings/hotkeys'
+  import SidebarResizeHandle from './components/SidebarResizeHandle.svelte'
   import logo from './assets/logo.svg'
 
   let isInitialized = $state(false)
@@ -40,6 +43,9 @@
 
   // Shell state
   let sidebarCollapsed = $state(false)
+  let sidebarWidth = $state(256)
+  let manuallyCollapsed = $state(false)
+  let sidebarDragging = $state(false)
   let showSearch = $state(false)
   let showSettings = $state(false)
   let settingsTab = $state('general')
@@ -76,6 +82,13 @@
           console.error('Plugin load failed:', e)
         )
       })
+
+    // Load the persisted sidebar width from config.yaml (#63).
+    GetSidebarWidth()
+      .then((px) => {
+        sidebarWidth = px
+      })
+      .catch(() => {})
     // Subscribe to config hot-reload (config:changed from Go) so the settings
     // store refreshes on external edits to .system/config.yaml.
     initConfigHotReload()
@@ -129,6 +142,7 @@
       if (matchHotkey(e, hotkeys.toggle_sidebar)) {
         e.preventDefault()
         sidebarCollapsed = !sidebarCollapsed
+        manuallyCollapsed = sidebarCollapsed
       }
       if (matchHotkey(e, hotkeys.cycle_view_layout)) {
         e.preventDefault()
@@ -274,6 +288,31 @@
     activeFocusedBlockAncestors = []
   }
 
+  // Sidebar resize handlers (#63).
+  const MIN_MAIN_WIDTH = 480
+
+  function handleSidebarWidthChange(px: number) {
+    sidebarWidth = px
+  }
+
+  let setSidebarTimer: ReturnType<typeof setTimeout> | null = null
+  function handleSidebarWidthCommit(px: number) {
+    sidebarWidth = px
+    if (setSidebarTimer) clearTimeout(setSidebarTimer)
+    setSidebarTimer = setTimeout(() => {
+      SetSidebarWidth(px).catch((e) =>
+        console.error('SetSidebarWidth failed:', e)
+      )
+    }, 250)
+  }
+
+  function handleSidebarDragStart() {
+    sidebarDragging = true
+  }
+  function handleSidebarDragEnd() {
+    sidebarDragging = false
+  }
+
   // SearchModal returns a flat result object; adapt it to the 5-arg jump.
   function handleSearchResultJump(res: any) {
     handleSearchJump(res.notebook, res.section, res.page, res.file_date, res.id)
@@ -351,6 +390,7 @@
     <TitleBar
       bind:activeView
       bind:sidebarCollapsed
+      {sidebarWidth}
       onSearchClick={() => (showSearch = true)}
       onOpenSettings={(tab) => openSettings(tab)}
     />
@@ -358,7 +398,10 @@
     <div class="flex mt-14 h-[calc(100vh-56px)] w-full relative">
       {#if sidebarCollapsed}
         <button
-          onclick={() => (sidebarCollapsed = false)}
+          onclick={() => {
+            sidebarCollapsed = false
+            manuallyCollapsed = false
+          }}
           transition:fade={{ duration: 150 }}
           aria-label="Show sidebar"
           title="Show sidebar (Ctrl+B)"
@@ -376,6 +419,8 @@
         bind:activePage
         bind:activeView
         bind:collapsed={sidebarCollapsed}
+        {sidebarWidth}
+        {sidebarDragging}
         onSelectNotebook={(nb) => (activeNotebook = nb)}
         onSelectSection={(sec) => (activeSection = sec)}
         onSelectPage={(nb, sec, pg) => {
@@ -386,6 +431,14 @@
         onSelectView={(v) => (activeView = v)}
         onCloseVault={handleChangeVault}
       />
+
+      {#if !sidebarCollapsed}
+        <SidebarResizeHandle
+          width={sidebarWidth}
+          onWidthChange={handleSidebarWidthChange}
+          onWidthCommit={handleSidebarWidthCommit}
+        />
+      {/if}
 
       <!-- Content viewport -->
       <div

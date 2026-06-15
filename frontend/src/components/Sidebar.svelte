@@ -30,6 +30,8 @@
     activePage: string
     activeView: string
     collapsed: boolean
+    sidebarWidth?: number
+    sidebarDragging?: boolean
     onSelectNotebook: (notebook: string) => void
     onSelectSection: (section: string) => void
     onSelectPage: (notebook: string, section: string, page: string) => void
@@ -43,6 +45,8 @@
     activePage = $bindable(),
     activeView = $bindable(),
     collapsed = $bindable(),
+    sidebarWidth = 256,
+    sidebarDragging = false,
     onSelectNotebook,
     onSelectSection,
     onSelectPage,
@@ -249,11 +253,11 @@
 </script>
 
 <aside
-  class="bg-bg-surface border-r border-border-muted flex flex-col py-[4px] h-full transition-all duration-200 ease-out flex-shrink-0 select-none z-40"
-  class:w-64={!collapsed}
-  class:w-0={collapsed}
-  class:overflow-hidden={collapsed}
-  class:border-r-0={collapsed}
+  class="bg-bg-surface border-r border-border-muted flex flex-col py-[4px] h-full flex-shrink-0 select-none z-40"
+  style:width={collapsed ? '0px' : sidebarWidth + 'px'}
+  style:transition={sidebarDragging ? 'none' : 'all 200ms ease-out'}
+  style:overflow={collapsed ? 'hidden' : 'visible'}
+  style:border-right={collapsed ? '0' : '1px solid var(--border-muted)'}
 >
   <div
     class="px-3 py-3 flex flex-col gap-1 relative flex-1 overflow-hidden flex"

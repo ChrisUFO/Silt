@@ -11,6 +11,7 @@
   interface Props {
     activeView: string
     sidebarCollapsed: boolean
+    sidebarWidth?: number
     onSearchClick: () => void
     onOpenSettings: (tab?: string) => void
   }
@@ -18,6 +19,7 @@
   let {
     activeView = $bindable(),
     sidebarCollapsed = $bindable(),
+    sidebarWidth = 256,
     onSearchClick,
     onOpenSettings
   }: Props = $props()
@@ -67,8 +69,8 @@
   <div class="flex items-center min-w-0 h-full">
     <!-- Brand strip aligns over the sidebar; collapses when sidebar does -->
     <div
-      class="flex items-center gap-2 h-full flex-shrink-0 transition-all duration-200 ease-out"
-      class:w-64={!sidebarCollapsed}
+      class="flex items-center gap-2 h-full flex-shrink-0 transition-all duration-200 ease-out overflow-hidden"
+      style:width={sidebarCollapsed ? '0px' : sidebarWidth + 'px'}
       class:px-4={!sidebarCollapsed}
       class:px-3={sidebarCollapsed}
     >
