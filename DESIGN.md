@@ -117,7 +117,7 @@ Silt ships a curated set of first-class themes alongside the default. Each is a 
 | Stark | `silt-stark` | High-contrast / accessibility (WCAG AAA): pure black/white extremes, gold + cyan. |
 | Graphite | `silt-graphite` | Calm monochrome dark: cool near-blacks, a single restrained blue accent, neutral-steel secondary. |
 
-Every first-class theme ships both dark and light variants and the default `typography` block (Plus Jakarta Sans / JetBrains Mono / Hanken Grotesk). The palettes below document the design intent; the authoritative source for each value is the JSON in `backend/themes/themes/` (the contrast harness in `backend/themes/contrast_test.go` guards WCAG for every mode variant).
+Every first-class theme ships both dark and light variants and its own `typography` pairing: Cyber Forest (Plus Jakarta Sans / JetBrains Mono / Hanken Grotesk — the default), Terra Noir (Source Serif 4 / IBM Plex Mono / Newsreader — warm editorial), Linen (Mulish / Fira Code / Sora — soft clean), Stark (Atkinson Hyperlegible / Geist Mono — the Braille Institute low-vision font, for the AAA theme), Graphite (Geist / Geist Mono / Schibsted Grotesk — developer aesthetic). The palettes below document the color design intent; the authoritative source for each value is the JSON in `backend/themes/themes/` (the contrast harness in `backend/themes/contrast_test.go` guards WCAG for every mode variant).
 
 2.2.1 Terra Noir — warm dark earth
 

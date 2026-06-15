@@ -5,9 +5,9 @@
   "author": "System Designer",
   "description": "High-contrast / accessibility theme (WCAG AAA): pure black/white extremes with gold and cyan accents.",
   "typography": {
-    "font_family": "'Plus Jakarta Sans', sans-serif",
-    "mono_font_family": "'JetBrains Mono', monospace",
-    "headline_font": "'Hanken Grotesk', sans-serif"
+    "font_family": "'Atkinson Hyperlegible', sans-serif",
+    "mono_font_family": "'Geist Mono', monospace",
+    "headline_font": "'Atkinson Hyperlegible', sans-serif"
   },
   "modes": {
     "dark": {

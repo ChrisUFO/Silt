@@ -14,7 +14,7 @@
     OnFileDropOff
   } from '../../../wailsjs/runtime/runtime.js'
   import { injectTokens } from '../../theme/inject'
-  import { displayNameForCssFamily } from '../../theme/fonts'
+  import { displayFamilyName } from '../../theme/fonts'
   import {
     applyTheme,
     clearStatus,
@@ -278,13 +278,13 @@
         {#each themeTypographyOverrides as o (o.label)}
           <span class="text-text-primary text-[12px] font-body-md">
             <span class="text-text-muted">{o.label}:</span>
-            {displayNameForCssFamily(o.value)}
+            {displayFamilyName(o.value)}
           </span>
         {/each}
       </div>
       <p class="text-text-muted text-[11px] font-label-sm mt-2">
-        Override them in General, or use "Reset to theme default" there to
-        inherit these.
+        Body and Mono can be overridden in General (or reset there to inherit
+        these). Headline is set by the theme only.
       </p>
     </section>
   {/if}

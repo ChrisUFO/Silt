@@ -5,9 +5,9 @@
   "author": "System Designer",
   "description": "Clean, easy-on-the-eyes paper palette with soft slate-blue and muted lilac accents.",
   "typography": {
-    "font_family": "'Plus Jakarta Sans', sans-serif",
-    "mono_font_family": "'JetBrains Mono', monospace",
-    "headline_font": "'Hanken Grotesk', sans-serif"
+    "font_family": "'Mulish', sans-serif",
+    "mono_font_family": "'Fira Code', monospace",
+    "headline_font": "'Sora', sans-serif"
   },
   "modes": {
     "dark": {

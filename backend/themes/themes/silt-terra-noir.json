@@ -5,9 +5,9 @@
   "author": "System Designer",
   "description": "Dark earth palette: warm near-black canvas with clay primary and moss secondary accents.",
   "typography": {
-    "font_family": "'Plus Jakarta Sans', sans-serif",
-    "mono_font_family": "'JetBrains Mono', monospace",
-    "headline_font": "'Hanken Grotesk', sans-serif"
+    "font_family": "'Source Serif 4', serif",
+    "mono_font_family": "'IBM Plex Mono', monospace",
+    "headline_font": "'Newsreader', serif"
   },
   "modes": {
     "dark": {

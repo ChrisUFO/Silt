@@ -5,9 +5,9 @@
   "author": "System Designer",
   "description": "A calm monochrome dark: cool near-black canvas with a single restrained blue accent.",
   "typography": {
-    "font_family": "'Plus Jakarta Sans', sans-serif",
-    "mono_font_family": "'JetBrains Mono', monospace",
-    "headline_font": "'Hanken Grotesk', sans-serif"
+    "font_family": "'Geist', sans-serif",
+    "mono_font_family": "'Geist Mono', monospace",
+    "headline_font": "'Schibsted Grotesk', sans-serif"
   },
   "modes": {
     "dark": {

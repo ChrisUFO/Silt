@@ -1,5 +1,5 @@
 // Registry invariants for the preloaded font picker (#82). The registry is
-// the single source of truth for both the General-tab <select> and the
+// the single source of truth for both the General-tab picker and the
 // Appearance-tab typography indicator, so its shape is pinned here: the
 // defaults exist, system fallbacks exist, ids are unique, and the helper
 // selectors return the right slices.
@@ -17,19 +17,27 @@ import {
 } from './fonts'
 
 describe('font registry (#82)', () => {
-  it('includes the curated sans/mono/display families plus system fallbacks', () => {
+  it('bundles the full ~26-family set across sans/mono/display/serif + system fallbacks', () => {
     const ids = new Set(FONT_REGISTRY.map((f) => f.id))
-    // Sans body fonts (issue #82 minimum set).
-    for (const id of ['plus-jakarta-sans', 'inter', 'lexend', 'work-sans', 'manrope']) {
-      expect(ids.has(id), `expected ${id}`).toBe(true)
+    const bundled = FONT_REGISTRY.filter((f) => f.source === 'bundled')
+    // 26 bundled families (12 sans + 6 mono + 4 display + 4 serif).
+    expect(bundled).toHaveLength(26)
+    expect(bundledByCategory('sans')).toHaveLength(12)
+    expect(bundledByCategory('mono')).toHaveLength(6)
+    expect(bundledByCategory('display')).toHaveLength(4)
+    expect(bundledByCategory('serif')).toHaveLength(4)
+    // A representative sample from each category is present.
+    for (const id of ['plus-jakarta-sans', 'inter', 'geist', 'atkinson-hyperlegible', 'dm-sans']) {
+      expect(ids.has(id), `expected sans ${id}`).toBe(true)
     }
-    // Monospace fonts.
-    for (const id of ['jetbrains-mono', 'fira-code', 'ibm-plex-mono', 'space-mono']) {
-      expect(ids.has(id), `expected ${id}`).toBe(true)
+    for (const id of ['jetbrains-mono', 'geist-mono', 'martian-mono']) {
+      expect(ids.has(id), `expected mono ${id}`).toBe(true)
     }
-    // Display / headline fonts.
-    for (const id of ['hanken-grotesk', 'sora', 'bricolage-grotesque']) {
-      expect(ids.has(id), `expected ${id}`).toBe(true)
+    for (const id of ['hanken-grotesk', 'schibsted-grotesk', 'bricolage-grotesque']) {
+      expect(ids.has(id), `expected display ${id}`).toBe(true)
+    }
+    for (const id of ['source-serif-4', 'newsreader', 'lora', 'crimson-pro']) {
+      expect(ids.has(id), `expected serif ${id}`).toBe(true)
     }
     // System fallbacks are always present (offline).
     for (const id of ['system-ui', 'sans-serif', 'monospace']) {
@@ -50,6 +58,24 @@ describe('font registry (#82)', () => {
     expect(headline?.source).toBe('bundled')
   })
 
+  it('the first-class theme pairings are all bundled (so every theme renders out of box)', () => {
+    // Terra Noir: Source Serif 4 / IBM Plex Mono / Newsreader
+    // Linen: Mulish / Fira Code / Sora
+    // Stark: Atkinson Hyperlegible / Geist Mono
+    // Graphite: Geist / Geist Mono / Schibsted Grotesk
+    const requiredCssFamilies = [
+      'Source Serif 4', 'IBM Plex Mono', 'Newsreader',
+      'Mulish', 'Fira Code', 'Sora',
+      'Atkinson Hyperlegible', 'Geist Mono',
+      'Geist', 'Schibsted Grotesk'
+    ]
+    for (const family of requiredCssFamilies) {
+      const entry = findByCssFamily(family)
+      expect(entry, `theme-pairing family ${family} missing from registry`).toBeDefined()
+      expect(entry?.source, `${family} must be bundled`).toBe('bundled')
+    }
+  })
+
   it('has unique ids and a non-empty cssFamily per entry', () => {
     const seen = new Set<string>()
     for (const f of FONT_REGISTRY) {
@@ -61,18 +87,14 @@ describe('font registry (#82)', () => {
   })
 
   it('bundledByCategory returns only bundled entries of that category', () => {
-    const sans = bundledByCategory('sans')
-    const mono = bundledByCategory('mono')
-    const display = bundledByCategory('display')
-    expect(sans.every((f) => f.source === 'bundled' && f.category === 'sans')).toBe(true)
-    expect(mono.every((f) => f.source === 'bundled' && f.category === 'mono')).toBe(true)
-    expect(display.every((f) => f.source === 'bundled' && f.category === 'display')).toBe(true)
-    // System fallbacks are never returned by bundledByCategory.
-    expect(sans.some((f) => f.source === 'system')).toBe(false)
-    // Each category has at least one bundled family.
-    expect(sans.length).toBeGreaterThan(0)
-    expect(mono.length).toBeGreaterThan(0)
-    expect(display.length).toBeGreaterThan(0)
+    for (const category of ['sans', 'mono', 'display', 'serif'] as const) {
+      const entries = bundledByCategory(category)
+      expect(entries.every((f) => f.source === 'bundled' && f.category === category)).toBe(true)
+      // System fallbacks are never returned by bundledByCategory.
+      expect(entries.some((f) => f.source === 'system')).toBe(false)
+      // Each category has at least one bundled family.
+      expect(entries.length, `${category} should have bundled entries`).toBeGreaterThan(0)
+    }
   })
 
   it('systemFonts returns only system-source entries', () => {
@@ -83,8 +105,8 @@ describe('font registry (#82)', () => {
 
   it('displayNameForCssFamily falls back to the raw value for unknown families', () => {
     expect(displayNameForCssFamily('Plus Jakarta Sans')).toBe('Plus Jakarta Sans')
-    // A hand-edited config value not in the registry is shown verbatim
-    // (the picker never blanks a value it doesn't curate).
+    // A hand-edited config value / extension-pack font not in the registry is
+    // shown verbatim (the picker never blanks a value it doesn't curate).
     expect(displayNameForCssFamily('Some Custom Font')).toBe('Some Custom Font')
   })
 })
