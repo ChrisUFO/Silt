@@ -8,6 +8,32 @@ import (
 	"strings"
 )
 
+// IsValidThemeID reports whether id is a safe component for a theme
+// filename. The id flows into filepath.Join(themesDir, id+".json") on
+// the launch path, so it must not contain path-separator, parent-dir,
+// or NUL characters that could let a user-controlled active_theme
+// resolve a file outside the themes dir (CWE-22). The set of valid
+// characters is intentionally narrow ([a-z0-9_-]); the embedded
+// first-class ids (silt-stark, silt-graphite, …) and the legacy
+// underscored forms (cyber_forest, terra_noir) both fit, and any
+// future id should follow the same convention so it can be round-
+// tripped through a single filename without escaping.
+func IsValidThemeID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, c := range id {
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= '0' && c <= '9':
+		case c == '-' || c == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // SupportedSchemaVersion is the canonical theme schema version this build
 // understands. Themes carrying a different version are parsed structurally
 // rather than rejected outright, so a forward-versioned theme whose token

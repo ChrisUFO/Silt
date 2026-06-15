@@ -2,8 +2,10 @@ package vault
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"silt/backend/themes"
@@ -219,6 +221,40 @@ func TestScaffoldVault_ThemesIdempotent(t *testing.T) {
 	}
 	if string(got) != sentinel {
 		t.Errorf("ScaffoldVault overwrote an existing user theme; expected sentinel to survive")
+	}
+}
+
+// TestScaffoldVault_ThemeStatErrorPropagates: a stat failure on a
+// scaffolded theme that is not "not exist" (e.g. permission denied on
+// the themes directory) must surface to the caller rather than being
+// silently swallowed. The user has no other way to know the themes
+// dir is in a broken state otherwise.
+func TestScaffoldVault_ThemeStatErrorPropagates(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits are bypassed for root; stat always succeeds")
+	}
+	vaultPath := t.TempDir()
+	// Pre-scaffold so .system/themes exists with real files, then
+	// revoke all perms on the themes dir so the loop's stat fails
+	// with EACCES (a non-IsNotExist error).
+	if err := ScaffoldVault(vaultPath); err != nil {
+		t.Fatalf("ScaffoldVault setup: %v", err)
+	}
+	themesDir := filepath.Join(vaultPath, ".system", "themes")
+	if err := os.Chmod(themesDir, 0o000); err != nil {
+		t.Fatalf("chmod themes dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(themesDir, 0o755) })
+
+	err := ScaffoldVault(vaultPath)
+	if err == nil {
+		t.Fatal("ScaffoldVault: expected error for unreadable themes dir, got nil")
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		t.Errorf("ScaffoldVault: not-exist should be ignored, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "failed to stat theme") {
+		t.Errorf("ScaffoldVault: error %q should wrap the stat failure", err)
 	}
 }
 

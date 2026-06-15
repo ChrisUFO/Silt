@@ -204,10 +204,18 @@ plugins:
 	}
 	for fileName, raw := range themeFiles {
 		themePath := filepath.Join(vaultPath, ".system", "themes", fileName)
-		if _, err := os.Stat(themePath); os.IsNotExist(err) {
-			if err := os.WriteFile(themePath, raw, 0644); err != nil {
-				return fmt.Errorf("failed to write theme %s: %w", fileName, err)
+		if _, err := os.Stat(themePath); err != nil {
+			if os.IsNotExist(err) {
+				if err := os.WriteFile(themePath, raw, 0644); err != nil {
+					return fmt.Errorf("failed to write theme %s: %w", fileName, err)
+				}
+				continue
 			}
+			// Anything other than "not exist" (permission denied,
+			// I/O error, …) is a real fault that the user should
+			// see — silently skipping would leave a half-scaffolded
+			// themes dir with no surfaceable cause.
+			return fmt.Errorf("failed to stat theme %s: %w", fileName, err)
 		}
 	}
 

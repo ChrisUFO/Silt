@@ -51,6 +51,13 @@ func CachedThemeByID(themesDir, id string) (*Theme, error) {
 	if id == "" || id == DefaultThemeID {
 		return ParseDefault()
 	}
+	// Reject any id that would escape the themes dir if used as a
+	// filename component (CWE-22). An invalid id falls through to the
+	// embedded default rather than erroring — the active theme should
+	// never block the first paint of the app.
+	if !IsValidThemeID(id) {
+		return ParseDefault()
+	}
 	if themesDir == "" {
 		// No vault open yet: resolve a first-class id from embed so the
 		// pre-CSS paint matches the active theme rather than flashing the

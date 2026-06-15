@@ -62,6 +62,42 @@ func TestCachedThemeByID_EmptyThemesDirFallsBackToDefault(t *testing.T) {
 	}
 }
 
+// TestCachedThemeByID_RejectsPathTraversalIDs: ids containing path
+// separators, parent-dir references, or NUL must fall back to the
+// embedded default rather than constructing a path outside themesDir
+// (CWE-22). Each case is verified by placing a canary file at the
+// would-be traversal target; if the path-traversal was honoured the
+// canary would be loaded and the test would see its id.
+func TestCachedThemeByID_RejectsPathTraversalIDs(t *testing.T) {
+	themesDir := t.TempDir()
+	canaryDir := t.TempDir()
+	canaryID := "canary"
+	canaryPath := filepath.Join(canaryDir, canaryID+".json")
+	mustWriteTheme(t, filepath.Dir(canaryPath), filepath.Base(canaryPath), validCustomThemeJSON)
+
+	cases := []string{
+		"../" + filepath.Base(canaryDir) + "/" + canaryID, // escapes themesDir upward
+		canaryID + "/../" + canaryID,                      // uses separator + parent ref
+		"foo\\bar",                                        // backslash separator
+		canaryID + "\x00suffix",                           // NUL truncation attempt
+		"./" + canaryID,                                   // leading "./" — file is at id, not ./id
+	}
+	for _, id := range cases {
+		t.Run(id, func(t *testing.T) {
+			th, err := CachedThemeByID(themesDir, id)
+			if err != nil {
+				t.Fatalf("CachedThemeByID(%q): %v", id, err)
+			}
+			if th == nil || th.ID == canaryID {
+				t.Errorf("CachedThemeByID(%q) loaded the canary; path traversal succeeded (theme=%+v)", id, th)
+			}
+			if th.ID != DefaultThemeID {
+				t.Errorf("CachedThemeByID(%q) = %q, want default", id, th.ID)
+			}
+		})
+	}
+}
+
 func TestCachedThemeByID_LoadsFromDisk(t *testing.T) {
 	themesDir := t.TempDir()
 	src := filepath.Join(t.TempDir(), "src.json")
