@@ -115,9 +115,10 @@ log_info "Building frontend..."
 rm -rf "$ROOT/build/bin"
 
 # Running --nsis populates build/windows/ (icon.ico) and builds the binary.
-# We skip --clean to avoid wiping frontend/dist.
+# --clean forces a full Go recompile (clears the build cache) so a stale
+# embed or binary never ships. We skip wiping frontend/dist (done above).
 log_info "Building with Wails..."
-wails build --platform windows/amd64 --nsis
+wails build --platform windows/amd64 --nsis --clean
 
 BINARY="$ROOT/build/bin/${APP_NAME}.exe"
 if [ ! -f "$BINARY" ]; then
