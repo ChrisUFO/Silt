@@ -162,6 +162,12 @@
                 <div
                   class="group flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-bg-hover transition-colors cursor-pointer"
                   onclick={() => openItem(item)}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      openItem(item)
+                    }
+                  }}
                   role="button"
                   tabindex="0"
                 >

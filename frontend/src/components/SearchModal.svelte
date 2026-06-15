@@ -163,17 +163,21 @@
   })
 </script>
 
-<!-- Backdrop overlay -->
-<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-<div
-  onclick={onClose}
-  class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150] flex items-start justify-center pt-28"
->
+<!-- Positioning wrapper (scrim + dialog as siblings per SettingsShell pattern) -->
+<div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150] flex items-start justify-center pt-28">
+  <button
+    tabindex="-1"
+    aria-label="Close search"
+    onclick={onClose}
+    class="absolute inset-0 cursor-default border-none p-0 bg-transparent"
+  ></button>
   <!-- Modal Frame (Frosted Glass Panel) -->
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
-    onclick={(e) => e.stopPropagation()}
-    class="w-full max-w-2xl glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Search blocks"
+    tabindex="-1"
+    class="relative w-full max-w-2xl glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
     style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--bg-panel) 80%, transparent);"
   >
     <!-- Search Input Area -->

@@ -211,7 +211,6 @@
       onblur={handleTitleBlur}
       class="font-headline-lg text-headline-lg text-text-primary tracking-tight mb-1 outline-none rounded-sm transition-colors"
       style="border-bottom: 1px solid transparent; padding-bottom: 1px;"
-      role="textbox"
       aria-label="Page title"
     >{page}</h1>
     <p class="text-text-muted/60 text-sm font-body-sm">

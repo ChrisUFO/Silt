@@ -586,11 +586,12 @@
       </div>
 
       {#if showNotebookDropdown}
-        <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-        <div
+        <button
+          tabindex="-1"
+          aria-label="Close notebook menu"
           onclick={() => (showNotebookDropdown = false)}
-          class="fixed inset-0 z-[60]"
-        ></div>
+          class="fixed inset-0 z-[60] cursor-default border-none bg-transparent p-0"
+        ></button>
         <div
           class="absolute left-1 right-1 top-14 glass-palette border border-accent-primary-start/20 rounded-lg shadow-2xl z-[70] py-2 max-h-[60vh] overflow-y-auto custom-scrollbar"
           style="backdrop-filter: blur(16px); background: color-mix(in srgb, var(--bg-panel) 92%, transparent);"
@@ -742,6 +743,7 @@
               role="treeitem"
               tabindex="0"
               aria-expanded={isExpanded}
+              aria-selected={activeSection === sec.name}
             >
               <span
                 class="material-symbols-outlined text-text-muted text-[16px] transition-transform"
@@ -803,6 +805,7 @@
                       class:text-text-muted={!isActive}
                       class:hover:text-text-primary={!isActive}
                       role="treeitem"
+                      aria-selected={isActive}
                     >
                       {#if isActive}
                         <span
@@ -826,17 +829,23 @@
     </div>
   </div>
 
-  <!-- Inline create modal -->
+  <!-- Inline create/rename modal -->
   {#if createMode}
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <div
-      onclick={() => (createMode = '')}
       class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[160] flex items-start justify-center pt-32"
     >
-      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <button
+        tabindex="-1"
+        aria-label="Close dialog"
+        onclick={() => (createMode = '')}
+        class="absolute inset-0 cursor-default border-none bg-transparent p-0"
+      ></button>
       <div
-        onclick={(e) => e.stopPropagation()}
-        class="w-full max-w-md glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-label={editingMode === 'rename' ? `Rename ${createMode}` : `New ${createMode}`}
+        tabindex="-1"
+        class="relative w-full max-w-md glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
         style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--bg-panel) 90%, transparent);"
       >
         <div class="px-5 py-4 border-b border-border-muted">
@@ -928,18 +937,20 @@
 
 <!-- Context menu (#62) -->
 {#if contextMenu}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div
-    onclick={closeContextMenu}
-    oncontextmenu={(e) => { e.preventDefault(); closeContextMenu() }}
-    class="fixed inset-0 z-[180]"
-  >
+  <div class="fixed inset-0 z-[180]">
+    <button
+      tabindex="-1"
+      aria-label="Close context menu"
+      onclick={closeContextMenu}
+      oncontextmenu={(e) => { e.preventDefault(); closeContextMenu() }}
+      class="absolute inset-0 cursor-default border-none bg-transparent p-0"
+    ></button>
     <div
       class="fixed context-menu-card"
       style:left={contextMenu.x + 'px'}
       style:top={contextMenu.y + 'px'}
-      onclick={(e) => e.stopPropagation()}
       role="menu"
+      tabindex="-1"
       aria-label="Actions"
     >
       <button
@@ -966,18 +977,21 @@
 
 <!-- Delete confirmation dialog (#62) -->
 {#if deleteTarget}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
-    onclick={cancelDelete}
     class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[190] flex items-center justify-center"
   >
+    <button
+      tabindex="-1"
+      aria-label="Cancel delete"
+      onclick={cancelDelete}
+      class="absolute inset-0 cursor-default border-none bg-transparent p-0"
+    ></button>
     <div
       role="dialog"
       aria-modal="true"
       aria-label="Confirm delete"
       tabindex="-1"
-      onclick={(e) => e.stopPropagation()}
-      class="bg-bg-panel border border-border-active rounded-xl shadow-2xl max-w-sm w-full mx-4 overflow-hidden"
+      class="relative bg-bg-panel border border-border-active rounded-xl shadow-2xl max-w-sm w-full mx-4 overflow-hidden"
     >
       <div class="px-5 py-4 border-b border-border-muted">
         <h2 class="font-headline-md text-headline-md text-text-primary">
