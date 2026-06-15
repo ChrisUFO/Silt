@@ -13,20 +13,20 @@
 
 import { settings } from './store.svelte'
 import type { config } from '../../wailsjs/go/models.js'
+import { sanitizeFontFamilyCSS } from '../theme/sanitize'
 
 type EditorConfig = config.EditorConfig
 
 const STYLE_ID = 'silt-editor'
 
 /**
- * Strip characters that could break out of the CSS declaration context
- * (`:root{--name:value;...}`). Font-family values are free-form strings
- * from config.yaml with no Go-side sanitization; a value containing `;`,
- * `{`, or `}` would silently corrupt the injected style block, reverting
- * all editor typography to browser defaults with no error surface.
+ * Strip characters that could break out of the CSS declaration context when a
+ * font-family value is interpolated into `:root{--editor-font-family:value;}`.
+ * Delegates to the shared theme/sanitize util (single source of truth — the
+ * same defense is applied in the FontSelect combobox preview). Idempotent.
  */
 function sanitizeCSSValue(v: string): string {
-  return v.replace(/[;{}]/g, '')
+  return sanitizeFontFamilyCSS(v)
 }
 
 /**

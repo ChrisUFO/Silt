@@ -21,8 +21,8 @@ const mocks = vi.hoisted(() => ({
     id: 'cyber_forest',
     name: 'Cyber Forest',
     mode: 'dark' as 'dark' | 'light' | 'system',
-    darkTokens: { '--bg-void': '#0c0c0e' },
-    lightTokens: { '--bg-void': '#f8fafc' },
+    darkTokens: { '--bg-void': '#0c0c0e' } as Record<string, string>,
+    lightTokens: { '--bg-void': '#f8fafc' } as Record<string, string>,
     error: null as string | null
   },
   themesState: {
@@ -222,5 +222,33 @@ describe('AppearanceTab picker a11y (#50)', () => {
     await tick()
     // The active theme is restored (the $effect's else branch).
     expect(mocks.restoreActiveTheme).toHaveBeenCalled()
+  })
+
+  it('shows a theme-typography indicator when the active theme overrides fonts (#82)', () => {
+    // Give the active theme a typography block: the indicator derives from
+    // themeState.darkTokens '--font-*' keys (theme-level, both modes).
+    mocks.themeState.darkTokens = {
+      '--bg-void': '#0c0c0e',
+      '--font-body': "'Plus Jakarta Sans', sans-serif",
+      '--font-mono': "'JetBrains Mono', monospace",
+      '--font-headline': "'Hanken Grotesk', sans-serif"
+    }
+    render(AppearanceTab)
+
+    const heading = screen.getByRole('heading', { name: /Theme typography/i })
+    expect(heading).toBeInTheDocument()
+    // Each overridden slot is surfaced with a display name from the registry.
+    const region = heading.parentElement!
+    expect(region.textContent).toContain('Plus Jakarta Sans')
+    expect(region.textContent).toContain('JetBrains Mono')
+    expect(region.textContent).toContain('Hanken Grotesk')
+  })
+
+  it('hides the theme-typography indicator when the theme defines no fonts (#82)', () => {
+    // No '--font-*' tokens → no indicator section.
+    mocks.themeState.darkTokens = { '--bg-void': '#0c0c0e' }
+    render(AppearanceTab)
+
+    expect(screen.queryByRole('heading', { name: /Theme typography/i })).toBeNull()
   })
 })

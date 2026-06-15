@@ -18,9 +18,9 @@ Hairline Isolation: Visual boundaries use absolute $1\text{px}$ lines with dark 
 
 This token set maps directly to our Go configuration runtime and Svelte theme-injection components. These variables translate to dark/light-mode variables dynamically.
 
-2.1 Color Tokens Schema
+2.1 Color Tokens Schema (Cyber Forest — the default / primary theme)
 
-The canonical theme schema is modes-based (`modes.dark` / `modes.light`) with hue-agnostic **semantic accent tokens**. Components reference only the semantic accents (`--accent-primary-*` = the "go / done" hue, `--accent-secondary-*` = the "in progress" hue); each theme maps its concrete hues onto them. This is the single source of truth shared by the Go theme loader (`backend/themes`), the runtime CSS injector, and `cyber_forest.json`.
+The canonical theme schema is modes-based (`modes.dark` / `modes.light`) with hue-agnostic **semantic accent tokens**. Components reference only the semantic accents (`--accent-primary-*` = the "go / done" hue, `--accent-secondary-*` = the "in progress" hue); each theme maps its concrete hues onto them. This is the single source of truth shared by the Go theme loader (`backend/themes`), the runtime CSS injector, and `cyber_forest.json`. **Cyber Forest is the default and primary theme** (embedded as the guaranteed fallback); the additional first-class palettes in §2.2 are alternates.
 
 {
   "schema_version": "1.0.0",
@@ -103,6 +103,53 @@ The canonical theme schema is modes-based (`modes.dark` / `modes.light`) with hu
     }
   }
 }
+
+
+2.2 First-Class Theme Palettes
+
+Silt ships a curated set of first-class themes alongside the default. Each is a plain JSON file embedded in the binary (so it is always selectable, even before a vault exists or when the themes directory is wiped) and written to `<vault>/.system/themes/` by `ScaffoldVault` so it is editable on disk. All consume the same canonical schema and semantic accents from §2.1 — **no per-theme component code exists**; switching themes only changes the injected CSS custom-property values.
+
+| Theme | `id` | Character |
+| :--- | :--- | :--- |
+| Cyber Forest *(default / primary)* | `cyber_forest` | Ink-rich dark slate, surgical teal primary, indigo secondary. |
+| Terra Noir | `silt-terra-noir` | Warm dark earth: clay primary, moss secondary. |
+| Linen | `silt-linen` | Clean, easy-on-the-eyes paper: desaturated slate-blue + muted lilac. |
+| Stark | `silt-stark` | High-contrast / accessibility (WCAG AAA): pure black/white extremes, gold + cyan. |
+| Graphite | `silt-graphite` | Calm monochrome dark: cool near-blacks, a single restrained blue accent, neutral-steel secondary. |
+
+Every first-class theme ships both dark and light variants and its own `typography` pairing: Cyber Forest (Plus Jakarta Sans / JetBrains Mono / Hanken Grotesk — the default), Terra Noir (Source Serif 4 / IBM Plex Mono / Newsreader — warm editorial), Linen (Mulish / Fira Code / Sora — soft clean), Stark (Atkinson Hyperlegible / Geist Mono — the Braille Institute low-vision font, for the AAA theme), Graphite (Geist / Geist Mono / Schibsted Grotesk — developer aesthetic). The palettes below document the color design intent; the authoritative source for each value is the JSON in `backend/themes/themes/` (the contrast harness in `backend/themes/contrast_test.go` guards WCAG for every mode variant).
+
+2.2.1 Terra Noir — warm dark earth
+
+A dark earth palette: warm near-black canvas with **clay/terracotta** primary (selection guides, active focus, completed checks) and **moss** secondary (in-progress / DOING indicator, metadata chips). Intent: a warmer, organic counterpart to Cyber Forest's cool slate, for users who prefer earth tones over cyber neons.
+
+- Dark: `bg.void #100b07` (warm near-black); `text.primary #ece3d5` (warm white); `accent.primary #e07a3c → #b4421a` (clay); `accent.secondary #84a04a → #5e7d2f` (moss).
+- Light: `bg.void #f6efe4` (warm paper); `text.primary #2a2014`; `accent.primary #c2511f → #9a3a14`; `accent.secondary #5a7d2a → #44611d`.
+- Tuning: dark `text.muted #8a7860 → #a89478` to clear WCAG AA (4.5:1) on `bg.active` — the binding constraint in dark mode is muted text on the lightest dark surface.
+
+2.2.2 Linen — clean, easy-on-the-eyes paper
+
+A soft, low-chroma palette: warm paper neutrals in light mode and a gentle soft-charcoal dark. Every accent/status color is intentionally desaturated so the canvas never produces high-contrast chroma spikes. `primary` = muted **slate-blue**, `secondary` = muted **lilac**. Intent: long-session comfort — reduced glare vs. pure white, gentle dark mode that isn't the default's near-black.
+
+- Dark: `bg.void #1b1d20` (soft charcoal); `text.primary #e6e7ea`; `accent.primary #7fb3c4 → #5d97ab`; `accent.secondary #9a9ec9 → #7e83b5`.
+- Light: `bg.void #faf9f6` (warm paper, not pure white); `text.primary #2b2a27`; `accent.primary #4a8a9c → #3a7383`; `accent.secondary #686da3 → #565b8e`.
+- Tuning: dark `text.muted #82868d → #afb3bb` to clear AA on Linen's lighter dark surfaces.
+
+2.2.3 Stark — high-contrast / accessibility (WCAG AAA)
+
+A first-class accessibility theme targeting **WCAG 2.2 AAA** (≥7:1 body text). Pure black/white extremes (21:1), **border-led structure** (because the near-uniform background can't separate panels by fill alone), and maximum-visibility accents: **gold/amber** primary and **cyan** secondary. Intent: an out-of-box option for low-vision and bright-environment users, rather than relying on them authoring a custom theme.
+
+- Dark: `bg.void #000000`; `text.primary #ffffff` (21:1); `border.active #ffffff` / `border.focus #ffd400` (vivid gold focus rings); `accent.primary #ffd400 → #ffb800`; `accent.secondary #00e5ff → #00b8d4`.
+- Light: `bg.void #ffffff`; `text.primary #000000` (21:1); `border.active #000000` / `border.focus #0000cc`; `accent.primary #8a5a00 → #6f4800`; `accent.secondary #005f70 → #00475a`.
+- Exempt / decorative tokens (not WCAG-essential): the `*-glow` halos and `text.disabled`. Focus states are unmistakable in both modes (≥3:1 against adjacent colors per WCAG 2.4.11 / 1.4.11), asserted in the contrast harness.
+
+2.2.4 Graphite — calm monochrome / true-dark
+
+For users who find Cyber Forest *too colorful*. Graphite is **minimal-chroma dark**: cool near-blacks with a **single restrained blue** accent (the only color) and a **near-neutral steel** secondary that stays subdued yet visually distinct from primary. Intent: the "developer dark" / "dimmed" aesthetic — a calm, low-chroma surface. Comfortable AAA contrast, **not** the extreme contrast of Stark.
+
+- Dark: `bg.void #090a0c` (cool near-black); `text.primary #e6e8eb`; `accent.primary #7c93b8 → #5a7196` (restrained blue); `accent.secondary #9aa3ad → #6f7882` (neutral steel).
+- Light: `bg.void #f7f8f9`; `text.primary #181b1f`; `accent.primary #4a6184 → #374d6e`; `accent.secondary #6a737d → #525a63`.
+- Distinctness: primary (blue) and secondary (neutral steel) differ in both hue and chroma so go/done and in-progress never blur, while the overall surface stays calm and low-chroma.
 
 
 3. Typography & Spacing Rhythm

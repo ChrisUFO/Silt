@@ -1,0 +1,86 @@
+{
+  "schema_version": "1.0.0",
+  "id": "silt-linen",
+  "name": "Linen",
+  "author": "System Designer",
+  "description": "Clean, easy-on-the-eyes paper palette with soft slate-blue and muted lilac accents.",
+  "typography": {
+    "font_family": "'Mulish', sans-serif",
+    "mono_font_family": "'Fira Code', monospace",
+    "headline_font": "'Sora', sans-serif"
+  },
+  "modes": {
+    "dark": {
+      "bg": {
+        "void": "#1b1d20",
+        "surface": "#222529",
+        "panel": "#272a2e",
+        "hover": "#2f3337",
+        "active": "#373b40"
+      },
+      "border": {
+        "muted": "#2f3337",
+        "zinc": "#3a3f44",
+        "active": "#52595f",
+        "focus": "#6b747b"
+      },
+      "text": {
+        "primary": "#e6e7ea",
+        "muted": "#afb3bb",
+        "disabled": "#565a61"
+      },
+      "accent": {
+        "primary": {
+          "start": "#7fb3c4",
+          "end": "#5d97ab",
+          "glow": "rgba(125,179,196,0.12)"
+        },
+        "secondary": {
+          "start": "#9a9ec9",
+          "end": "#7e83b5",
+          "glow": "rgba(154,158,201,0.10)"
+        }
+      },
+      "status": {
+        "warn": "#e0b566",
+        "danger": "#d27878"
+      }
+    },
+    "light": {
+      "bg": {
+        "void": "#faf9f6",
+        "surface": "#ffffff",
+        "panel": "#f3f1ec",
+        "hover": "#e9e6dd",
+        "active": "#d8d4c8"
+      },
+      "border": {
+        "muted": "#e9e6dd",
+        "zinc": "#d8d4c8",
+        "active": "#b0a99b",
+        "focus": "#8a8270"
+      },
+      "text": {
+        "primary": "#2b2a27",
+        "muted": "#56544a",
+        "disabled": "#a59f8c"
+      },
+      "accent": {
+        "primary": {
+          "start": "#4a8a9c",
+          "end": "#3a7383",
+          "glow": "rgba(74,138,156,0.10)"
+        },
+        "secondary": {
+          "start": "#686da3",
+          "end": "#565b8e",
+          "glow": "rgba(104,109,163,0.08)"
+        }
+      },
+      "status": {
+        "warn": "#b08428",
+        "danger": "#b85555"
+      }
+    }
+  }
+}

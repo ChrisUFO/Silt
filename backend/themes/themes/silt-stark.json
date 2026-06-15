@@ -1,0 +1,86 @@
+{
+  "schema_version": "1.0.0",
+  "id": "silt-stark",
+  "name": "Stark",
+  "author": "System Designer",
+  "description": "High-contrast / accessibility theme (WCAG AAA): pure black/white extremes with gold and cyan accents.",
+  "typography": {
+    "font_family": "'Atkinson Hyperlegible', sans-serif",
+    "mono_font_family": "'Geist Mono', monospace",
+    "headline_font": "'Atkinson Hyperlegible', sans-serif"
+  },
+  "modes": {
+    "dark": {
+      "bg": {
+        "void": "#000000",
+        "surface": "#0a0a0a",
+        "panel": "#141414",
+        "hover": "#1f1f1f",
+        "active": "#2a2a2a"
+      },
+      "border": {
+        "muted": "#3d3d3d",
+        "zinc": "#5e5e5e",
+        "active": "#ffffff",
+        "focus": "#ffd400"
+      },
+      "text": {
+        "primary": "#ffffff",
+        "muted": "#d4d4d4",
+        "disabled": "#a8a8a8"
+      },
+      "accent": {
+        "primary": {
+          "start": "#ffd400",
+          "end": "#ffb800",
+          "glow": "rgba(255,212,0,0.20)"
+        },
+        "secondary": {
+          "start": "#00e5ff",
+          "end": "#00b8d4",
+          "glow": "rgba(0,229,255,0.18)"
+        }
+      },
+      "status": {
+        "warn": "#ff8c00",
+        "danger": "#ff4d6b"
+      }
+    },
+    "light": {
+      "bg": {
+        "void": "#ffffff",
+        "surface": "#ffffff",
+        "panel": "#ededed",
+        "hover": "#dcdcdc",
+        "active": "#c4c4c4"
+      },
+      "border": {
+        "muted": "#6e6e6e",
+        "zinc": "#4a4a4a",
+        "active": "#000000",
+        "focus": "#0000cc"
+      },
+      "text": {
+        "primary": "#000000",
+        "muted": "#2b2b2b",
+        "disabled": "#5a5a5a"
+      },
+      "accent": {
+        "primary": {
+          "start": "#8a5a00",
+          "end": "#6f4800",
+          "glow": "rgba(138,90,0,0.16)"
+        },
+        "secondary": {
+          "start": "#005f70",
+          "end": "#00475a",
+          "glow": "rgba(0,95,112,0.14)"
+        }
+      },
+      "status": {
+        "warn": "#9c5800",
+        "danger": "#b3000c"
+      }
+    }
+  }
+}

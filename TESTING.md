@@ -337,3 +337,73 @@ for the engine + picker UX. Sprint 7 adds:
    unchanged except the muted gray is one notch lighter (dark) / darker
    (light); no other token moved.
 
+# Sprint 8 — First-Class Themes (#42, #51, #82, #90)
+
+Sprint 8 ships four new first-class theme palettes (Terra Noir, Linen, Stark,
+Graphite), extends the embed from a single default to the full first-class set
+so every shipped palette is always selectable, and adds the preloaded font
+picker that makes theme typography actually render. The theme engine itself is
+unchanged (IPC contract, on-disk-wins dedup, `:root` injection runtime) —
+Sprint 8 is content + one bounded engine extension + one frontend feature.
+
+## Go coverage added this sprint
+
+| File | Tests | What is covered |
+|---|---|---|
+| `backend/themes/embed_test.go` (new) | `EmbeddedThemes_RosterAndValid` (5 ids + typography + both modes), `ParseEmbeddedByID` (each first-class id resolves; unknown/empty → false), `EmbeddedThemeFiles_UsedByScaffold` (one `<id>.json` per theme), `ListThemes_OnDiskDefaultWinsDedup` (on-disk cyber_forest source=disk + FlatTokens reflect disk), `ResolveActive_FirstClassEmbeddedOffDisk` (non-default id resolves from embed on empty dir; unknown → default), `CachedThemeByID_FirstClassEmbeddedOffDisk` (off-disk + pre-vault resolve; unknown → default), `EmbeddedThemes_DeterministicOrder` | The multi-theme embed extension: first-class set is always selectable + resolvable even on a wiped/existing vault |
+| `backend/themes/contrast_test.go` (+3) | `WCAG_FirstClassThemes_AllMeetsTargets` (primary ≥7:1, muted ≥4.5:1, accents ≥3:1 across all 5 backgrounds × both modes for the 4 new themes), `WCAG_Stark_FocusStatesUnmistakable` (border.focus ≥3:1 on all backgrounds, both modes — WCAG 2.4.11/1.4.11), `AccentDistinctness_AllFirstClassThemes` (primary vs secondary sRGB distance ≥30 so go/done and in-progress never blur) | WCAG matrix + Stark focus contract + accent distinctness for the first-class set |
+| `backend/themes/snapshot_test.go` (+1) | `FirstClassThemes_FlattenShape` (both modes flatten to exactly the 23-key canonical set incl. typography; the WCAG-tuned tokens pinned: terra-noir dark muted `#a89478`, linen dark muted `#afb3bb`) | Structural drift guard for the new themes (the default retains its full value-level golden snapshot) |
+| `backend/themes/themes_test.go` (updated) | `ListThemes_EmptyDir`/`_MissingDir`/`_EmptyPath` (now assert the full 5-theme embedded set with correct source labels), `ListThemes_OnDiskPlusMalformed` (custom + 5 embedded) | Updated for the multi-theme listing |
+| `backend/vault/vault_test.go` (+2) | `ScaffoldVault_WritesAllFirstClassThemes` (every embedded theme written), `ScaffoldVault_ThemesIdempotent` (a hand-edited sentinel survives a re-scaffold) | Scaffold writes the full first-class set without clobbering user edits |
+| `silt` (main, `app_themes_test.go` updated) | `GetActiveTheme_BeforeVaultOpen` (all 5 first-class ids present pre-vault), `ImportTheme_IPCValidationFailure` (rejected import adds nothing beyond the scaffolded set) | App-level listing/import accounting for the 5-theme set |
+
+WCAG tuning applied this sprint (same lesson as the default's light-muted):
+`modes.dark.text.muted` raised on the two themes whose lighter dark surfaces
+broke AA — Terra Noir `#8a7860 → #a89478`, Linen `#82868d → #afb3bb`. The
+default's full golden snapshot, the migration-invariant guard, and all
+Sprint 5/6/7 theme tests remain green and unchanged.
+
+## Frontend coverage added this sprint
+
+| File | Tests | What is covered |
+|---|---|---|
+| `frontend/src/theme/fonts.test.ts` (new, 6) | curated sans/mono/display set present, the three defaults are bundled, unique ids + non-empty cssFamily, `bundledByCategory`/`systemFonts` selectors, `displayNameForCssFamily` unknown-family fallback | The font-picker registry (single source of truth) |
+| `frontend/src/components/settings/AppearanceTab.test.ts` (+2 → 10) | theme-typography indicator renders when the active theme overrides fonts; hidden when it doesn't | The #82 override indicator |
+
+`npm test` now runs **34 vitest tests** across 5 files (was 26 across 4).
+`npm run check` reports **0 errors**. `npm run build` bundles the curated
+`@fontsource` families as self-hosted woff2 assets (offline; no runtime CDN).
+
+## Manual Verification Matrix (`wails dev`) — Sprint 8 deltas
+
+1. **First-class roster:** Settings → Appearance lists **five** themes
+   (Cyber Forest, Graphite, Linen, Stark, Terra Noir — alphabetical by name)
+   on a freshly scaffolded vault, each with its swatch pair.
+2. **Whole-shell restyle, no remounts:** cycle Default → Terra Noir → Linen
+   → Stark → Graphite (click or Arrow + Enter). Each repaints the titlebar,
+   check/guide-rail components, and focus rings in one paint frame — no
+   reload, no component remount, no console errors.
+3. **Dark/light in each theme:** toggle Dark → Light → System in every
+   theme; the canvas, text, and accents switch coherently. Graphite is
+   visibly calmer/lower-chroma than Cyber Forest; Stark is unmistakably
+   high-contrast with vivid gold focus rings.
+4. **Stark focus clarity:** tab through the sidebar/picker; focus rings are
+   unmistakable in both dark (gold on black) and light (blue on white).
+5. **Wiped-dir resilience:** delete `<vault>/.system/themes/*.json`; the
+   picker still lists all five (embedded fallback) and an active non-default
+   theme first-paints in its own `bg.void`, not the default's.
+6. **Font picker (Settings → General):** Font family + Monospace are
+   `<select>` dropdowns grouped Sans-serif / Display / Monospace / System;
+   each option renders in its own font. Selecting a font updates the editor
+   live (Save persists via the existing path). Bundled fonts render offline
+   (disable network, relaunch — Plus Jakarta Sans / JetBrains Mono still
+   apply, proving the @fontsource self-hosting).
+7. **Reset to theme default:** with Cyber Forest active (it defines
+   typography), each font field shows a "Reset to theme default" button;
+   clicking it clears the field and the dropdown shows "Theme default
+   (…)". Switch to a theme without a typography section (none shipped
+   currently — verify via a custom import) and the reset button is hidden.
+8. **Theme typography indicator (Settings → Appearance):** with an active
+   theme that defines fonts, a "Theme typography" section lists the
+   overridden Body/Mono/Headline families.
+

@@ -139,3 +139,79 @@ func titleCase(s string) string {
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
 }
+
+// expectedFlattenKeys is the complete set of CSS custom properties a theme
+// with the default typography block produces when flattened: 20 color tokens
+// + 3 typography tokens (--font-body/mono/headline). The default golden
+// snapshot above pins every VALUE of cyber_forest against this set; the
+// first-class shape guard below pins the SET (and the tuned tokens) for the
+// Sprint 8 additions.
+var expectedFlattenKeys = []string{
+	"--bg-void", "--bg-surface", "--bg-panel", "--bg-hover", "--bg-active",
+	"--border-muted", "--border-zinc", "--border-active", "--border-focus",
+	"--text-primary", "--text-muted", "--text-disabled",
+	"--accent-primary-start", "--accent-primary-end", "--accent-primary-glow",
+	"--accent-secondary-start", "--accent-secondary-end", "--accent-secondary-glow",
+	"--status-warn", "--status-danger",
+	"--font-body", "--font-mono", "--font-headline",
+}
+
+// TestFirstClassThemes_FlattenShape pins the structural contract for every
+// non-default first-class theme: both modes flatten to exactly the canonical
+// key set (no missing/extra tokens), the typography block is present, and the
+// specifically WCAG-tuned tokens hold their known-good values. The default has
+// a full value-level golden snapshot above; the new themes get shape + tuned-
+// token guards (the contrast harness covers WCAG drift on the rest).
+func TestFirstClassThemes_FlattenShape(t *testing.T) {
+	all, err := EmbeddedThemes()
+	if err != nil {
+		t.Fatalf("EmbeddedThemes: %v", err)
+	}
+	// Tuned tokens: values changed during Sprint 8 to clear the WCAG
+	// 5-background AA matrix. Pinning them here catches a regression of the
+	// fix with a precise message (the contrast test would also fail, but
+	// less specifically).
+	tuned := map[string]map[string]string{
+		"silt-terra-noir": {"dark|--text-muted": "#a89478"},
+		"silt-linen":      {"dark|--text-muted": "#afb3bb"},
+	}
+	for _, th := range all {
+		if th.ID == DefaultThemeID {
+			continue
+		}
+		if th.Typography == nil {
+			t.Errorf("%s: expected a typography block", th.ID)
+		}
+		for _, mode := range []string{"dark", "light"} {
+			flat := th.Flatten(mode)
+			if len(flat) != len(expectedFlattenKeys) {
+				got := make([]string, 0, len(flat))
+				for k := range flat {
+					got = append(got, k)
+				}
+				sort.Strings(got)
+				t.Errorf("%s [%s]: flatten produced %d keys, want %d: %v",
+					th.ID, mode, len(flat), len(expectedFlattenKeys), got)
+				continue
+			}
+			for _, k := range expectedFlattenKeys {
+				if _, ok := flat[k]; !ok {
+					t.Errorf("%s [%s]: missing token %s", th.ID, mode, k)
+				}
+			}
+			// Tuned-token pin.
+			if tt, ok := tuned[th.ID]; ok {
+				for key, want := range tt {
+					// key is "<mode>|<token>"
+					if strings.HasPrefix(key, mode+"|") {
+						tok := strings.TrimPrefix(key, mode+"|")
+						if got := flat[tok]; got != want {
+							t.Errorf("%s [%s]: tuned %s = %s, want %s (WCAG tuning regressed)",
+								th.ID, mode, tok, got, want)
+						}
+					}
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,86 @@
+{
+  "schema_version": "1.0.0",
+  "id": "silt-terra-noir",
+  "name": "Terra Noir",
+  "author": "System Designer",
+  "description": "Dark earth palette: warm near-black canvas with clay primary and moss secondary accents.",
+  "typography": {
+    "font_family": "'Source Serif 4', serif",
+    "mono_font_family": "'IBM Plex Mono', monospace",
+    "headline_font": "'Newsreader', serif"
+  },
+  "modes": {
+    "dark": {
+      "bg": {
+        "void": "#100b07",
+        "surface": "#17110b",
+        "panel": "#1d160f",
+        "hover": "#251c13",
+        "active": "#2d2217"
+      },
+      "border": {
+        "muted": "#241b12",
+        "zinc": "#332719",
+        "active": "#4d3a24",
+        "focus": "#6f5536"
+      },
+      "text": {
+        "primary": "#ece3d5",
+        "muted": "#a89478",
+        "disabled": "#564736"
+      },
+      "accent": {
+        "primary": {
+          "start": "#e07a3c",
+          "end": "#b4421a",
+          "glow": "rgba(224,122,60,0.15)"
+        },
+        "secondary": {
+          "start": "#84a04a",
+          "end": "#5e7d2f",
+          "glow": "rgba(132,160,74,0.12)"
+        }
+      },
+      "status": {
+        "warn": "#f0a823",
+        "danger": "#d83a3a"
+      }
+    },
+    "light": {
+      "bg": {
+        "void": "#f6efe4",
+        "surface": "#fbf6ec",
+        "panel": "#efe6d6",
+        "hover": "#e4d8c3",
+        "active": "#d2c2a4"
+      },
+      "border": {
+        "muted": "#e4d8c3",
+        "zinc": "#d2c2a4",
+        "active": "#a98e68",
+        "focus": "#7c6444"
+      },
+      "text": {
+        "primary": "#2a2014",
+        "muted": "#5a4a36",
+        "disabled": "#a08a6b"
+      },
+      "accent": {
+        "primary": {
+          "start": "#c2511f",
+          "end": "#9a3a14",
+          "glow": "rgba(194,81,31,0.12)"
+        },
+        "secondary": {
+          "start": "#5a7d2a",
+          "end": "#44611d",
+          "glow": "rgba(90,125,42,0.10)"
+        }
+      },
+      "status": {
+        "warn": "#b8791a",
+        "danger": "#bd3434"
+      }
+    }
+  }
+}

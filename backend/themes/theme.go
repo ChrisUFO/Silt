@@ -224,7 +224,7 @@ type ThemeInfo struct {
 	Author      string   `json:"author"`
 	Description string   `json:"description"`
 	Swatches    []string `json:"swatches"` // preview color hexes (primary/secondary start)
-	Source      string   `json:"source"`   // "disk" or "default" (embedded fallback)
+	Source      string   `json:"source"`   // "disk" (on-disk), "default" (embedded primary default), or "bundled" (an embedded non-default first-class theme)
 }
 
 // AsInfo converts a parsed Theme into the lightweight ThemeInfo, deriving

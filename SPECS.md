@@ -100,8 +100,12 @@ VaultRoot/
 │   │   ├── agenda/
 │   │   ├── calendar/
 │   │   └── kanban/
-│   └── themes/
-│       └── cyber_forest.json
+│   └── themes/                     ← first-class themes (embedded + scaffolded)
+│       ├── cyber_forest.json       ← the default / primary ("Refined Cyber-Ink")
+│       ├── silt-terra-noir.json    ← warm dark earth
+│       ├── silt-linen.json         ← clean paper
+│       ├── silt-stark.json         ← WCAG AAA high-contrast
+│       └── silt-graphite.json      ← calm monochrome dark
 ├── Work/                          ← Notebook
 │   ├── Inbox/                     ← Page directly under the Notebook (no section)
 │   │   └── 2026-06-13.md
@@ -309,7 +313,7 @@ To prevent styling stagnation, Silt provides a built-in user theme engine mappin
 
 Theme Files: Parsed dynamically from canonical modes-based JSON files inside `<vault>/.system/themes/`. Each theme carries a `schema_version`, `id`, `name`, an optional `typography` section, and a `modes.dark` / `modes.light` token set (bg, border, text, accent.primary / accent.secondary × start/end/glow, status). Accent tokens are hue-agnostic and semantic: components reference only `--accent-primary-*` / `--accent-secondary-*`, and each theme maps its concrete hues onto them. The optional `typography` section (theme-level, not per-mode) defines font-family choices (`font_family`, `mono_font_family`, `headline_font`) that are injected as `--font-body`, `--font-mono`, `--font-headline` CSS custom properties; the CSS classes use fallback chains (`var(--font-body, var(--editor-font-family), <hardcoded>)`) so themes without typography inherit the config-driven fonts. Typography values are validated via `isValidFontFamily` which rejects CSS-breaking characters as a sandbox defense.
 
-Default Theme: A canonical default theme (`cyber_forest`) is embedded in the Go binary (`backend/themes`, via `embed.FS`) so the app always has a guaranteed-correct fallback — it works before a vault exists, when the themes directory is empty/wiped, and when the active theme id is missing or invalid.
+Default Theme: A canonical default theme (`cyber_forest`) is embedded in the Go binary (`backend/themes`, via `embed.FS`) so the app always has a guaranteed-correct fallback — it works before a vault exists, when the themes directory is empty/wiped, and when the active theme id is missing or invalid. Since Sprint 8, the full **first-class set** is embedded (`themes/*.json`: Cyber Forest, Terra Noir, Linen, Stark, Graphite); `ListThemes` appends every embedded first-class theme (deduped — on-disk wins), and `ScaffoldVault` writes editable on-disk copies of all of them. `ResolveActive` / `CachedThemeByID` resolve a first-class id from the embed even when it is not on disk, so a non-default active theme no longer flashes the default palette on a wiped/existing vault.
 
 Mechanism: On startup the Go backend reads the active theme + mode from `AppSettings`, resolves the theme file (falling back to the embedded default), and exposes it over the Wails IPC bridge (`ListThemes` / `GetActiveTheme` / `ApplyTheme` / `ImportTheme` / `ExportActiveTheme` / `PickThemeFile`). A Svelte theme store receives the flattened token map and injects every token as a CSS custom property on `document.documentElement` by rewriting a single generated `:root { … }` style block — one DOM write, one recalc, same-tick repaint, no flicker. The `index.css :root` values are retained as startup fallbacks only, overridden once the IPC round-trip completes. The native webview `BackgroundColour` is resolved at launch from a process-local, mtime-aware theme cache (`themes.CachedThemeByID` in `backend/themes/cache.go`) so a non-default active theme's `bg.void` is used for the pre-CSS paint (#73); the cache falls back to the embedded default when no settings exist or the active id is invalid.
 

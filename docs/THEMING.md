@@ -35,8 +35,10 @@ Each accent is a **triple**: `start` / `end` (a gradient pair) plus `glow` (a tr
 | Theme | Status | Description |
 | :--- | :--- | :--- |
 | **Cyber Forest** *(the default, "Refined Cyber-Ink")* | Shipped | Ink-rich dark slate canvas, surgical teal primary, indigo secondary. Embedded in the app as the guaranteed fallback. |
-| Terra Noir | Planned (Sprint 8) | Dark earth palette. |
-| Linen | Planned (Sprint 8) | Clean light palette. |
+| Terra Noir | Shipped (Sprint 8) | Warm dark earth palette: clay primary, moss secondary. |
+| Linen | Shipped (Sprint 8) | Clean, easy-on-the-eyes paper palette: desaturated slate-blue + muted lilac. |
+| Stark | Shipped (Sprint 8) | High-contrast / accessibility (WCAG AAA): pure black/white extremes, gold + cyan. |
+| Graphite | Shipped (Sprint 8) | Calm monochrome dark: cool near-blacks, a single restrained blue accent. |
 
 > First-class themes are bundled and always selectable. The schema and everything in this guide applies equally to first-class and user-authored themes.
 

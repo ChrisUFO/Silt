@@ -14,6 +14,7 @@
     OnFileDropOff
   } from '../../../wailsjs/runtime/runtime.js'
   import { injectTokens } from '../../theme/inject'
+  import { displayFamilyName } from '../../theme/fonts'
   import {
     applyTheme,
     clearStatus,
@@ -179,6 +180,19 @@
 
   // --- Helpers -------------------------------------------------------------
 
+  // Active-theme typography overrides (theme-level; both modes carry the same
+  // --font-* values). When non-empty, the Appearance tab surfaces an indicator
+  // so the user knows the active theme is overriding their General-tab font
+  // choices, and the General tab shows a "Reset to theme default" affordance.
+  let themeTypographyOverrides = $derived.by(() => {
+    const tokens = themeState.darkTokens
+    const out: { label: string; value: string }[] = []
+    if (tokens['--font-body']) out.push({ label: 'Body', value: tokens['--font-body'] })
+    if (tokens['--font-mono']) out.push({ label: 'Mono', value: tokens['--font-mono'] })
+    if (tokens['--font-headline']) out.push({ label: 'Headline', value: tokens['--font-headline'] })
+    return out
+  })
+
   function handleImport() {
     void pickAndImportTheme()
   }
@@ -245,6 +259,35 @@
       change the active theme.
     </p>
   </section>
+
+  <!-- Active-theme typography overrides (#82) -->
+  {#if themeTypographyOverrides.length > 0}
+    <section aria-labelledby="typo-heading">
+      <h3
+        id="typo-heading"
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+      >
+        Theme typography
+      </h3>
+      <div
+        class="flex flex-wrap items-start gap-x-4 gap-y-1.5 bg-bg-surface border border-border-muted rounded-lg px-3 py-2.5"
+      >
+        <span class="text-text-muted text-[11px] font-label-sm">
+          This theme sets its own fonts:
+        </span>
+        {#each themeTypographyOverrides as o (o.label)}
+          <span class="text-text-primary text-[12px] font-body-md">
+            <span class="text-text-muted">{o.label}:</span>
+            {displayFamilyName(o.value)}
+          </span>
+        {/each}
+      </div>
+      <p class="text-text-muted text-[11px] font-label-sm mt-2">
+        Body and Mono can be overridden in General (or reset there to inherit
+        these). Headline is set by the theme only.
+      </p>
+    </section>
+  {/if}
 
   <!-- Theme list -->
   <section aria-labelledby="theme-heading">

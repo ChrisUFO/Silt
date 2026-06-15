@@ -203,3 +203,140 @@ func TestWCAG_DefaultTheme_MutedTextAA(t *testing.T) {
 		}
 	}
 }
+
+// --- First-class theme WCAG coverage (Sprint 8) ---------------------------
+//
+// The four new first-class themes (Terra Noir, Linen, Stark, Graphite) are
+// measured against the SAME matrix as the default: primary text >= 7:1 (AAA)
+// and muted text >= 4.5:1 (AA) on all five backgrounds in both modes, plus the
+// two accent starts >= 3:1 (AA non-text) on the canvas. The Sprint 7 harness
+// was designed so Sprint 8 "adds rows, not code" — these tests are those rows.
+//
+// text.disabled and the glow tokens are decorative/non-essential per WCAG and
+// are intentionally not asserted here (documented in DESIGN.md); only tokens
+// that carry meaning (body text, metadata text, focus/selection accents) are
+// guarded. Starter palettes from the issues were tuned where the 5-background
+// matrix caught a failure (the same lesson as the default's light-muted).
+
+// assertWCAG runs the full primary/muted/accent matrix for one theme across
+// both modes. Failure messages name the theme, mode, token, and the fix
+// direction so a failing palette is actionable.
+func assertWCAG(t *testing.T, th *Theme) {
+	t.Helper()
+	backgrounds := []string{"--bg-void", "--bg-surface", "--bg-panel", "--bg-hover", "--bg-active"}
+	for _, mode := range []string{"dark", "light"} {
+		flat := th.Flatten(mode)
+		for _, bg := range backgrounds {
+			if r := approxRatio(t, flat["--text-primary"], flat[bg]); r < 7.0 {
+				t.Errorf("%s [%s]: text.primary on %s = %.2f:1, want >= 7.1 (AAA)",
+					th.ID, mode, bg, r)
+			}
+			if r := approxRatio(t, flat["--text-muted"], flat[bg]); r < 4.5 {
+				t.Errorf("%s [%s]: text.muted on %s = %.2f:1, want >= 4.5 (AA). "+
+					"Bump modes.%s.text.muted lighter (dark) / darker (light).",
+					th.ID, mode, bg, r, mode)
+			}
+		}
+		for _, fg := range []string{"--accent-primary-start", "--accent-secondary-start"} {
+			if r := approxRatio(t, flat[fg], flat["--bg-void"]); r < 3.0 {
+				t.Errorf("%s [%s]: %s on bg.void = %.2f:1, want >= 3.0 (AA non-text)",
+					th.ID, mode, fg, r)
+			}
+		}
+	}
+}
+
+// TestWCAG_FirstClassThemes_AllMeetsTargets asserts every embedded first-class
+// theme meets the WCAG matrix. It also logs every measured ratio so a future
+// palette regression is obvious from the test output (auditable, like the
+// default's ReportsAllRatios test).
+func TestWCAG_FirstClassThemes_AllMeetsTargets(t *testing.T) {
+	all, err := EmbeddedThemes()
+	if err != nil {
+		t.Fatalf("EmbeddedThemes: %v", err)
+	}
+	for _, th := range all {
+		// Skip the default — it has its own dedicated assertions above (and
+		// its own golden snapshot). This test covers the Sprint 8 additions.
+		if th.ID == DefaultThemeID {
+			continue
+		}
+		for mode, ps := range themePairs(th) {
+			for _, p := range ps {
+				t.Logf("[%-14s %-5s] %-32s = %.2f:1", th.ID, mode, p.label, approxRatio(t, p.fg, p.bg))
+			}
+		}
+		assertWCAG(t, th)
+	}
+}
+
+// TestWCAG_Stark_FocusStatesUnmistakable: Stark's design (#51) relies on
+// border-led structure because its near-uniform backgrounds can't separate
+// panels by fill alone. WCAG 2.4.11 (Focus Visible) / 1.4.11 (Focus Notable)
+// require focus indicators to meet ≥3:1 against adjacent colors. Assert
+// border.focus clears that bar on every background in both modes — the
+// specific acceptance criterion that makes Stark's focus rings unmistakable.
+func TestWCAG_Stark_FocusStatesUnmistakable(t *testing.T) {
+	th, ok := ParseEmbeddedByID("silt-stark")
+	if !ok {
+		t.Fatal("silt-stark not embedded")
+	}
+	const min = 3.0
+	backgrounds := []string{"--bg-void", "--bg-surface", "--bg-panel", "--bg-hover", "--bg-active"}
+	for _, mode := range []string{"dark", "light"} {
+		flat := th.Flatten(mode)
+		focus := flat["--border-focus"]
+		for _, bg := range backgrounds {
+			r := approxRatio(t, focus, flat[bg])
+			if r < min {
+				t.Errorf("stark [%s]: border.focus on %s = %.2f:1, want >= %.1f:1 (WCAG 2.4.11/1.4.11)",
+					mode, bg, r, min)
+			}
+		}
+	}
+}
+
+// TestAccentDistinctness_AllFirstClassThemes guards the docs/THEMING.md §4 rule
+// that primary and secondary must be visually distinct so the "go/done" and
+// "in-progress" states never blur together. We assert a minimum sRGB Euclidean
+// distance between accent.primary.start and accent.secondary.start for every
+// first-class theme in both modes. The threshold (30) is conservative: Linen
+// and Graphite are the closest pairs by design (calm, low-chroma), yet still
+// clear it. A future palette that collapses the two accents fails here.
+func TestAccentDistinctness_AllFirstClassThemes(t *testing.T) {
+	const minDist = 30.0
+	all, err := EmbeddedThemes()
+	if err != nil {
+		t.Fatalf("EmbeddedThemes: %v", err)
+	}
+	for _, th := range all {
+		for _, mode := range []string{"dark", "light"} {
+			flat := th.Flatten(mode)
+			d := rgbDistance(t, flat["--accent-primary-start"], flat["--accent-secondary-start"])
+			if d < minDist {
+				t.Errorf("%s [%s]: primary/secondary accent distance = %.1f, want >= %.1f (accents must stay distinct)",
+					th.ID, mode, d, minDist)
+			}
+		}
+	}
+}
+
+// rgbDistance is the sRGB Euclidean distance between two colors. It is a crude
+// but adequate proxy for "perceptually different enough to distinguish" for the
+// accent-distinctness guard; a full ΔE is overkill for catching an accidental
+// palette collapse.
+func rgbDistance(t *testing.T, a, b string) float64 {
+	t.Helper()
+	ar, ag, ab, ok := parseColorAny(a)
+	if !ok {
+		t.Fatalf("parseColorAny(%q) failed", a)
+	}
+	br, bg, bb, ok := parseColorAny(b)
+	if !ok {
+		t.Fatalf("parseColorAny(%q) failed", b)
+	}
+	dr := float64(ar) - float64(br)
+	dg := float64(ag) - float64(bg)
+	db := float64(ab) - float64(bb)
+	return math.Sqrt(dr*dr + dg*dg + db*db)
+}

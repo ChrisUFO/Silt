@@ -24,9 +24,28 @@ cd frontend && npm run check && npm run build
 ## Branching & commits
 
 - Work on feature branches off `main`. Open a PR to merge back.
+- **Before opening a PR, rebase onto `main`** so `frontend/package-lock.json`
+  is current and reviewers see only your real changes.
 - Use [Conventional Commits](https://www.conventionalcommits.org/) prefixes:
   `feat:`, `fix:`, `refactor:`, `docs:`, `chore:`.
 - Keep commits focused and reviewable; one logical change per commit.
+
+## Lockfile conflicts
+
+`frontend/package-lock.json` is large and ordering-sensitive, so hand-merging
+the conflict markers produces an inconsistent lockfile. `.gitattributes`
+configures it with `merge=union`, so most lockfile conflicts resolve
+automatically (both sides' added packages are kept). When a manual conflict
+remains:
+
+1. Take either side: `git checkout --theirs frontend/package-lock.json`
+2. Regenerate from the merged `package.json`:
+   ```sh
+   cd frontend && npm install
+   ```
+3. `git add frontend/package-lock.json` and commit.
+
+Do **not** attempt to resolve conflict markers in the lockfile by hand.
 
 ## Wails bindings — keep them fresh
 
