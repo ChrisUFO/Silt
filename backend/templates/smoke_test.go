@@ -30,7 +30,7 @@ func TestSmoke_LoadAndRender(t *testing.T) {
 
 	// Frozen reference time so the assertion is deterministic.
 	frozen := time.Date(2026, 6, 15, 9, 30, 0, 0, time.UTC)
-	rendered, warnings := Render(daily, nil, RenderOptions{Now: frozen})
+	rendered, warnings := Render(daily, nil, RenderOptions{Now: frozen, Timezone: time.UTC})
 	if len(warnings) != 0 {
 		t.Fatalf("expected no warnings rendering daily-note, got %v", warnings)
 	}
@@ -61,7 +61,7 @@ func TestSmoke_SmartGraphPassthrough(t *testing.T) {
 		Body:          body,
 	}
 	frozen := time.Date(2026, 6, 15, 9, 30, 0, 0, time.UTC)
-	rendered, warnings := Render(tpl, nil, RenderOptions{Now: frozen})
+	rendered, warnings := Render(tpl, nil, RenderOptions{Now: frozen, Timezone: time.UTC})
 	if !strings.Contains(rendered, "{{embed:abc-123-def}}") {
 		t.Errorf("embed syntax was altered: %q", rendered)
 	}

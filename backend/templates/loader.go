@@ -103,6 +103,9 @@ func ParseTemplateBytes(raw []byte, filename, source string) (*Template, error) 
 	if t.SchemaVersion == "" {
 		t.SchemaVersion = SupportedSchemaVersion
 	}
+	if t.Category == "" {
+		t.Category = "notes"
+	}
 	if source != "" {
 		t.Source = source
 	}

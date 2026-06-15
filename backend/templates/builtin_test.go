@@ -64,7 +64,7 @@ func TestEmbeddedTemplates_RoundTripParseFileContent(t *testing.T) {
 	}
 	frozen := time.Date(2026, 6, 15, 9, 30, 0, 0, time.UTC)
 	for _, tpl := range all {
-		rendered, warnings := Render(tpl, nil, RenderOptions{Now: frozen})
+		rendered, warnings := Render(tpl, nil, RenderOptions{Now: frozen, Timezone: time.UTC})
 		for _, w := range warnings {
 			t.Errorf("template %q rendered with warning: %s", tpl.ID, w)
 		}
