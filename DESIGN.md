@@ -358,6 +358,8 @@ Custom Theme Import (Sprint 6, #48): users can import a theme JSON via the Setti
 
 User Theme Engine UX (Sprint 6, #47): Settings → Appearance is the single surface for theme selection. Mode is a `role="radiogroup"` of Dark / Light / System (changing mode never changes the active theme). Themes are a `role="listbox"` of `role="option"` rows with roving tabindex, Arrow/Home/End navigation, Enter/Space commit, and Esc to cancel any live preview. Swatches are data-driven from `ThemeInfo.Swatches` (no per-theme code branches). The picker renders a live preview on hover/focus by injecting the preview theme's tokens via the existing `injectTokens` path — restoring the active theme on `mouseleave`/`blur`/`Esc`. Errors and status updates flow through a `role="status" aria-live="polite"` region (escalating to `role="alert" aria-live="assertive"` for errors). The active id and mode persist across restarts via `AppSettings` (Sprint 5).
 
+Page Template Picker (Sprint 9, #55): the template picker reuses the same modal chrome, Refined Cyber-Ink token system, and iconography rules as the theme picker. Iconography follows the Material Symbols convention; the `icon` frontmatter field is a Material Symbols name rendered at 18–20px. No emojis are used in first-class template icons — they are abstract, CSS-friendly glyphs. The picker is a centered overlay (`role="dialog"`, `aria-modal="true"`) with a category-grouped `role="listbox"`, roving tabindex (Arrow/Home/End/Enter), a live preview pane, a dynamic placeholder form, and a Tab focus trap. Entry points: the sidebar `content_copy` button + `Ctrl+Shift+T` (new page mode) and the `/template` slash command (insert mode).
+
 
 8. Accessibility (A11Y) & Keyboard Navigation Compliance
 

@@ -172,6 +172,30 @@
     } else if (e.key === 'End') {
       e.preventDefault()
       focusIndex(filtered.length - 1)
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      void handleConfirm()
+    }
+  }
+
+  // Tab focus trap: keeps Tab/Shift+Tab cycling within the modal so focus
+  // never escapes into the background editor while the picker is open.
+  function handleTabTrap(e: KeyboardEvent): void {
+    if (e.key !== 'Tab') return
+    const modal = document.querySelector('[role="dialog"]')
+    if (!modal) return
+    const focusable = modal.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )
+    if (focusable.length === 0) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault()
+      first.focus()
     }
   }
 
@@ -214,6 +238,8 @@
     } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault()
       void handleConfirm()
+    } else if (e.key === 'Tab') {
+      handleTabTrap(e)
     }
   }
 
@@ -278,7 +304,11 @@
         </div>
         <!-- Template list -->
         <div class="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-          {#if filtered.length === 0}
+          {#if templatesState.loading && templatesState.items.length === 0}
+            <div class="px-3 py-8 text-center">
+              <p class="text-sm text-text-muted">Loading templates…</p>
+            </div>
+          {:else if filtered.length === 0}
             <div class="px-3 py-8 text-center">
               <p class="text-sm text-text-muted">
                 {templatesState.items.length === 0
@@ -288,6 +318,9 @@
               {#if templatesState.items.length === 0}
                 <p class="mt-1 text-xs text-text-muted">
                   <code>&lt;vault&gt;/.system/templates/</code>
+                </p>
+                <p class="mt-2 text-xs text-accent-primary-start">
+                  See the <span class="underline">docs/TEMPLATES.md</span> authoring guide.
                 </p>
               {/if}
             </div>
@@ -411,6 +444,7 @@
           <button
             onclick={() => void handleConfirm()}
             disabled={!selectedId || creating || (mode === 'new-page' && !pageName.trim())}
+            title="Confirm (Enter or Ctrl+Enter)"
             class="rounded-lg bg-accent-primary-start px-4 py-2 text-sm font-medium text-bg-void transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {creating ? '…' : confirmLabel}

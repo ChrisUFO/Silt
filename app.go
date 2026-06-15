@@ -863,6 +863,8 @@ func (a *App) templatesDir() string {
 // load errors. Works before a vault is open (returns just the embedded set,
 // mirroring ListThemes).
 func (a *App) ListTemplates() (*templates.ListTemplatesResult, error) {
+	a.wg.Add(1)
+	defer a.wg.Done()
 	return templates.ListTemplates(a.templatesDir())
 }
 
@@ -871,6 +873,8 @@ func (a *App) ListTemplates() (*templates.ListTemplatesResult, error) {
 // live preview + drive the placeholder form. Returns a user-facing error when
 // the id is on neither tier.
 func (a *App) GetTemplate(id string) (templates.Template, error) {
+	a.wg.Add(1)
+	defer a.wg.Done()
 	if id == "" {
 		return templates.Template{}, fmt.Errorf("template id is required")
 	}
@@ -888,6 +892,8 @@ func (a *App) GetTemplate(id string) (templates.Template, error) {
 // logged, not returned — Wails exposes only the first non-error return value,
 // and the picker preview intentionally ignores forward-compat warnings.
 func (a *App) RenderTemplate(id string, vars map[string]string) (string, error) {
+	a.wg.Add(1)
+	defer a.wg.Done()
 	if id == "" {
 		return "", fmt.Errorf("template id is required")
 	}
@@ -908,11 +914,16 @@ func (a *App) RenderTemplate(id string, vars map[string]string) (string, error) 
 // events do not trigger a redundant reload. Emits templates:changed so the
 // picker re-lists immediately. Mirrors App.ImportTheme.
 func (a *App) SaveUserTemplate(t templates.Template) error {
+	a.wg.Add(1)
+	defer a.wg.Done()
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
 	if a.templateWatcher != nil {
 		a.templateWatcher.RegisterSelfWrite()
+	}
+	if a.tracker != nil {
+		a.tracker.RegisterWrite(filepath.Join(a.templatesDir(), t.ID+".md"))
 	}
 	if err := templates.SaveTemplate(a.templatesDir(), &t); err != nil {
 		log.Printf("templates: SaveUserTemplate(%q) failed: %v", t.ID, err)
@@ -930,11 +941,16 @@ func (a *App) SaveUserTemplate(t templates.Template) error {
 // Builtin ids are rejected (read-only). Emits templates:changed. Idempotent
 // (deleting an already-deleted template is a no-op success).
 func (a *App) DeleteUserTemplate(id string) error {
+	a.wg.Add(1)
+	defer a.wg.Done()
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
 	if a.templateWatcher != nil {
 		a.templateWatcher.RegisterSelfWrite()
+	}
+	if a.tracker != nil {
+		a.tracker.RegisterWrite(filepath.Join(a.templatesDir(), id+".md"))
 	}
 	if err := templates.DeleteTemplate(a.templatesDir(), id); err != nil {
 		log.Printf("templates: DeleteUserTemplate(%q) failed: %v", id, err)
@@ -952,6 +968,8 @@ func (a *App) DeleteUserTemplate(id string) error {
 // Used by the template watcher's onChange callback (external edit detected) and
 // available as a manual refresh affordance. Emits templates:changed.
 func (a *App) ReloadTemplates() error {
+	a.wg.Add(1)
+	defer a.wg.Done()
 	templates.InvalidateTemplateCache()
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "templates:changed", struct{}{})
@@ -1042,6 +1060,8 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 // returned blocks via blocksToDoc() → editor.commands.insertContent; the
 // UniqueBlockIds extension also guards against any residual collision.
 func (a *App) RenderTemplateBlocks(id string, vars map[string]string) ([]parser.ParsedBlock, error) {
+	a.wg.Add(1)
+	defer a.wg.Done()
 	if id == "" {
 		return nil, fmt.Errorf("template id is required")
 	}

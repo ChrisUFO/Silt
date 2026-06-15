@@ -342,3 +342,42 @@ func TestCreatePageFromTemplate_IPC_BeforeVault(t *testing.T) {
 		t.Error("expected error when no vault is loaded")
 	}
 }
+
+// TestRenderTemplateBlocks_IPC_UUIDUniqueness is the spec-compat regression
+// guard (plan line 297): inserting the same template twice must produce blocks
+// with ALL-DIFFERENT UUIDs so there is no blocks-table PK collision. Each
+// RenderTemplateBlocks call runs ParseFileContent on the rendered body (which
+// has no <!-- id: --> comments), so EnsureBlockID mints fresh UUIDs each time.
+func TestRenderTemplateBlocks_IPC_UUIDUniqueness(t *testing.T) {
+	app := newTestApp(t)
+
+	blocks1, err := app.RenderTemplateBlocks("meeting-notes", map[string]string{"meeting_title": "A"})
+	if err != nil {
+		t.Fatalf("first RenderTemplateBlocks: %v", err)
+	}
+	blocks2, err := app.RenderTemplateBlocks("meeting-notes", map[string]string{"meeting_title": "B"})
+	if err != nil {
+		t.Fatalf("second RenderTemplateBlocks: %v", err)
+	}
+
+	// Collect every UUID across both sets.
+	seen := map[string]bool{}
+	for _, b := range blocks1 {
+		if b.ID == "" {
+			continue
+		}
+		if seen[b.ID] {
+			t.Errorf("duplicate UUID %q within first insertion", b.ID)
+		}
+		seen[b.ID] = true
+	}
+	for _, b := range blocks2 {
+		if b.ID == "" {
+			continue
+		}
+		if seen[b.ID] {
+			t.Errorf("UUID collision across two insertions: %q appears in both — PK collision risk", b.ID)
+		}
+		seen[b.ID] = true
+	}
+}

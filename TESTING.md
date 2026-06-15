@@ -428,7 +428,7 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test`
 | File | Tests | What is covered |
 |---|---|---|
 | `frontend/src/templates/store.test.ts` | loadTemplates populates items, error surfacing, initTemplates idempotency, templates:changed re-list | Listing store |
-| `frontend/src/templates/TemplatePicker.test.ts` | modal opens, search filters, placeholder form renders, category grouping | Picker component (mock IPC) |
+| `frontend/src/templates/TemplatePicker.test.ts` | dialog renders with options, insert vs. new-page mode labels, search filters, placeholder form renders on focus, empty state | Picker component (mock IPC) |
 
 ## Manual Verification Matrix (`wails dev`)
 
@@ -439,5 +439,7 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test`
 5. Verify action items (TODO TASK lines) appear in the Kanban view.
 6. Drop a custom `.md` into `<vault>/.system/templates/` → it appears in the picker without a restart (watcher hot-reload).
 7. Smart-graph passthrough: author a template body containing `{{embed:abc-123}}` → insert → the embed token survives rendering intact.
+
+> **Note:** Playwright e2e coverage for the keyboard + insertion flow is deferred — the project does not yet have a `test:e2e` infrastructure. Tracked in a follow-up issue.
 
 

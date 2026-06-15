@@ -2,6 +2,7 @@ package templates
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -173,13 +174,17 @@ func (w *TemplateWatcher) loop() {
 			if w.onChange != nil {
 				w.onChange()
 			}
-		case _, ok := <-w.watcher.Errors:
+		case err, ok := <-w.watcher.Errors:
 			if !ok {
 				return
 			}
-			// Errors are not surfaced to the UI (the watcher is best-effort
-			// hot-reload); a failing watcher just means the picker needs a
-			// manual refresh until the next vault reopen.
+			// Log so a persistent fsnotify failure (e.g. inotify watch limit
+			// reached on Linux) is diagnosable rather than silently disabling
+			// hot-reload. The watcher is still best-effort — a failing watcher
+			// just means the picker needs a manual refresh.
+			if err != nil {
+				log.Printf("templates: watcher error: %v", err)
+			}
 		}
 	}
 }
