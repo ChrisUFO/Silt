@@ -30,11 +30,6 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const (
-	maxTimelineLimit     = 200
-	defaultTimelineLimit = 30
-)
-
 var updateLineIDRegex = regexp.MustCompile(`<!-- id: ([a-f0-9\-]{36}) -->`)
 
 // errBlockBeingEdited is returned by MutateBlock when the target file is
@@ -420,38 +415,8 @@ func (a *App) InitializeVault() (bool, error) {
 	return true, nil
 }
 
-// FetchPageTimeline returns blocks grouped by days for the streaming Page
-// (notebook/section/page), paged for scroll virtualization.
-func (a *App) FetchPageTimeline(notebook, section, page string, offset int, limit int) ([]parser.DayGroup, error) {
-	if a.db == nil {
-		return nil, fmt.Errorf("vault database not loaded")
-	}
-
-	// Clamp server-side so a frontend bug sending limit=1_000_000 cannot
-	// materialize an arbitrarily large in-memory slice.
-	if limit <= 0 || limit > maxTimelineLimit {
-		limit = maxTimelineLimit
-	}
-	if offset < 0 {
-		offset = 0
-	}
-
-	a.wg.Add(1)
-	defer a.wg.Done()
-
-	var res []parser.DayGroup
-	var err error
-	a.coordinator.WithDBRead(func() {
-		res, err = a.db.FetchTimelineDays(notebook, section, page, limit, offset)
-	})
-
-	return res, err
-}
-
 // FetchPageBlocks returns a flat list of all blocks for a page, ordered by
-// line_number. With the per-day file model removed, a page is a single file;
-// each block carries its own file_date. This replaces FetchPageTimeline for
-// the editor surface (which renders one TipTap editor per page, not per day).
+// line_number. A page is a single file; each block carries its own file_date.
 func (a *App) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBlock, error) {
 	if a.db == nil {
 		return nil, fmt.Errorf("vault database not loaded")

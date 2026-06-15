@@ -18,7 +18,8 @@ Notes are organized **Notebook › Section › Page** (OneNote-style): each Page
 ## Key Highlights
 
 - **Notebook › Section › Page hierarchy** — OneNote-style folders on disk; a Page streams its daily files into one infinite-scroll timeline.
-- **Smart Graph** — slash-delimited hierarchical tags (`#work/sogav/milestone-one`), global block references (`((uuid))`) with hover previews, and live dual-bound embeds (`{{embed:uuid}}`).
+<<<<<<< HEAD
+- **Smart Graph** — slash-delimited hierarchical tags (`#work/project/milestone-one`), global block references (`((uuid))`) with hover previews, and live dual-bound embeds (`{{embed:uuid}}`).
 - **Themeable** — the entire shell is driven by a single JSON theme (colors + optional fonts). Five first-class themes ship built-in (Cyber Forest default, Terra Noir, Linen, Stark, Graphite). Ship your own palette by dropping a `.json` into `<vault>/.system/themes/` or importing it from **Settings → Appearance**. See the [authoring guide](./docs/THEMING.md).
 - **Page Templates** — ten first-class templates ship built-in (Daily Note, Meeting Notes, ADR, …). Drop a `.md` into `<vault>/.system/templates/` to add your own. Insert as a new page or at the cursor via `Ctrl+Shift+T` or `/template`. See the [authoring guide](./docs/TEMPLATES.md).
 - **Plugin SDK + first-party plugins** — Agenda (rolling task timeline) and Calendar (month/week grids) are built on the same `PluginContext` SDK as third-party plugins. Install community plugins from `.silt-plugin` archives via the in-app Plugin Manager.

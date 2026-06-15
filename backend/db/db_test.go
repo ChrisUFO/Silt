@@ -58,7 +58,7 @@ func TestIndexFileBlocks_InsertsBlocksTasksAndTags(t *testing.T) {
 		sampleTaskBlock("11111111-1111-1111-1111-111111111111", 1),
 		sampleNoteBlock("22222222-2222-2222-2222-222222222222", 2),
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", blocks, []string{"work/sogav"}); err != nil {
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", blocks, []string{"work/project"}); err != nil {
 		t.Fatalf("IndexFileBlocks failed: %v", err)
 	}
 
@@ -92,7 +92,7 @@ func TestIndexFileBlocks_InsertsBlocksTasksAndTags(t *testing.T) {
 		{
 			ID:         "33333333-3333-3333-3333-333333333333",
 			Type:       parser.BlockNote,
-			RawText:    "remember to follow up on #work/sogav and #systems/specs <!-- id: 33333333-3333-3333-3333-333333333333 -->",
+			RawText:    "remember to follow up on #work/project and #systems/specs <!-- id: 33333333-3333-3333-3333-333333333333 -->",
 			CleanText:  "remember to follow up on",
 			LineNumber: 1,
 		},
@@ -194,7 +194,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 		{
 			ID:        "11111111-1111-1111-1111-111111111111",
 			Type:      parser.BlockTask,
-			RawText:   "- [x] DONE TASK [Alice]#1 ship #work/sogav <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			RawText:   "- [x] DONE TASK [Alice]#1 ship #work/project <!-- id: 11111111-1111-1111-1111-111111111111 -->",
 			CleanText: "ship",
 			Status:    "DONE",
 			Owner:     "Alice",
@@ -204,7 +204,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 		{
 			ID:        "22222222-2222-2222-2222-222222222222",
 			Type:      parser.BlockTask,
-			RawText:   "- [/] DOING TASK [Bob]#2 fix #work/sogav <!-- id: 22222222-2222-2222-2222-222222222222 -->",
+			RawText:   "- [/] DOING TASK [Bob]#2 fix #work/project <!-- id: 22222222-2222-2222-2222-222222222222 -->",
 			CleanText: "fix",
 			Status:    "DOING",
 			Owner:     "Bob",
@@ -214,7 +214,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 		{
 			ID:        "33333333-3333-3333-3333-333333333333",
 			Type:      parser.BlockTask,
-			RawText:   "- [ ] TODO TASK [Alice]#3 research #work/sogav <!-- id: 33333333-3333-3333-3333-333333333333 -->",
+			RawText:   "- [ ] TODO TASK [Alice]#3 research #work/project <!-- id: 33333333-3333-3333-3333-333333333333 -->",
 			CleanText: "research",
 			Status:    "TODO",
 			Owner:     "Alice",
@@ -253,7 +253,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 		},
 		{
 			name:     "filter by tag prefix",
-			filter:   parser.TaskQueryFilter{Tags: []string{"work/sogav"}},
+			filter:   parser.TaskQueryFilter{Tags: []string{"work/project"}},
 			expected: 3,
 		},
 		{
@@ -276,106 +276,11 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 	}
 }
 
-func TestFetchTimelineDays_GroupsByDateAndOrdersDesc(t *testing.T) {
-	dm := newTestDB(t)
-
-	// With the per-day file model removed, all blocks for a page are in one
-	// file but carry their own per-block file_date. Insert them in a single
-	// IndexFileBlocks call; FetchTimelineDays still groups by file_date.
-	day1a := sampleTaskBlock("11111111-1111-1111-1111-111111111111", 1)
-	day1a.FileDate = "2026-06-13"
-	day1b := sampleNoteBlock("22222222-2222-2222-2222-222222222222", 2)
-	day1b.FileDate = "2026-06-13"
-	day2 := sampleNoteBlock("33333333-3333-3333-3333-333333333333", 3)
-	day2.FileDate = "2026-06-12"
-
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", []parser.ParsedBlock{day1a, day1b, day2}, nil); err != nil {
-		t.Fatalf("index blocks: %v", err)
-	}
-	if err := dm.IndexFileBlocks("Work", "Other", "Daily", []parser.ParsedBlock{
-		sampleTaskBlock("44444444-4444-4444-4444-444444444444", 1),
-	}, nil); err != nil {
-		t.Fatalf("index other section: %v", err)
-	}
-
-	groups, err := dm.FetchTimelineDays("Work", "Journal", "Daily", 10, 0)
-	if err != nil {
-		t.Fatalf("FetchTimelineDays: %v", err)
-	}
-	if len(groups) != 2 {
-		t.Fatalf("expected 2 day groups, got %d", len(groups))
-	}
-	if groups[0].Date != "2026-06-13" {
-		t.Errorf("expected most recent date first, got %q", groups[0].Date)
-	}
-	if groups[1].Date != "2026-06-12" {
-		t.Errorf("expected second date 2026-06-12, got %q", groups[1].Date)
-	}
-	if len(groups[0].Blocks) != 2 {
-		t.Errorf("expected 2 blocks on 2026-06-13, got %d", len(groups[0].Blocks))
-	}
-	if len(groups[1].Blocks) != 1 {
-		t.Errorf("expected 1 block on 2026-06-12, got %d", len(groups[1].Blocks))
-	}
-	if groups[0].FormattedDate == "" {
-		t.Errorf("expected formatted date to be populated")
-	}
-}
-
-func TestFetchTimelineDays_PaginationAndEmpty(t *testing.T) {
-	dm := newTestDB(t)
-
-	// Empty case.
-	groups, err := dm.FetchTimelineDays("Work", "Journal", "Daily", 10, 0)
-	if err != nil {
-		t.Fatalf("empty FetchTimelineDays: %v", err)
-	}
-	if len(groups) != 0 {
-		t.Errorf("expected 0 groups for empty section, got %d", len(groups))
-	}
-
-	// Seed 3 blocks with distinct per-block file_dates in a single call
-	// (per-day file model removed; all blocks for a page share one file).
-	var seedBlocks []parser.ParsedBlock
-	for i, d := range []string{"2026-06-13", "2026-06-12", "2026-06-11"} {
-		block := sampleNoteBlock("00000000-0000-0000-0000-00000000000"+string(rune('1'+i)), i+1)
-		block.FileDate = d
-		seedBlocks = append(seedBlocks, block)
-	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", seedBlocks, nil); err != nil {
-		t.Fatalf("index seed blocks: %v", err)
-	}
-
-	// First page: limit 2, offset 0.
-	first, err := dm.FetchTimelineDays("Work", "Journal", "Daily", 2, 0)
-	if err != nil {
-		t.Fatalf("first page: %v", err)
-	}
-	if len(first) != 2 {
-		t.Fatalf("expected 2 groups on first page, got %d", len(first))
-	}
-	if first[0].Date != "2026-06-13" || first[1].Date != "2026-06-12" {
-		t.Errorf("unexpected date order on first page: %s, %s", first[0].Date, first[1].Date)
-	}
-
-	// Second page: limit 2, offset 2.
-	second, err := dm.FetchTimelineDays("Work", "Journal", "Daily", 2, 2)
-	if err != nil {
-		t.Fatalf("second page: %v", err)
-	}
-	if len(second) != 1 {
-		t.Fatalf("expected 1 group on second page, got %d", len(second))
-	}
-	if second[0].Date != "2026-06-11" {
-		t.Errorf("expected third page date 2026-06-11, got %q", second[0].Date)
-	}
-}
-
 func TestExtractTags_DeduplicatesAndIgnoresNumeric(t *testing.T) {
-	text := "Plan #work/sogav with #work/sogav and #1 priority"
+	text := "Plan #work/project with #work/project and #1 priority"
 	tags := ExtractTags(text)
-	if len(tags) != 1 || tags[0] != "work/sogav" {
-		t.Errorf("expected single deduped tag [work/sogav], got %v", tags)
+	if len(tags) != 1 || tags[0] != "work/project" {
+		t.Errorf("expected single deduped tag [work/project], got %v", tags)
 	}
 }
 
@@ -508,7 +413,7 @@ func TestQueryTasksWithFilters_PopulatesTags(t *testing.T) {
 		{
 			ID:        "11111111-1111-1111-1111-111111111111",
 			Type:      parser.BlockTask,
-			RawText:   "- [x] DONE TASK [Alice] ship #work/sogav #release <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			RawText:   "- [x] DONE TASK [Alice] ship #work/project #release <!-- id: 11111111-1111-1111-1111-111111111111 -->",
 			CleanText: "ship",
 			Status:    "DONE",
 			Owner:     "Alice",
@@ -518,7 +423,7 @@ func TestQueryTasksWithFilters_PopulatesTags(t *testing.T) {
 		{
 			ID:        "22222222-2222-2222-2222-222222222222",
 			Type:      parser.BlockTask,
-			RawText:   "- [ ] TODO TASK [Bob] research #work/sogav <!-- id: 22222222-2222-2222-2222-222222222222 -->",
+			RawText:   "- [ ] TODO TASK [Bob] research #work/project <!-- id: 22222222-2222-2222-2222-222222222222 -->",
 			CleanText: "research",
 			Status:    "TODO",
 			Owner:     "Bob",
@@ -543,12 +448,12 @@ func TestQueryTasksWithFilters_PopulatesTags(t *testing.T) {
 		tagsByID[r.ID] = r.Tags
 	}
 	if got := tagsByID["11111111-1111-1111-1111-111111111111"]; len(got) != 2 ||
-		!contains(got, "work/sogav") || !contains(got, "release") {
-		t.Errorf("expected ship task to have tags [work/sogav release], got %v", got)
+		!contains(got, "work/project") || !contains(got, "release") {
+		t.Errorf("expected ship task to have tags [work/project release], got %v", got)
 	}
 	if got := tagsByID["22222222-2222-2222-2222-222222222222"]; len(got) != 1 ||
-		!contains(got, "work/sogav") {
-		t.Errorf("expected research task to have tag [work/sogav], got %v", got)
+		!contains(got, "work/project") {
+		t.Errorf("expected research task to have tag [work/project], got %v", got)
 	}
 }
 
@@ -622,7 +527,7 @@ func TestQueryTagHierarchy_DistinctCountsAtOrBeneath(t *testing.T) {
 		{
 			ID:        "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
 			Type:      parser.BlockNote,
-			RawText:   "#work and #work/sogav beta <!-- id: bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->",
+			RawText:   "#work and #work/project beta <!-- id: bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->",
 			CleanText: "and beta",
 			Depth:     0,
 			LineNumber: 2,
@@ -630,7 +535,7 @@ func TestQueryTagHierarchy_DistinctCountsAtOrBeneath(t *testing.T) {
 		{
 			ID:        "cccccccc-cccc-cccc-cccc-cccccccccccc",
 			Type:      parser.BlockNote,
-			RawText:   "#work/sogav/milestone-one gamma <!-- id: cccccccc-cccc-cccc-cccc-cccccccccccc -->",
+			RawText:   "#work/project/milestone-one gamma <!-- id: cccccccc-cccc-cccc-cccc-cccccccccccc -->",
 			CleanText: "gamma",
 			Depth:     0,
 			LineNumber: 3,
@@ -666,8 +571,8 @@ func TestQueryTagHierarchy_DistinctCountsAtOrBeneath(t *testing.T) {
 		want int
 	}{
 		{"work", 3},                     // A, B, C all reachable at or beneath
-		{"work/sogav", 2},               // B, C
-		{"work/sogav/milestone-one", 1}, // C
+		{"work/project", 2},               // B, C
+		{"work/project/milestone-one", 1}, // C
 	}
 	for _, c := range cases {
 		got := find(c.path)

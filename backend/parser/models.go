@@ -46,12 +46,6 @@ type TaskQueryFilter struct {
 	EndDate   string   `json:"end_date"`
 }
 
-type DayGroup struct {
-	Date          string        `json:"date"` // YYYY-MM-DD
-	FormattedDate string        `json:"formattedDate"`
-	Blocks        []ParsedBlock `json:"blocks"`
-}
-
 // NavigationTree describes the Notebook > Section > Page hierarchy for the
 // sidebar navigator. Counts are block counts so the UI can render badges.
 type NavigationPage struct {

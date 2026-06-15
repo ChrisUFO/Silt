@@ -127,7 +127,7 @@ notebook: Engineering
 section: Architecture
 page: DailyLog
 date: 2026-06-13
-tags: [work/sogav, systems/specs]
+tags: [work/project, systems/specs]
 ---
 # Saturday, June 13, 2026 <!-- id: 0a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8a -->
 
@@ -144,7 +144,7 @@ tags: [work/sogav, systems/specs]
 	if meta.Notebook != "Engineering" || meta.Section != "Architecture" || meta.Page != "DailyLog" || meta.Date != "2026-06-13" {
 		t.Errorf("Metadata mismatch: %+v", meta)
 	}
-	if len(meta.Tags) != 2 || meta.Tags[0] != "work/sogav" {
+	if len(meta.Tags) != 2 || meta.Tags[0] != "work/project" {
 		t.Errorf("Tags mismatch: %+v", meta.Tags)
 	}
 

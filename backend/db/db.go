@@ -184,9 +184,9 @@ func (dm *DatabaseManager) initSchema() error {
 	createTagsTable := `
 	CREATE TABLE IF NOT EXISTS tags (
 		block_id TEXT NOT NULL,
-		raw_path TEXT NOT NULL,  -- 'work/sogav/milestone-one'
+		raw_path TEXT NOT NULL,  -- 'work/project/milestone-one'
 		level_0 TEXT NOT NULL,   -- 'work'
-		level_1 TEXT,            -- 'sogav'
+		level_1 TEXT,            -- 'project'
 		level_2 TEXT,            -- 'milestone-one'
 		PRIMARY KEY(block_id, raw_path),
 		FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
@@ -416,7 +416,7 @@ func (dm *DatabaseManager) KnownFiles() (map[string]FileStat, error) {
 
 // ExtractTags finds inline tags starting with # followed by a letter, ignoring numeric priorities.
 // Tag names may contain letters, digits, underscores, hyphens, and slashes
-// (so #work/sogav/milestone-one is captured in full).
+// (so #work/project/milestone-one is captured in full).
 func ExtractTags(text string) []string {
 	tagRegex := regexp.MustCompile(`\B#([a-zA-Z][a-zA-Z0-9_/-]*)`)
 	matches := tagRegex.FindAllStringSubmatch(text, -1)
@@ -748,121 +748,9 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	return indexedCount, skipped, nil
 }
 
-// FetchTimelineDays fetches day-grouped blocks for infinite virtualization.
-//
-// The implementation issues exactly two queries regardless of the number of
-// days requested: one to resolve the paginated date set, and one to load all
-// blocks for those dates in a single round-trip. The results are grouped by
-// file_date in Go and formatted for the timeline view.
-func (dm *DatabaseManager) FetchTimelineDays(notebook, section, page string, limit, offset int) ([]parser.DayGroup, error) {
-	// Query 1: resolve paginated distinct dates.
-	dateRows, err := dm.db.Query(
-		"SELECT DISTINCT file_date FROM blocks WHERE notebook = ? AND section = ? AND page = ? ORDER BY file_date DESC LIMIT ? OFFSET ?",
-		notebook, section, page, limit, offset,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query timeline dates: %w", err)
-	}
-	defer dateRows.Close()
-
-	var dates []string
-	for dateRows.Next() {
-		var d string
-		if err := dateRows.Scan(&d); err != nil {
-			return nil, err
-		}
-		dates = append(dates, d)
-	}
-	if err := dateRows.Close(); err != nil {
-		return nil, err
-	}
-
-	if len(dates) == 0 {
-		return []parser.DayGroup{}, nil
-	}
-
-	// Query 2: load all blocks for the resolved dates in a single round-trip.
-	placeholders := make([]string, len(dates))
-	args := make([]interface{}, 0, len(dates)+3)
-	args = append(args, notebook, section, page)
-	for i, d := range dates {
-		placeholders[i] = "?"
-		args = append(args, d)
-	}
-	query := fmt.Sprintf(`
-		SELECT b.id, b.parent_id, b.depth, b.type, b.raw_content, b.clean_content, b.line_number,
-		       b.file_date,
-		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0)
-		FROM blocks b
-		LEFT JOIN tasks t ON b.id = t.block_id
-		WHERE b.notebook = ? AND b.section = ? AND b.page = ? AND b.file_date IN (%s)
-		ORDER BY b.file_date DESC, b.line_number ASC
-	`, strings.Join(placeholders, ","))
-
-	rows, err := dm.db.Query(query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query timeline blocks: %w", err)
-	}
-	defer rows.Close()
-
-	// Group blocks by file_date preserving the date order from Query 1.
-	groupOrder := make([]string, 0, len(dates))
-	groupIndex := make(map[string]int, len(dates))
-	grouped := make(map[string][]parser.ParsedBlock, len(dates))
-
-	for rows.Next() {
-		var b parser.ParsedBlock
-		var bType, fileDate string
-		var parentID sql.NullString
-		var status, owner, start, due string
-		var priority int
-
-		if err := rows.Scan(&b.ID, &parentID, &b.Depth, &bType, &b.RawText, &b.CleanText, &b.LineNumber, &fileDate, &status, &owner, &start, &due, &priority); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		if parentID.Valid {
-			b.ParentID = parentID.String
-		}
-		b.Type = parser.BlockType(bType)
-		b.Status = status
-		b.Owner = owner
-		b.StartDate = start
-		b.DueDate = due
-		b.Priority = priority
-
-		if _, ok := groupIndex[fileDate]; !ok {
-			groupIndex[fileDate] = len(groupOrder)
-			groupOrder = append(groupOrder, fileDate)
-		}
-		grouped[fileDate] = append(grouped[fileDate], b)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-
-	// Build the result in the original date order (descending).
-	groups := make([]parser.DayGroup, 0, len(groupOrder))
-	for _, d := range groupOrder {
-		formatted := d
-		if parsedTime, err := time.Parse("2006-01-02", d); err == nil {
-			formatted = parsedTime.Format("Monday, January 2, 2006")
-		}
-		groups = append(groups, parser.DayGroup{
-			Date:          d,
-			FormattedDate: formatted,
-			Blocks:        grouped[d],
-		})
-	}
-
-	return groups, nil
-}
-
-// FetchPageBlocks returns a flat ordered list of all blocks for a page,
-// replacing the day-grouped FetchTimelineDays for the editor surface. With
-// the per-day file model removed, a page is a single file; all blocks share
-// the same (notebook, section, page) and are ordered by line_number. Each
-// block carries its own file_date.
+// FetchPageBlocks returns a flat ordered list of all blocks for a page.
+// A page is a single file; all blocks share the same (notebook, section,
+// page) and are ordered by line_number. Each block carries its own file_date.
 func (dm *DatabaseManager) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBlock, error) {
 	rows, err := dm.db.Query(`
 		SELECT b.id, b.parent_id, b.depth, b.type, b.raw_content, b.clean_content, b.line_number,
@@ -1044,7 +932,7 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 // tagged at or beneath that path, so clicking #work surfaces every block
 // reachable via #work or any of its descendants — without double-counting a
 // block that happens to carry several nested tags (e.g. #work and
-// #work/sogav/milestone-one).
+// #work/project/milestone-one).
 func (dm *DatabaseManager) QueryTagHierarchy() ([]parser.TagNode, error) {
 	rows, err := dm.db.Query("SELECT raw_path, block_id FROM tags")
 	if err != nil {
@@ -1146,7 +1034,7 @@ func (dm *DatabaseManager) QueryTagHierarchy() ([]parser.TagNode, error) {
 }
 
 // QueryBlocksByTag returns blocks whose tag path equals tagPath or is nested
-// beneath it (prefix semantics, so #work matches #work/sogav/milestone-one).
+// beneath it (prefix semantics, so #work matches #work/project/milestone-one).
 func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult, error) {
 	tagPath = strings.TrimSpace(strings.TrimPrefix(tagPath, "#"))
 	if tagPath == "" {

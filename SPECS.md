@@ -231,15 +231,15 @@ INSERT INTO tasks (id, parent_id, owner, start_date, due_date, priority, body) V
 
 5.1 Hierarchical Smart Tag Namespaces
 
-Tags in Silt leverage a slash-delimited taxonomy (#work/sogav/milestone-one) to allow for structured, recursive querying without rigid metadata forms.
+Tags in Silt leverage a slash-delimited taxonomy (#work/project/milestone-one) to allow for structured, recursive querying without rigid metadata forms.
 
 When a tag is processed, the parser splits it by depth levels and indexes it into a hierarchical table:
 
 CREATE TABLE tags (
     block_id TEXT NOT NULL,
-    raw_tag TEXT NOT NULL,       -- "work/sogav/milestone-one"
+    raw_tag TEXT NOT NULL,       -- "work/project/milestone-one"
     root_node TEXT NOT NULL,     -- "work"
-    sub_node TEXT,               -- "sogav"
+    sub_node TEXT,               -- "project"
     leaf_node TEXT               -- "milestone-one"
 );
 

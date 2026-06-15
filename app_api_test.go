@@ -180,55 +180,6 @@ func TestUpdateBlockState_RejectsInvalidStatus(t *testing.T) {
 	}
 }
 
-func TestFetchPageTimeline_GroupsAndPaginates(t *testing.T) {
-	app := newTestApp(t)
-
-	var blocks []parser.ParsedBlock
-	for _, d := range []string{"2026-06-13", "2026-06-12", "2026-06-11"} {
-		blocks = append(blocks, parser.ParsedBlock{
-			ID:         "block-" + d,
-			Type:       parser.BlockNote,
-			RawText:    "note for " + d + " <!-- id: block-" + d + " -->",
-			CleanText:  "note for " + d,
-			LineNumber: 1,
-			FileDate:   d,
-		})
-	}
-	if err := app.db.IndexFileBlocks("Work", "Journal", "Daily", blocks, nil); err != nil {
-		t.Fatalf("IndexFileBlocks: %v", err)
-	}
-
-	// First page.
-	page1, err := app.FetchPageTimeline("Work", "Journal", "Daily", 0, 2)
-	if err != nil {
-		t.Fatalf("page1: %v", err)
-	}
-	if len(page1) != 2 {
-		t.Fatalf("expected 2 day groups, got %d", len(page1))
-	}
-	if page1[0].Date != "2026-06-13" || page1[1].Date != "2026-06-12" {
-		t.Errorf("unexpected date order on page1: %s, %s", page1[0].Date, page1[1].Date)
-	}
-
-	// Second page.
-	page2, err := app.FetchPageTimeline("Work", "Journal", "Daily", 2, 2)
-	if err != nil {
-		t.Fatalf("page2: %v", err)
-	}
-	if len(page2) != 1 || page2[0].Date != "2026-06-11" {
-		t.Errorf("expected page2 to have only 2026-06-11, got %+v", page2)
-	}
-
-	// Empty section.
-	empty, err := app.FetchPageTimeline("Work", "Missing", "Daily", 0, 5)
-	if err != nil {
-		t.Fatalf("empty: %v", err)
-	}
-	if len(empty) != 0 {
-		t.Errorf("expected 0 groups for missing section, got %d", len(empty))
-	}
-}
-
 func TestQueryTasks_FiltersByOwnerAndPriority(t *testing.T) {
 	app := newTestApp(t)
 
@@ -236,7 +187,7 @@ func TestQueryTasks_FiltersByOwnerAndPriority(t *testing.T) {
 		{
 			ID:         "t1",
 			Type:       parser.BlockTask,
-			RawText:    "- [x] DONE TASK [Alice] ship #work/sogav <!-- id: t1 -->",
+			RawText:    "- [x] DONE TASK [Alice] ship #work/project <!-- id: t1 -->",
 			CleanText:  "ship",
 			Status:     "DONE",
 			Owner:      "Alice",
@@ -289,7 +240,7 @@ func TestQueryTasks_FiltersByOwnerAndPriority(t *testing.T) {
 		}
 	}
 
-	tagged, err := app.QueryTasks(parser.TaskQueryFilter{Tags: []string{"work/sogav"}})
+	tagged, err := app.QueryTasks(parser.TaskQueryFilter{Tags: []string{"work/project"}})
 	if err != nil {
 		t.Fatalf("QueryTasks tag: %v", err)
 	}
@@ -919,8 +870,8 @@ func TestReadPluginSource_ReadsIndexAndRejectsTraversal(t *testing.T) {
 func TestQueryBlocksByTag_PrefixSemantics(t *testing.T) {
 	app := newTestApp(t)
 	blocks := []parser.ParsedBlock{
-		sampleTaskBlockWithText("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1, "leaf #work/sogav/milestone-one"),
-		sampleTaskBlockWithText("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 2, "mid #work/sogav"),
+		sampleTaskBlockWithText("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1, "leaf #work/project/milestone-one"),
+		sampleTaskBlockWithText("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 2, "mid #work/project"),
 		sampleTaskBlockWithText("cccccccc-cccc-cccc-cccc-cccccccccccc", 3, "root #work"),
 	}
 	if err := app.db.IndexFileBlocks("Work", "Journal", "Daily", blocks, nil); err != nil {
@@ -935,7 +886,7 @@ func TestQueryBlocksByTag_PrefixSemantics(t *testing.T) {
 		t.Errorf("expected #work to match all 3 (prefix), got %d", len(res))
 	}
 
-	res2, err := app.db.QueryBlocksByTag("work/sogav/milestone-one")
+	res2, err := app.db.QueryBlocksByTag("work/project/milestone-one")
 	if err != nil {
 		t.Fatalf("QueryBlocksByTag leaf: %v", err)
 	}

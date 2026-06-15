@@ -194,9 +194,9 @@ CREATE TABLE tasks (
 -- Namespace Hierarchical Tags
 CREATE TABLE tags (
     block_id TEXT NOT NULL,
-    raw_path TEXT NOT NULL,  -- 'work/sogav/milestone-one'
+    raw_path TEXT NOT NULL,  -- 'work/project/milestone-one'
     level_0 TEXT NOT NULL,   -- 'work'
-    level_1 TEXT,            -- 'sogav'
+    level_1 TEXT,            -- 'project'
     level_2 TEXT,            -- 'milestone-one'
     PRIMARY KEY(block_id, raw_path),
     FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
@@ -250,9 +250,9 @@ type App struct {
 	db  *sql.DB
 }
 
-// FetchPageTimeline returns day-grouped blocks for the streaming Page
-// (notebook/section/page), paged for infinite virtualization scroll.
-func (a *App) FetchPageTimeline(notebook, section, page string, offset int, limit int) ([]DayGroup, error)
+// FetchPageBlocks returns a flat list of all blocks for a page (single file),
+// ordered by line_number. Each block carries its own file_date.
+func (a *App) FetchPageBlocks(notebook, section, page string) ([]ParsedBlock, error)
 
 // UpdateBlockState transitions task checkbox and updates raw plaintext files atomically
 func (a *App) UpdateBlockState(blockID string, newState string) error
