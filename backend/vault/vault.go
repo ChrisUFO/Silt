@@ -182,6 +182,10 @@ plugins:
     silt-kanban:
       default_col: "TODO"
       columns: ["TODO", "DOING", "DONE"]
+
+# UI Preferences (per-vault)
+ui:
+  sidebar_width: 256
 `
 	configPath := filepath.Join(vaultPath, ".system", "config.yaml")
 	// Format config with absolute vault path (with forward slashes for cross platform consistency)

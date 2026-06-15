@@ -2,8 +2,10 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -14,6 +16,19 @@ import (
 
 	_ "modernc.org/sqlite"
 )
+
+// ErrNetworkFilesystem is returned when the vault index path is detected to be
+// on a network filesystem (NFS/SMB/CIFS/…). WAL mode requires shared memory
+// which network mounts cannot provide, so the index would fail with an opaque
+// SQLite error. This sentinel lets the UI surface a clear, actionable message
+// instead (#79).
+var ErrNetworkFilesystem = errors.New("network filesystem detected")
+
+// ErrWALRejected is returned when the database is on-disk but SQLite did not
+// accept WAL mode (the PRAGMA returned a different journal mode). This is a
+// belt-and-suspenders check: some mounts silently downgrade away from WAL
+// without erroring (#79).
+var ErrWALRejected = errors.New("WAL mode rejected by the filesystem")
 
 type DatabaseManager struct {
 	db   *sql.DB
@@ -41,6 +56,15 @@ type FileStat struct {
 // foreign_keys) are per-connection and are re-applied on every open. On an
 // in-memory DB, `journal_mode=WAL` is a safe no-op (SQLite keeps "memory").
 func NewDatabaseManager(dbPath string) (*DatabaseManager, error) {
+	// Pre-open guard (#79): detect network filesystems before sql.Open so the
+	// user gets a clear "move to a local folder" message instead of an opaque
+	// SQLite shared-memory error. Only check for on-disk paths.
+	if dbPath != "" {
+		if err := detectNetworkFilesystem(filepath.Dir(dbPath)); err != nil {
+			return nil, err
+		}
+	}
+
 	dsn := dbPath
 	if dsn == "" {
 		// cache=shared lets a second connection (pluginRawQuery's read-only
@@ -124,6 +148,20 @@ func (dm *DatabaseManager) initSchema() error {
 	// without re-running the pragma.
 	if _, err := dm.db.Exec("PRAGMA journal_mode = WAL;"); err != nil {
 		return fmt.Errorf("failed to set journal mode: %w", err)
+	}
+
+	// Belt-and-suspenders (#79): assert the journal mode actually stuck. Some
+	// mounts silently downgrade away from WAL (returning "memory" or "delete"
+	// instead of erroring). On an in-memory DB the mode is "memory" which is
+	// expected — only assert for on-disk databases.
+	if dm.path != "" {
+		var mode string
+		if err := dm.db.QueryRow("PRAGMA journal_mode;").Scan(&mode); err != nil {
+			return fmt.Errorf("failed to read journal mode: %w", err)
+		}
+		if !strings.EqualFold(mode, "wal") {
+			return fmt.Errorf("%w: PRAGMA journal_mode returned %q instead of \"wal\" — the filesystem may not support shared memory", ErrWALRejected, mode)
+		}
 	}
 	// Per-connection pragmas. synchronous=NORMAL is safe under WAL (the WAL
 	// itself preserves durability across app crashes; only an OS crash can
