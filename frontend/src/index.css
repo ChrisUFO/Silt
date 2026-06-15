@@ -373,3 +373,86 @@ body {
 .onboarding-btn:active {
   transform: translateY(0);
 }
+
+/* TipTap / ProseMirror Editor Styles */
+.ProseMirror {
+  font-family: var(--editor-font-family);
+  font-size: var(--editor-font-size);
+  line-height: var(--editor-line-height);
+  color: var(--text-primary);
+  outline: none;
+  min-height: 60px;
+}
+
+.ProseMirror:focus {
+  outline: none;
+}
+
+/* Block node containers — each Silt block renders as a top-level div inside
+   the ProseMirror doc. Indentation is driven by the data-depth attribute. */
+.ProseMirror > div[data-type] {
+  position: relative;
+  padding: 4px 0;
+  min-height: 28px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* Indentation: each depth level adds left padding via the indent unit. */
+.ProseMirror > div[data-depth='1'] {
+  padding-left: calc(var(--indent-unit) * 1);
+}
+.ProseMirror > div[data-depth='2'] {
+  padding-left: calc(var(--indent-unit) * 2);
+}
+.ProseMirror > div[data-depth='3'] {
+  padding-left: calc(var(--indent-unit) * 3);
+}
+.ProseMirror > div[data-depth='4'] {
+  padding-left: calc(var(--indent-unit) * 4);
+}
+.ProseMirror > div[data-depth='5'] {
+  padding-left: calc(var(--indent-unit) * 5);
+}
+.ProseMirror > div[data-depth='6'] {
+  padding-left: calc(var(--indent-unit) * 6);
+}
+
+/* Header blocks render larger/bolder based on depth (heading level). */
+.ProseMirror > div[data-type='header'][data-depth='1'] {
+  font-size: 1.75em;
+  font-weight: 700;
+  padding-top: 12px;
+}
+.ProseMirror > div[data-type='header'][data-depth='2'] {
+  font-size: 1.4em;
+  font-weight: 700;
+  padding-top: 10px;
+}
+.ProseMirror > div[data-type='header'][data-depth='3'] {
+  font-size: 1.2em;
+  font-weight: 600;
+}
+
+/* Placeholder text for empty blocks. */
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--text-muted);
+  opacity: 0.5;
+  pointer-events: none;
+  height: 0;
+}
+
+/* Task blocks: DONE tasks get strikethrough + muted text. */
+.ProseMirror > div[data-type='task'][data-status='DONE'] {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+/* Selection highlight uses the theme accent. */
+.ProseMirror ::selection {
+  background: color-mix(in srgb, var(--accent-primary-start) 25%, transparent);
+}

@@ -12,28 +12,44 @@ import (
 func TestEnsureBlockID(t *testing.T) {
 	// Line without ID
 	line1 := "- [ ] TODO TASK Draft README definition file"
-	id1, newLine1, modified1 := EnsureBlockID(line1)
+	id1, _, newLine1, modified1 := EnsureBlockID(line1)
 	if !modified1 {
 		t.Errorf("Expected line to be modified")
 	}
 	if id1 == "" {
 		t.Errorf("Expected an ID to be generated")
 	}
-	if !strings.Contains(newLine1, "<!-- id: "+id1+" -->") {
+	if !strings.Contains(newLine1, "<!-- id: "+id1) {
 		t.Errorf("Expected new line to contain ID comment")
 	}
 
-	// Line with ID
+	// Line with ID (old format, no date)
 	line2 := "- [ ] TODO TASK Draft README <!-- id: 8fa72c3b-d1e5-4b0d-8ea2-bfcfd2ee7f8a -->"
-	id2, newLine2, modified2 := EnsureBlockID(line2)
+	id2, fileDate2, newLine2, modified2 := EnsureBlockID(line2)
 	if modified2 {
 		t.Errorf("Expected line not to be modified")
 	}
 	if id2 != "8fa72c3b-d1e5-4b0d-8ea2-bfcfd2ee7f8a" {
 		t.Errorf("Expected matched ID, got: %s", id2)
 	}
+	if fileDate2 != "" {
+		t.Errorf("Expected empty file_date for old-format comment, got: %s", fileDate2)
+	}
 	if newLine2 != line2 {
 		t.Errorf("Expected output line to equal input line")
+	}
+
+	// Line with ID + date (new format)
+	line3 := "- note with date <!-- id: 8fa72c3b-d1e5-4b0d-8ea2-bfcfd2ee7f8a @ 2026-06-14 -->"
+	id3, fileDate3, _, modified3 := EnsureBlockID(line3)
+	if modified3 {
+		t.Errorf("Expected line not to be modified")
+	}
+	if id3 != "8fa72c3b-d1e5-4b0d-8ea2-bfcfd2ee7f8a" {
+		t.Errorf("Expected matched ID, got: %s", id3)
+	}
+	if fileDate3 != "2026-06-14" {
+		t.Errorf("Expected file_date 2026-06-14, got: %s", fileDate3)
 	}
 }
 

@@ -15,7 +15,11 @@
   import PluginView from './components/PluginView.svelte'
   import SettingsShell from './components/settings/SettingsShell.svelte'
   import { loadPlugins } from './plugins/loader'
-  import { initConfigHotReload, loadConfig, settings } from './settings/store.svelte'
+  import {
+    initConfigHotReload,
+    loadConfig,
+    settings
+  } from './settings/store.svelte'
   import { initEditorTokens } from './settings/editor-tokens.svelte'
   import { initThemes } from './theme/store.svelte'
   import { matchHotkey } from './settings/hotkeys'
@@ -167,7 +171,9 @@
         isInitialized = true
         // Populate the config store now that a vault exists so config-driven
         // global shortcuts work immediately after onboarding.
-        loadConfig().catch((e) => console.error('Post-init config load failed:', e))
+        loadConfig().catch((e) =>
+          console.error('Post-init config load failed:', e)
+        )
         window.dispatchEvent(new CustomEvent('refresh-navigation'))
       }
     } catch (e) {
@@ -329,7 +335,6 @@
               notebook={activeNotebook}
               section={activeSection}
               page={activePage}
-              targetDate={searchTargetDate}
               targetBlockId={searchTargetBlockId}
               targetKey={searchTargetKey}
               {activeFocusedBlockAncestors}
@@ -396,9 +401,9 @@
     <SettingsShell
       bind:activeTab={settingsTab}
       onClose={() => (showSettings = false)}
-      activeNotebook={activeNotebook}
-      activeSection={activeSection}
-      activePage={activePage}
+      {activeNotebook}
+      {activeSection}
+      {activePage}
     />
   {/if}
 </main>

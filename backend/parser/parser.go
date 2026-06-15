@@ -20,7 +20,13 @@ import (
 // 7: Remainder description (which may contain the UUID comment at the end)
 var TaskRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s(TODO|DOING|DONE)\sTASK(?:\s\[([^\]]*)\])?(?:\(([^)]*)\))?(?:#(\d+))?\s(.*)$`)
 
-var IDRegex = regexp.MustCompile(`<!-- id: ([a-f0-9\-]{36}) -->\s*$`)
+// IDRegex captures the trailing block-identity comment. The format is:
+//   <!-- id: uuid -->
+// or (with per-block file_date, post per-day-file-model removal):
+//   <!-- id: uuid @ YYYY-MM-DD -->
+// The date suffix is optional for backward compatibility with notes created
+// under the old per-day-file model (it is assigned during migration).
+var IDRegex = regexp.MustCompile(`<!-- id: ([a-f0-9\-]{36})(?:\s*@\s*(\d{4}-\d{2}-\d{2}))?\s*-->\s*$`)
 
 // BlockRefRegex matches a global block reference ((uuid)). Read-only detector
 // used by the resolver; it never injects IDs (code-fence protection in
@@ -34,20 +40,31 @@ func generateUUIDv4() string {
 	return uuid.New().String()
 }
 
-func EnsureBlockID(line string) (string, string, bool) {
+// EnsureBlockID extracts (or assigns) the block identity — both the UUID and
+// the per-block file_date — from the trailing comment. Returns:
+//   id        — the UUID ("" for empty lines)
+//   fileDate  — the date from the comment, or "" if none was embedded
+//   newLine   — the line with the comment preserved/assigned
+//   modified  — true if a new comment was injected (caller should rewrite)
+func EnsureBlockID(line string) (id, fileDate, newLine string, modified bool) {
 	clean := strings.TrimSpace(line)
 	if clean == "" {
-		return "", line, false
+		return "", "", line, false
 	}
 	matches := IDRegex.FindStringSubmatch(line)
 	if len(matches) > 1 {
-		return matches[1], line, false
+		id = matches[1]
+		if len(matches) > 2 {
+			fileDate = matches[2]
+		}
+		return id, fileDate, line, false
 	}
 
 	newID := generateUUIDv4()
+	today := time.Now().Format("2006-01-02")
 	cleanLine := strings.TrimRight(line, "\r\n")
-	newLine := fmt.Sprintf("%s <!-- id: %s -->", cleanLine, newID)
-	return newID, newLine, true
+	newLine = fmt.Sprintf("%s <!-- id: %s @ %s -->", cleanLine, newID, today)
+	return newID, today, newLine, true
 }
 
 func CleanLineID(line string) string {
@@ -106,7 +123,7 @@ func parseLeadingIndent(line string, spacesPerTab int) int {
 }
 
 func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, string, bool) {
-	blockID, newLine, modified := EnsureBlockID(line)
+	blockID, blockFileDate, newLine, modified := EnsureBlockID(line)
 	if blockID == "" {
 		// Empty line, return empty note block
 		return ParsedBlock{
@@ -171,6 +188,7 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 			DueDate:    dueDate,
 			Priority:   priority,
 			LineNumber: lineNumber,
+			FileDate:   blockFileDate,
 		}, newLine, modified
 	}
 
@@ -191,6 +209,7 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 				RawText:    newLine,
 				CleanText:  strings.TrimSpace(headerText),
 				LineNumber: lineNumber,
+				FileDate:   blockFileDate,
 			}, newLine, modified
 		}
 	}
@@ -209,6 +228,7 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 		RawText:    newLine,
 		CleanText:  strings.TrimSpace(rawCleaned),
 		LineNumber: lineNumber,
+		FileDate:   blockFileDate,
 	}, newLine, modified
 }
 
@@ -318,6 +338,13 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 		outputLines = append(outputLines, newLine)
 
 		if block.ID != "" {
+			// Backward-compat: blocks whose comment predates the per-block
+			// file_date format (<!-- id: uuid --> with no @ date) inherit the
+			// file-level default date (from frontmatter or path-derived).
+			if block.FileDate == "" {
+				block.FileDate = meta.Date
+			}
+
 			// Resolve Parent ID
 			depth := block.Depth
 			if depth > 0 && depth-1 < len(activeIDs) {
@@ -467,10 +494,15 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 	}
 	indent := strings.Repeat(" ", block.Depth*spacesPerTab)
 
-	// Build ID suffix
+	// Build ID suffix — includes per-block file_date if present:
+	//   <!-- id: uuid @ YYYY-MM-DD -->
 	idSuffix := ""
 	if block.ID != "" {
-		idSuffix = fmt.Sprintf(" <!-- id: %s -->", block.ID)
+		if block.FileDate != "" {
+			idSuffix = fmt.Sprintf(" <!-- id: %s @ %s -->", block.ID, block.FileDate)
+		} else {
+			idSuffix = fmt.Sprintf(" <!-- id: %s -->", block.ID)
+		}
 	}
 
 	if block.Type == BlockTask {

@@ -140,12 +140,12 @@ func ScanWorkspace(vaultPath string, spacesPerTab int) (results []ScanResult, wa
 func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult {
 	res := ScanResult{Path: path}
 
-	// 1. Resolve default notebook, section, page, and date from file path.
+	// 1. Resolve default notebook, section, page from file path.
 	//
-	// Hierarchy (Section is optional, nesting can be deeper than one level):
-	//   <vault>/<notebook>/[<section>/...]<page>/<file>.md
+	// New file model (post per-day removal): a page IS a file, not a directory.
+	//   <vault>/<notebook>/[<section>/...]<page>.md
 	//   - notebook = the top-level folder under the vault
-	//   - page     = the folder directly containing the file (streaming unit)
+	//   - page     = the filename without .md
 	//   - section  = the path between notebook and page ("" when the page
 	//                lives directly under the notebook; one or more segments
 	//                otherwise, joined by "/")
@@ -159,53 +159,45 @@ func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult
 	parts := strings.Split(relPathClean, "/")
 	filename := parts[len(parts)-1]
 
+	// Strip the .md extension to get the page name.
+	pageName := filename
+	if strings.HasSuffix(strings.ToLower(pageName), ".md") {
+		pageName = pageName[:len(pageName)-3]
+	}
+
 	var notebook, section, page string
 	// ancestors are the path segments excluding the filename itself.
 	ancestors := parts[:len(parts)-1]
-	if len(ancestors) >= 2 {
+	if len(ancestors) >= 1 {
 		notebook = ancestors[0]
-		page = ancestors[len(ancestors)-1]
-		if len(ancestors) > 2 {
-			section = strings.Join(ancestors[1:len(ancestors)-1], "/")
+		page = pageName
+		if len(ancestors) > 1 {
+			section = strings.Join(ancestors[1:], "/")
 		}
 	} else {
-		// Files must live at least two levels beneath the vault root
-		// (vault/notebook/page/file.md); anything shallower (e.g. a stray
-		// .md directly inside a notebook folder) is a layout error we
-		// surface rather than silently mis-bucket.
-		res.Warnings = append(res.Warnings, fmt.Sprintf("skipped %q: expected to live under <vault>/<notebook>/[<section>/]<page>/", relPathClean))
+		// Files directly in the vault root (no notebook) are a layout error.
+		res.Warnings = append(res.Warnings, fmt.Sprintf("skipped %q: expected to live under <vault>/<notebook>/[<section>/]", relPathClean))
 		return res
 	}
 
-	// Extract date from filename if possible, otherwise use modification date
-	dateStr := ""
-	// info captures the file's stat for both the date fallback and the
-	// MTime/Size fields used by the incremental re-indexer (#29).
+	// Date: no longer extracted from the filename. Each block carries its own
+	// file_date in the trailing comment. The file-level default (used when a
+	// block's comment has no date) falls back to the file's modification time,
+	// which is a reasonable proxy for "when was this content written."
 	var info os.FileInfo
-	if matches := DateFileRegex.FindStringSubmatch(filename); len(matches) > 1 {
-		dateStr = matches[1]
-	} else {
-		// Use modification time
-		var err error
-		info, err = os.Stat(path)
-		if err == nil {
-			dateStr = info.ModTime().Format("2006-01-02")
-		} else {
-			dateStr = time.Now().Format("2006-01-02")
-		}
-	}
-
-	// Stat the file (if not already) to populate MTime/Size for the
-	// incremental re-indexer. A failure here is non-fatal: the file is still
-	// parsed, it just won't be skippable on the next restart.
-	if info == nil {
-		if st, err := os.Stat(path); err == nil {
-			info = st
-		}
-	}
-	if info != nil {
+	info, err = os.Stat(path)
+	if err == nil {
 		res.MTime = info.ModTime()
 		res.Size = info.Size()
+	} else {
+		info = nil
+	}
+
+	dateStr := ""
+	if info != nil {
+		dateStr = info.ModTime().Format("2006-01-02")
+	} else {
+		dateStr = time.Now().Format("2006-01-02")
 	}
 
 	// 2. Read and parse file content

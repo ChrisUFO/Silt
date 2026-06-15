@@ -21,6 +21,7 @@ type ParsedBlock struct {
 	DueDate    string    `json:"due_date,omitempty"`
 	Priority   int       `json:"priority,omitempty"`
 	LineNumber int       `json:"line_number"`
+	FileDate   string    `json:"file_date,omitempty"`
 }
 
 type FileMetadata struct {

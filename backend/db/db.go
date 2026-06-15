@@ -437,13 +437,13 @@ func ExtractTags(text string) []string {
 }
 
 // ClearFileBlocks deletes all blocks, tasks, and tags associated with a specific page on a given day.
-func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, notebook, section, page, fileDate string) error {
-	query := "DELETE FROM blocks WHERE notebook = ? AND section = ? AND page = ? AND file_date = ?"
+func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, notebook, section, page string) error {
+	query := "DELETE FROM blocks WHERE notebook = ? AND section = ? AND page = ?"
 	var err error
 	if tx != nil {
-		_, err = tx.Exec(query, notebook, section, page, fileDate)
+		_, err = tx.Exec(query, notebook, section, page)
 	} else {
-		_, err = dm.db.Exec(query, notebook, section, page, fileDate)
+		_, err = dm.db.Exec(query, notebook, section, page)
 	}
 	return err
 }
@@ -454,9 +454,9 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, notebook, section, page, 
 // (e.g. malformed YAML frontmatter). They are logged at warn level so a
 // maintainer can grep the output without changing the call signature or
 // the public API.
-func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page, fileDate string, blocks []parser.ParsedBlock, fileTags []string, fileWarnings ...string) error {
+func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, fileWarnings ...string) error {
 	for _, w := range fileWarnings {
-		log.Printf("db.IndexFileBlocks(%s/%s/%s): %s", notebook, section, fileDate, w)
+		log.Printf("db.IndexFileBlocks(%s/%s/%s): %s", notebook, section, page, w)
 	}
 
 	tx, err := dm.db.Begin()
@@ -466,10 +466,7 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page, fileDate str
 	defer tx.Rollback()
 
 	// Delete any pre-existing rows for the block IDs we're about to (re)insert.
-	// Block IDs are stable across re-parses, but the (notebook, section, file_date)
-	// tuple is denormalized on each row. If the file's frontmatter metadata
-	// changed since the last index, the old rows still sit under the previous
-	// tuple and would collide on PRIMARY KEY. Cascading FKs clean up their
+	// Block IDs are stable across re-parses. Cascading FKs clean up their
 	// related tasks and tags.
 	if len(blocks) > 0 {
 		placeholders := make([]string, len(blocks))
@@ -486,7 +483,7 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page, fileDate str
 
 	// Also clear by metadata to catch blocks that the user removed from the
 	// file (their IDs are no longer in the new parse output).
-	if err := dm.ClearFileBlocks(tx, notebook, section, page, fileDate); err != nil {
+	if err := dm.ClearFileBlocks(tx, notebook, section, page); err != nil {
 		return fmt.Errorf("failed to clear old blocks: %w", err)
 	}
 
@@ -513,10 +510,14 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page, fileDate str
 	defer stmtTag.Close()
 
 	for blockIdx, block := range blocks {
-		// 1. Insert into blocks
+		// 1. Insert into blocks — each block carries its own file_date.
 		var parentID interface{}
 		if block.ParentID != "" {
 			parentID = block.ParentID
+		}
+		fileDate := block.FileDate
+		if fileDate == "" {
+			fileDate = time.Now().Format("2006-01-02")
 		}
 		_, err = stmtBlock.Exec(block.ID, parentID, notebook, section, page, fileDate, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
 		if err != nil {
@@ -659,7 +660,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 		}
 
 		// Also clear by metadata to catch blocks the user removed from the file.
-		if err := dm.ClearFileBlocks(tx, res.Notebook, res.Section, res.Page, res.Date); err != nil {
+		if err := dm.ClearFileBlocks(tx, res.Notebook, res.Section, res.Page); err != nil {
 			return 0, skipped, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
 		}
 
@@ -668,7 +669,14 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 			if block.ParentID != "" {
 				parentID = block.ParentID
 			}
-			_, err = stmtBlock.Exec(block.ID, parentID, res.Notebook, res.Section, res.Page, res.Date, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
+			// Per-block file_date: the parser fills FileDate from the comment
+			// or meta.Date before blocks reach either indexer. This fallback
+			// is a last resort — kept consistent with IndexFileBlocks.
+			fileDate := block.FileDate
+			if fileDate == "" {
+				fileDate = time.Now().Format("2006-01-02")
+			}
+			_, err = stmtBlock.Exec(block.ID, parentID, res.Notebook, res.Section, res.Page, fileDate, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
 			if err != nil {
 				return 0, skipped, fmt.Errorf("failed to insert block %s: %w", block.ID, err)
 			}
@@ -848,6 +856,55 @@ func (dm *DatabaseManager) FetchTimelineDays(notebook, section, page string, lim
 	}
 
 	return groups, nil
+}
+
+// FetchPageBlocks returns a flat ordered list of all blocks for a page,
+// replacing the day-grouped FetchTimelineDays for the editor surface. With
+// the per-day file model removed, a page is a single file; all blocks share
+// the same (notebook, section, page) and are ordered by line_number. Each
+// block carries its own file_date.
+func (dm *DatabaseManager) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBlock, error) {
+	rows, err := dm.db.Query(`
+		SELECT b.id, b.parent_id, b.depth, b.type, b.raw_content, b.clean_content, b.line_number,
+		       b.file_date,
+		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0)
+		FROM blocks b
+		LEFT JOIN tasks t ON b.id = t.block_id
+		WHERE b.notebook = ? AND b.section = ? AND b.page = ?
+		ORDER BY b.line_number ASC
+	`, notebook, section, page)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query page blocks: %w", err)
+	}
+	defer rows.Close()
+
+	var blocks []parser.ParsedBlock
+	for rows.Next() {
+		var b parser.ParsedBlock
+		var bType, fileDate string
+		var parentID sql.NullString
+		var status, owner, start, due string
+		var priority int
+
+		if err := rows.Scan(&b.ID, &parentID, &b.Depth, &bType, &b.RawText, &b.CleanText, &b.LineNumber, &fileDate, &status, &owner, &start, &due, &priority); err != nil {
+			return nil, err
+		}
+		if parentID.Valid {
+			b.ParentID = parentID.String
+		}
+		b.Type = parser.BlockType(bType)
+		b.Status = status
+		b.Owner = owner
+		b.StartDate = start
+		b.DueDate = due
+		b.Priority = priority
+		b.FileDate = fileDate
+		blocks = append(blocks, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating page blocks: %w", err)
+	}
+	return blocks, nil
 }
 
 // QueryTasksWithFilters fetches task results matching the provided query filters.

@@ -218,9 +218,15 @@ func (dw *DirectoryWatcher) Start() error {
 }
 
 // resolveFileMetadata derives (notebook, section, page, date) for a markdown
-// file from its path relative to the vault root, mirroring the scanner:
-// notebook = top folder, page = the folder containing the file, section =
-// the path between them ("" when the page is directly under the notebook).
+// file from its path relative to the vault root.
+//
+// New file model (post per-day removal): a page IS a file.
+//   <vault>/<notebook>/[<section>/...]<page>.md
+//   - notebook = top folder
+//   - page     = filename without .md
+//   - section  = the path between them ("" when direct child of notebook)
+// The dateStr is derived from the file's modification time (each block carries
+// its own file_date in the trailing comment; this is just the default fallback).
 // Files too shallow to resolve return empty notebook/section/page so callers
 // can skip them rather than indexing under empty strings.
 func (dw *DirectoryWatcher) resolveFileMetadata(path string) (notebook, section, page, dateStr string) {
@@ -234,26 +240,28 @@ func (dw *DirectoryWatcher) resolveFileMetadata(path string) (notebook, section,
 	filename := parts[len(parts)-1]
 	ancestors := parts[:len(parts)-1]
 
-	if len(ancestors) >= 2 {
+	// Strip .md extension to get the page name.
+	pageName := filename
+	if strings.HasSuffix(strings.ToLower(pageName), ".md") {
+		pageName = pageName[:len(pageName)-3]
+	}
+
+	if len(ancestors) >= 1 {
 		notebook = ancestors[0]
-		page = ancestors[len(ancestors)-1]
-		if len(ancestors) > 2 {
-			section = strings.Join(ancestors[1:len(ancestors)-1], "/")
+		page = pageName
+		if len(ancestors) > 1 {
+			section = strings.Join(ancestors[1:], "/")
 		}
 	} else {
 		notebook, section, page = "", "", ""
 	}
 
 	dateStr = ""
-	if matches := parser.DateFileRegex.FindStringSubmatch(filename); len(matches) > 1 {
-		dateStr = matches[1]
+	info, err := os.Stat(path)
+	if err == nil {
+		dateStr = info.ModTime().Format("2006-01-02")
 	} else {
-		info, err := os.Stat(path)
-		if err == nil {
-			dateStr = info.ModTime().Format("2006-01-02")
-		} else {
-			dateStr = time.Now().Format("2006-01-02")
-		}
+		dateStr = time.Now().Format("2006-01-02")
 	}
 
 	return notebook, section, page, dateStr
@@ -277,9 +285,10 @@ func (dw *DirectoryWatcher) listenLoop() {
 			}
 
 			if isDir {
-				// If new directory is created, watch it recursively
 				if event.Has(fsnotify.Create) {
-					_ = dw.AddRecursive(path)
+					if err := dw.AddRecursive(path); err != nil {
+						log.Printf("DirectoryWatcher: failed to watch new directory %s: %v", path, err)
+					}
 				}
 				continue
 			}
@@ -343,11 +352,13 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 		}
 		contentBytes, err := os.ReadFile(path)
 		if err != nil {
+			log.Printf("reindexFile: os.ReadFile failed for %s: %v", path, err)
 			return
 		}
 
 		blocks, meta, newContent, modified, err := parser.ParseFileContent(string(contentBytes), notebook, section, page, dateStr, dw.spacesPerTab)
 		if err != nil {
+			log.Printf("reindexFile: ParseFileContent failed for %s: %v", path, err)
 			return
 		}
 
@@ -357,7 +368,7 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 		}
 
 		dw.coordinator.WithDBWrite(func() {
-			if err := dw.dm.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, meta.Date, blocks, meta.Tags, meta.Warnings...); err != nil {
+			if err := dw.dm.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...); err != nil {
 				log.Printf("reindexFile: IndexFileBlocks failed for %s: %v", path, err)
 				return
 			}
@@ -374,7 +385,7 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 }
 
 func (dw *DirectoryWatcher) clearIndexForFile(path string) {
-	notebook, section, page, dateStr := dw.resolveFileMetadata(path)
+	notebook, section, page, _ := dw.resolveFileMetadata(path)
 	if notebook == "" {
 		return
 	}
@@ -382,7 +393,7 @@ func (dw *DirectoryWatcher) clearIndexForFile(path string) {
 	// and all other DB-touching paths. Without this, a concurrent file event
 	// can race an in-flight query and produce database-locked errors.
 	dw.coordinator.WithDBWrite(func() {
-		_ = dw.dm.ClearFileBlocks(nil, notebook, section, page, dateStr)
+		_ = dw.dm.ClearFileBlocks(nil, notebook, section, page)
 		// Drop the files row so a future startup scan doesn't think the
 		// deleted/renamed file is still "unchanged" and skip re-indexing the
 		// new occupant of that path.

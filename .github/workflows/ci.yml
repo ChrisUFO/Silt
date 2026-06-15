@@ -49,7 +49,11 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: frontend
-        run: npm ci
+        # npm install (not ci) because the lockfile is generated on Windows
+        # and may not include all Linux-specific optional dependencies
+        # (e.g. @esbuild/linux-x64). npm install resolves missing platform
+        # packages; npm ci requires a perfectly synced lockfile.
+        run: npm install
 
       - name: Placeholder frontend/dist
         # `wails generate module` compiles main.go, whose //go:embed
@@ -70,6 +74,10 @@ jobs:
       - name: svelte-check
         working-directory: frontend
         run: npm run check
+
+      - name: Frontend unit tests (Vitest)
+        working-directory: frontend
+        run: npm test
 
       - name: Build Go
         run: go build ./...
