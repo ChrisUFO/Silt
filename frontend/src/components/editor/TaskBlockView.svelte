@@ -10,8 +10,8 @@
   )
 
   function cycleStatus() {
-    const next =
-      status === 'TODO' ? 'DOING' : status === 'DOING' ? 'DONE' : 'TODO'
+    const s = status.toUpperCase()
+    const next = s === 'TODO' ? 'DOING' : s === 'DOING' ? 'DONE' : 'TODO'
     updateAttributes({ status: next })
   }
 

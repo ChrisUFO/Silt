@@ -122,7 +122,7 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
     content.push({
       type: 'noteBlock',
       attrs: {
-        id: null,
+        id: crypto.randomUUID(),
         depth: 0,
         bullet: '- ',
         file_date: new Date().toISOString().slice(0, 10)

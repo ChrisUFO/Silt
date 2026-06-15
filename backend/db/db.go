@@ -669,12 +669,12 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 			if block.ParentID != "" {
 				parentID = block.ParentID
 			}
-			// Per-block file_date: use the block's own FileDate (from the
-			// trailing comment), falling back to the file-level date (from
-			// frontmatter or mod-time) for backward compat.
+			// Per-block file_date: the parser fills FileDate from the comment
+			// or meta.Date before blocks reach either indexer. This fallback
+			// is a last resort — kept consistent with IndexFileBlocks.
 			fileDate := block.FileDate
 			if fileDate == "" {
-				fileDate = res.Date
+				fileDate = time.Now().Format("2006-01-02")
 			}
 			_, err = stmtBlock.Exec(block.ID, parentID, res.Notebook, res.Section, res.Page, fileDate, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
 			if err != nil {

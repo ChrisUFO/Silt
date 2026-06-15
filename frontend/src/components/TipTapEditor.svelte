@@ -52,6 +52,8 @@
   let showSlashMenu = $state(false)
 
   const initialDoc = blocksToDoc(blocks)
+  const initialKey = `${blocks.map((b) => b.id).join(',')}:${blocks.length}`
+  let lastSyncedBlocksKey = $state(initialKey)
   const editorStore = createEditor({
     extensions: [
       StarterKit.configure({
@@ -103,11 +105,13 @@
   })
 
   // --- External content sync ------------------------------------------------
-  let lastSyncedBlocksKey = $state('')
   $effect(() => {
     const key = `${blocks.map((b) => b.id).join(',')}:${blocks.length}`
     if (!editorInstance || editorInstance.isDestroyed) return
     if (key === lastSyncedBlocksKey) return
+    // Don't clobber the editor's content while the user is actively editing.
+    // The editor is the source of truth until blur; external updates wait.
+    if (isFocused) return
     lastSyncedBlocksKey = key
 
     suppressUpdate = true

@@ -1,8 +1,6 @@
 import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
-import { settings } from '../../settings/store.svelte'
-import { matchHotkey } from '../../settings/hotkeys'
 
 // SiltBlockKeymaps — outliner keyboard semantics for the TipTap editor.
 //
@@ -140,14 +138,6 @@ export const SiltBlockKeymaps = Extension.create({
       },
 
       Tab: () => {
-        const hk = settings.config?.hotkeys ?? {}
-        // Tab is the default indent; check if it's been remapped.
-        if (
-          hk.indent_block &&
-          !matchHotkey({ key: 'Tab' } as KeyboardEvent, hk.indent_block)
-        ) {
-          return false
-        }
         const info = currentBlockInfo(this.editor)
         if (!info) return false
 
@@ -173,16 +163,6 @@ export const SiltBlockKeymaps = Extension.create({
       },
 
       'Shift-Tab': () => {
-        const hk = settings.config?.hotkeys ?? {}
-        if (
-          hk.unindent_block &&
-          !matchHotkey(
-            { key: 'Tab', shiftKey: true } as KeyboardEvent,
-            hk.unindent_block
-          )
-        ) {
-          return false
-        }
         const info = currentBlockInfo(this.editor)
         if (!info) return false
         if (info.depth > 0) {
