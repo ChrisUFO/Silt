@@ -484,6 +484,7 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 	}
 
 	var writeErr error
+	a.coordinator.LockBlockWrite(blockID, func() {
 	a.coordinator.LockFileWrite(filePath, func() {
 		contentBytes, err := os.ReadFile(filePath)
 		if err != nil {
@@ -551,6 +552,7 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 			}
 		}
 	})
+	}) // LockBlockWrite
 
 	if writeErr != nil {
 		return writeErr
@@ -2184,24 +2186,12 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 		}
 
 		// 4. Clear old index entries + re-index all files at new paths.
-		var mdFiles []string
 		for _, fc := range files {
-			mdFiles = append(mdFiles, fc.oldPath)
-		}
-		a.coordinator.WithDBWrite(func() {
-			_, _ = a.db.SQLDB().Exec("DELETE FROM blocks WHERE notebook = ?", safeOldNotebook)
-		})
-		for _, oldMdPath := range mdFiles {
-			// Derive the new path by swapping the notebook root.
-			rel, err := filepath.Rel(oldDir, oldMdPath)
+			rel, err := filepath.Rel(oldDir, fc.oldPath)
 			if err != nil {
 				continue
 			}
-			newMdPath := filepath.Join(newDir, rel)
-			a.coordinator.WithDBWrite(func() {
-				_ = a.db.ForgetFile(oldMdPath)
-			})
-			// Derive section/page from the relative path.
+			// Derive section/page from the relative path for ClearFileBlocks.
 			relParts := strings.Split(filepath.ToSlash(rel), "/")
 			var section, page string
 			if len(relParts) == 1 {
@@ -2210,6 +2200,13 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 				section = relParts[0]
 				page = strings.TrimSuffix(relParts[len(relParts)-1], ".md")
 			}
+			// Clear old index entries via the typed API (not raw SQL) so
+			// the files mtime cache is also cleaned via ForgetFile.
+			a.coordinator.WithDBWrite(func() {
+				_ = a.db.ClearFileBlocks(nil, safeOldNotebook, section, page)
+				_ = a.db.ForgetFile(fc.oldPath)
+			})
+			newMdPath := filepath.Join(newDir, rel)
 			a.reindexFile(newMdPath, safeNewNotebook, section, page)
 		}
 	})
@@ -2331,15 +2328,45 @@ func (a *App) DeleteNotebook(notebook string) error {
 
 	var runErr error
 	a.coordinator.LockFileWrite(nbPath, func() {
+		// Walk the subtree BEFORE trashing to collect file paths and their
+		// (section, page) for per-page index cleanup via the typed API.
+		type pageInfo struct {
+			path    string
+			section string
+			page    string
+		}
+		var pages []pageInfo
+		_ = filepath.WalkDir(nbPath, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if !d.IsDir() && strings.HasSuffix(path, ".md") {
+				rel, _ := filepath.Rel(nbPath, path)
+				relParts := strings.Split(filepath.ToSlash(rel), "/")
+				var section, page string
+				if len(relParts) == 1 {
+					page = strings.TrimSuffix(relParts[0], ".md")
+				} else {
+					section = relParts[0]
+					page = strings.TrimSuffix(relParts[len(relParts)-1], ".md")
+				}
+				pages = append(pages, pageInfo{path: path, section: section, page: page})
+			}
+			return nil
+		})
+
 		a.tracker.RegisterWrite(nbPath)
 		if _, err := a.moveToTrash(nbPath); err != nil {
 			runErr = err
 			return
 		}
-		// Clear all blocks for this notebook in one shot.
-		a.coordinator.WithDBWrite(func() {
-			_, _ = a.db.SQLDB().Exec("DELETE FROM blocks WHERE notebook = ?", safeNotebook)
-		})
+		// Clear blocks + files-cache entries per page via the typed API.
+		for _, pg := range pages {
+			a.coordinator.WithDBWrite(func() {
+				_ = a.db.ClearFileBlocks(nil, safeNotebook, pg.section, pg.page)
+				_ = a.db.ForgetFile(pg.path)
+			})
+		}
 	})
 
 	return runErr
@@ -2768,6 +2795,7 @@ func (a *App) PluginUpdateTaskMeta(blockID string, pin int, progress int) (bool,
 	}
 
 	var writeErr error
+	a.coordinator.LockBlockWrite(blockID, func() {
 	a.coordinator.LockFileWrite(filePath, func() {
 		contentBytes, err := os.ReadFile(filePath)
 		if err != nil {
@@ -2829,6 +2857,7 @@ func (a *App) PluginUpdateTaskMeta(blockID string, pin int, progress int) (bool,
 			}
 		}
 	})
+	}) // LockBlockWrite
 	if writeErr != nil {
 		return false, writeErr
 	}
