@@ -22,6 +22,8 @@
   } from './settings/store.svelte'
   import { initEditorTokens } from './settings/editor-tokens.svelte'
   import { initThemes } from './theme/store.svelte'
+  import { initTemplates } from './templates/store.svelte'
+  import TemplatePicker from './templates/TemplatePicker.svelte'
   import { matchHotkey } from './settings/hotkeys'
   import logo from './assets/logo.svg'
 
@@ -40,6 +42,8 @@
   let showSearch = $state(false)
   let showSettings = $state(false)
   let settingsTab = $state('general')
+  let showTemplatePicker = $state(false)
+  let templatePickerMode = $state<'new-page' | 'insert'>('new-page')
 
   // Focused block ancestry path highlighting
   let activeFocusedBlockAncestors = $state<string[]>([])
@@ -76,6 +80,7 @@
     // the picker immediately. Disposed on unmount alongside the other
     // store initializers.
     const disposeThemes = initThemes()
+    const disposeTemplates = initTemplates()
     // Eagerly load the config so config-driven global shortcuts (open_search,
     // toggle_sidebar) work from startup, not only after Settings is opened.
     loadConfig().catch((e) => console.error('Startup config load failed:', e))
@@ -103,6 +108,11 @@
       if (matchHotkey(e, hotkeys.cycle_view_layout)) {
         e.preventDefault()
         cycleView()
+      }
+      if (matchHotkey(e, hotkeys.open_template_picker)) {
+        e.preventDefault()
+        templatePickerMode = 'new-page'
+        showTemplatePicker = !showTemplatePicker
       }
     }
 
@@ -139,6 +149,10 @@
         console.error('Plugin reload failed:', e)
       )
     }
+    function handleOpenTemplatePicker() {
+      templatePickerMode = 'new-page'
+      showTemplatePicker = true
+    }
 
     window.addEventListener('keydown', handleGlobalKeyDown)
     window.addEventListener('navigate-to-block', handleNavigateToBlock)
@@ -146,6 +160,7 @@
     window.addEventListener('switch-view', handleSwitchView)
     window.addEventListener('open-plugin-manager', handleOpenPluginManager)
     window.addEventListener('open-settings', handleOpenSettings)
+    window.addEventListener('open-template-picker', handleOpenTemplatePicker)
     // `plugins:changed` is a Wails event (Go runtime.EventsEmit), so it must
     // be received via EventsOn — a DOM addEventListener would never fire.
     const offPluginsChanged = EventsOn('plugins:changed', () =>
@@ -158,9 +173,11 @@
       window.removeEventListener('switch-view', handleSwitchView)
       window.removeEventListener('open-plugin-manager', handleOpenPluginManager)
       window.removeEventListener('open-settings', handleOpenSettings)
+      window.removeEventListener('open-template-picker', handleOpenTemplatePicker)
       offPluginsChanged()
       disposeEditorTokens()
       disposeThemes()
+      disposeTemplates()
     }
   })
 
@@ -212,6 +229,15 @@
     searchTargetDate = date
     searchTargetBlockId = blockId
     searchTargetKey = `${date}:${blockId}:${Date.now()}`
+  }
+
+  // Called by the TemplatePicker when a new page is created from a template.
+  // Navigates to the freshly-created page (the reactive cascade loads it in
+  // the editor) and refreshes the sidebar tree so the new page appears.
+  function handleTemplatePageCreated(page: string): void {
+    activePage = page
+    activeView = 'notes'
+    window.dispatchEvent(new CustomEvent('refresh-navigation'))
   }
 
   function handleBlockFocus(blockId: string, ancestors: string[]) {
@@ -404,6 +430,16 @@
       {activeNotebook}
       {activeSection}
       {activePage}
+    />
+  {/if}
+
+  {#if showTemplatePicker}
+    <TemplatePicker
+      mode={templatePickerMode}
+      notebook={activeNotebook}
+      section={activeSection}
+      onClose={() => (showTemplatePicker = false)}
+      onCreatedPage={handleTemplatePageCreated}
     />
   {/if}
 </main>

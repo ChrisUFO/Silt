@@ -100,12 +100,15 @@ VaultRoot/
 │   │   ├── agenda/
 │   │   ├── calendar/
 │   │   └── kanban/
-│   └── themes/                     ← first-class themes (embedded + scaffolded)
-│       ├── cyber_forest.json       ← the default / primary ("Refined Cyber-Ink")
-│       ├── silt-terra-noir.json    ← warm dark earth
-│       ├── silt-linen.json         ← clean paper
-│       ├── silt-stark.json         ← WCAG AAA high-contrast
-│       └── silt-graphite.json      ← calm monochrome dark
+│   ├── themes/                     ← first-class themes (embedded + scaffolded)
+│   │   ├── cyber_forest.json       ← the default / primary ("Refined Cyber-Ink")
+│   │   ├── silt-terra-noir.json    ← warm dark earth
+│   │   ├── silt-linen.json         ← clean paper
+│   │   ├── silt-stark.json         ← WCAG AAA high-contrast
+│   │   └── silt-graphite.json      ← calm monochrome dark
+│   └── templates/                  ← user-authored page templates (built-ins are embedded)
+│       ├── my-meeting-template.md
+│       └── sprint-review.md
 ├── Work/                          ← Notebook
 │   ├── Inbox/                     ← Page directly under the Notebook (no section)
 │   │   └── 2026-06-13.md
@@ -348,6 +351,21 @@ Schema Example (cyber_forest.json, dark mode shown):
     "light": { "..." : "..." }
   }
 }
+
+
+6.5 Page Template Engine
+
+Silt provides a full page template system: a built-in library of first-class templates (Notes, Meeting Notes, Standup, Daily Note, Project Brief, 1-on-1, Weekly Review, Decision Log/ADR, Reading Notes, Retrospective), user-extensible custom templates, and the UI/IPC surface to insert them as a new page or into the current page at the cursor. Templates are parameterized Markdown — a title, category, icon, optional placeholder list, and a Markdown body using `{{name}}` placeholder tokens.
+
+Template Files: Parsed dynamically from Markdown files inside `<vault>/.system/templates/`. Each carries a `schema_version`, `id`, `title`, `category`, optional `icon`, optional `placeholders` list, and a Markdown body. The placeholder syntax is `{{name}}` (not Go template syntax) — a small substitution renderer resolves built-in defaults (`date`=YYYY-MM-DD, `time`=HH:MM, `iso_date`=ISO 8601, `weekday`=full weekday name) and user-declared/caller-supplied variables. Unknown placeholders warn (forward-compat), never error.
+
+Smart Graph Compatibility: the placeholder grammar (`^[a-z][a-z0-9_]*$`) structurally excludes Smart Graph syntax — `{{embed:uuid}}` (colon) and `((uuid))` (parentheses) pass through the renderer byte-for-byte, so templates can contain embeds and references that resolve normally on load (§5.2).
+
+Default Library: the full first-class set is embedded in the Go binary (`backend/templates`, via `embed.FS`) so templates are always available — they work before a vault exists, when the templates directory is empty, and on existing vaults. Built-ins are read-only (`builtin://` namespace); user templates are writable (`<vault>/.system/templates/<id>.md`). On-disk templates win the dedup if they share an id with a built-in.
+
+Mechanism: the Go backend resolves templates (on-disk + embedded, deduped, sorted by Category then Title) and exposes them over the Wails IPC bridge (`ListTemplates` / `GetTemplate` / `RenderTemplate` / `RenderTemplateBlocks` / `SaveUserTemplate` / `DeleteUserTemplate` / `ReloadTemplates` / `CreatePageFromTemplate`). A Svelte template store receives the listing and drives the picker modal; the backend emits a `templates:changed` event so the picker re-lists on add/edit/delete. A file watcher on `.system/templates/` hot-reloads external changes. Inserted templates produce real Silt blocks — tasks (`- [ ] TODO TASK …`) flow into Kanban/Agenda/Calendar, embeds/references resolve, and blocks get fresh UUIDs via the standard pipeline (§4, §5.2). No SQLite schema change, no file-write-lock change, no settings.json change — templates are vault-scoped Markdown, read-mostly, on the existing atomic-write path.
+
+Forward Compatibility: `schema_version` is informational (a forward-versioned template keeps loading); the `Source` field reserves a `plugin` tier for future plugin-provided templates; categories are additive (unknown categories warn, never reject); and new built-ins land as a single `.md` file + embed with no engine change.
 
 
 7. Reliability, Protection, & Performance Targets

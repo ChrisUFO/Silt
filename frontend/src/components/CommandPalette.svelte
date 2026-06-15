@@ -46,6 +46,13 @@
       description: 'Insert a block embed',
       icon: 'link',
       shortcut: 'E'
+    },
+    {
+      id: 'template',
+      name: 'Template',
+      description: 'Insert a page template at cursor',
+      icon: 'content_copy',
+      shortcut: 'T'
     }
   ]
 

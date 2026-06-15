@@ -382,6 +382,17 @@
           <span class="material-symbols-outlined text-[20px]">note_add</span>
         </button>
       </span>
+      <span title="New page from template" class="flex items-center">
+        <button
+          onclick={() => window.dispatchEvent(new CustomEvent('open-template-picker'))}
+          disabled={!activeNotebook}
+          title="New page from template (Ctrl+Shift+T)"
+          aria-label="New Page from Template"
+          class="w-9 bg-bg-panel border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm-bold py-2 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <span class="material-symbols-outlined text-[20px]">content_copy</span>
+        </button>
+      </span>
     </div>
     {#if nextStep}
       <div

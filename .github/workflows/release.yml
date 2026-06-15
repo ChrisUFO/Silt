@@ -99,8 +99,22 @@ jobs:
 
       - name: Install Wails CLI
         run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          WAILS_VERSION=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2)
+          go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # frontend/wailsjs/ is gitignored — a fresh checkout has none. The build
+      # scripts call `npm run build` (vite), which imports from wailsjs; without
+      # regeneration the build fails with "Could not resolve ../../wailsjs/...".
+      # Mirror ci.yml: placeholder dist → npm install → npm run generate.
+      - name: Regenerate Wails bindings (gitignored on fresh checkout)
+        shell: bash
+        run: |
+          cd frontend
+          npm install
+          mkdir -p ../frontend/dist
+          printf '<!doctype html><html><head><title>ci</title></head><body></body></html>' > ../frontend/dist/index.html
+          npm run generate
 
       # --- platform-specific native build deps ---
       - name: Install Linux deps (webkit2gtk-4.1 + GTK)
@@ -109,15 +123,27 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev build-essential pkg-config
 
-      - name: Install NSIS (if missing)
+      - name: Install NSIS (with retry + verification)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
-            choco install nsis -y --no-progress
-          } else {
+          if (Get-Command makensis -ErrorAction SilentlyContinue) {
             Write-Host "makensis already installed"
+            return
           }
+          $maxRetries = 3
+          for ($i = 1; $i -le $maxRetries; $i++) {
+            Write-Host "Installing NSIS via Chocolatey (attempt $i of $maxRetries)..."
+            choco install nsis -y --no-progress
+            if ($LASTEXITCODE -eq 0 -and (Get-Command makensis -ErrorAction SilentlyContinue)) {
+              Write-Host "NSIS installed successfully."
+              return
+            }
+            Write-Host "Attempt $i failed (choco exit: $LASTEXITCODE). Retrying in 15s..."
+            Start-Sleep -Seconds 15
+          }
+          Write-Error "Failed to install NSIS after $maxRetries attempts (Chocolatey API may be down)."
+          exit 1
 
       - name: Build distribution (--no-bump, version pinned by tag)
         shell: bash

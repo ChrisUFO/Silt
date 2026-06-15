@@ -351,6 +351,72 @@ Frontend (frontend/src/theme):
 Launch background: main.go resolves BackgroundColour from the in-process theme cache (CachedThemeByID) so a non-default active theme's bg.void is used for the pre-CSS paint, removing the first-paint flash that matched no token (#73). The cache falls back to the embedded default when no settings exist or the active id is invalid.
 
 
+4.5 Template Engine IPC & Pipeline
+
+The template engine mirrors the theme engine's two-tier design (§4.4) but is strictly simpler: there is no "active" template (you insert one, you don't wear one), so there is no settings.json persistence and no SQLite/file-write-lock involvement. Templates are vault-scoped Markdown, read-mostly. The only disk writes are user-template save/delete (atomic, self-write-tracked) and the new-page-from-template write (reuses the CreatePage atomic-write path).
+
+Pipeline (single source of truth shared with SPECS.md §6.5 / docs/TEMPLATES.md):
+
+```
+  <vault>/.system/templates/*.md      (on-disk user templates)
+          │  +  embed.FS builtin/*.md  (10 first-class defaults, read-only)
+          ▼
+  +----------------------------------------------------------+
+  | Go: backend/templates                                    |
+  |   template.go   Template/Placeholder/TemplateSummary     |
+  |   render.go     Render (substitution; smart-graph        |
+  |                  passthrough; unknown→warn)              |
+  |   validate.go   Validate (structured ValidationErrors)   |
+  |   default.go    //go:embed builtin/*.md                  |
+  |   loader.go     ListTemplates / GetTemplate              |
+  |   store.go      SaveTemplate / DeleteTemplate            |
+  |   cache.go      mtime-aware CachedGetTemplate            |
+  |   watcher.go    fsnotify on .system/templates/           |
+  +----------------------------------------------------------+
+          │  Wails JSON RPC (single Bind: { app })
+          │   ListTemplates / GetTemplate / RenderTemplate
+          │   RenderTemplateBlocks / SaveUserTemplate
+          │   DeleteUserTemplate / ReloadTemplates
+          │   CreatePageFromTemplate
+          │   events: templates:changed
+          ▼
+  +----------------------------------------------------------+
+  | Svelte store (frontend/src/templates/store.svelte.ts)    |
+  |   templatesState  listing (TemplateSummary[])            |
+  |   initTemplates   load + templates:changed subscription  |
+  +----------------------------------------------------------+
+          │
+          ▼
+  TemplatePicker.svelte (modal: search, category groups,
+                         live preview, placeholder form,
+                         new-page | insert-at-cursor)
+```
+
+backend/templates package:
+- template.go — Template struct (SchemaVersion, ID, Title, Description, Category, Icon, Placeholders, Body, Source). Source is "builtin" (embedded, read-only), "disk" (user-authored, writable), or "plugin" (reserved for future plugin-provided templates). SupportedSchemaVersion = "1.0.0" (informational/forward-compatible).
+- render.go — Render(t, vars, opts) → (string, warnings). A ~30-line substitution renderer (NOT Go text/template). The placeholder grammar `{{[a-z][a-z0-9_]*}}` structurally excludes Smart Graph syntax: `{{embed:uuid}}` (colon) and `((uuid))` (parentheses) never match the regex, so they pass through byte-for-byte. Built-in defaults (date/time/iso_date/weekday) resolve from RenderOptions.Now in RenderOptions.Timezone. Declared-but-unprovided placeholders stay literal (no warning); truly-unknown tokens stay literal + warn (forward-compat).
+- validate.go — Validate(*Template) returns structured ValidationErrors (id grammar `^[a-z0-9_-]+$`, non-empty body/title/schema_version/category, placeholder-name grammar `^[a-z][a-z0-9_]*$`, no duplicate placeholder names, semver schema_version). Categories are additive: an unknown-but-non-empty category is valid (the loader emits a forward-compat warning); only an empty category is rejected.
+- default.go — `//go:embed builtin/*.md` (embed.FS). EmbeddedTemplates() / ParseEmbeddedByID(id) / BuiltinIDs() (filename==id convention) / IsBuiltinID(id) (the write-path read-only guard). Fail-loud: an invalid embedded template is a release-blocking authoring bug.
+- loader.go — ListTemplates(templatesDir) → on-disk `*.md` (dedup by id, on-disk wins) + every embedded built-in not already on disk; sorted by (Category, Title); per-file load errors + forward-compat warnings collected (never abort). GetTemplate(templatesDir, id) → on-disk then embedded; ErrTemplateNotFound sentinel. ParseTemplateBytes splits YAML frontmatter from body, defaults omitted metadata, validates.
+- store.go — SaveTemplate (validate → builtin guard → parser.WriteFileAtomic → canonical re-serialize). DeleteTemplate (builtin guard → os.Remove, idempotent). SerializeTemplate re-emits canonical frontmatter + body (yaml:"-" on Body/Source).
+- cache.go — process-local, mtime-aware cache (CachedGetTemplate / InvalidateTemplateCache / ResetCacheForTests). Embedded builtins served from embed (never cached); on-disk templates cached with mtime + TTL freshness.
+- watcher.go — TemplateWatcher (fsnotify on .system/templates/). Self-write suppression window (RegisterSelfWrite, called by App before SaveTemplate). Debounced onChange callback (App → InvalidateTemplateCache + templates:changed event). Watches the .system parent when templates/ doesn't exist yet (detects creation).
+
+Wails-bound App methods (all auto-exposed via the single Bind: { app }):
+- ListTemplates() → ListTemplatesResult { templates: []TemplateSummary, errors: []TemplateLoadError, warnings: []TemplateLoadError }. Works pre-vault (returns just the embedded set).
+- GetTemplate(id) → Template (full, incl. Body). Via the mtime cache.
+- RenderTemplate(id, vars) → string. Defaults + vars substituted; warnings logged.
+- RenderTemplateBlocks(id, vars) → []ParsedBlock. Rendered + parsed for the insert-at-cursor flow (fresh UUIDs each call).
+- SaveUserTemplate(t) → void. Validate + builtin guard + atomic write + RegisterSelfWrite + cache invalidate + templates:changed.
+- DeleteUserTemplate(id) → void. Builtin guard + idempotent remove + cache invalidate + templates:changed.
+- ReloadTemplates() → void. Cache flush + templates:changed.
+- CreatePageFromTemplate(notebook, section, page, dateStr, templateID, vars) → string (the resolved date). Renders the template, prepends the standard frontmatter (§3.3), writes atomically under LockFileWrite + tracker.RegisterWrite (§7.1), indexes via ParseFileContent so tasks/embeds/tags are picked up immediately. Composes with the existing CreatePage path.
+
+Frontend (frontend/src/templates):
+- store.svelte.ts — templatesState (listing: TemplateSummary[], loading, loadError) + templateStatus (live-region). loadTemplates() calls ListTemplates. initTemplates() wires the initial load + the templates:changed event subscription (debounced 100ms). _resetForTests() for vitest.
+- TemplatePicker.svelte — modal overlay: search box, category-grouped list (role="listbox"/"option", roving tabindex, ↑/↓/Home/End/Enter/Esc), live preview pane (lazy GetTemplate + RenderTemplate), dynamic placeholder form (from Placeholders[]), page-name field (new-page mode). Two entry points: New Page → From Template (sidebar content_copy button + Ctrl+Shift+T hotkey) and /template slash command (TipTapEditor). Cyber-Ink tokens only.
+
+
 5. Svelte 5 Frontend Architecture
 
 The frontend uses Svelte 5's fine-grained compiler. The editor surface is built on TipTap v3 (ProseMirror engine) via the `svelte-tiptap` adapter, replacing the former per-block contenteditable. The TipTap editor provides native cross-block selection (the core capability the per-block approach could not support), eliminates the text-duplication bug, and delegates IME/selection edge cases to the framework.

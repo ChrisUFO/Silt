@@ -128,6 +128,7 @@ func Defaults() SystemConfig {
 			"cycle_view_layout":     "Alt+Tab",
 			"indent_block":          "Tab",
 			"unindent_block":        "Shift+Tab",
+			"open_template_picker":  "Ctrl+Shift+T",
 		},
 		Plugins: PluginsConfig{
 			Active:   []string{"silt-agenda", "silt-calendar", "silt-kanban"},

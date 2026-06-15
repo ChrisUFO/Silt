@@ -403,7 +403,41 @@ Sprint 5/6/7 theme tests remain green and unchanged.
    clicking it clears the field and the dropdown shows "Theme default
    (…)". Switch to a theme without a typography section (none shipped
    currently — verify via a custom import) and the reset button is hidden.
-8. **Theme typography indicator (Settings → Appearance):** with an active
-   theme that defines fonts, a "Theme typography" section lists the
-   overridden Body/Mono/Headline families.
+ 8. **Theme typography indicator (Settings → Appearance):** with an active
+    theme that defines fonts, a "Theme typography" section lists the
+    overridden Body/Mono/Headline families.
+
+---
+
+# Sprint 9 — Page Templates (#53–#58)
+
+## Automated Tests
+
+Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test`
+(frontend, vitest).
+
+### Go coverage added this sprint
+
+| Package | Tests | What is covered |
+|---|---|---|
+| `backend/templates` (new) | Loader (empty/builtin-only/user-only/mixed dedup/missing/malformed/sort), Validator (dup id/empty body/bad placeholder/bad schema_version/builtin collision), Renderer (defaults/unknown→warn/user vars/missing required/empty vars/smart-graph passthrough/timezone), Watcher (add/modify/delete → list + callback), Cache (mtime/TTL/invalidate), Store (save/delete/builtin guard/round-trip), Snapshot (every built-in rendered output pinned with frozen time), Roster (exactly 10 ids + round-trip ParseFileContent + action-items-as-tasks) | The full template engine + spec-compat regression guards |
+| `silt` (main, `app_templates_test.go`) | ListTemplates (10 built-ins pre-vault), GetTemplate (happy/not-found), SaveUserTemplate/DeleteUserTemplate round-trip + overwrite, RenderTemplate with vars, RenderTemplateBlocks, CreatePageFromTemplate (writes + indexes), builtin:// write rejected + disk unchanged | Wails IPC surface |
+
+### Frontend
+
+| File | Tests | What is covered |
+|---|---|---|
+| `frontend/src/templates/store.test.ts` | loadTemplates populates items, error surfacing, initTemplates idempotency, templates:changed re-list | Listing store |
+| `frontend/src/templates/TemplatePicker.test.ts` | dialog renders with options, insert vs. new-page mode labels, search filters, placeholder form renders on focus, empty state | Picker component (mock IPC) |
+
+## Manual Verification Matrix (`wails dev`)
+
+1. **Ctrl+Shift+T** opens the template picker; all 10 built-ins are listed, grouped by category.
+2. Select **Daily Note** — the preview shows today's date and weekday.
+3. Enter a page name → **Create Page** → the new page opens with the rendered template body.
+4. Type `/template` in the editor → select **Meeting Notes** → fill `meeting_title` → **Insert** → the blocks appear at the cursor.
+5. Verify action items (TODO TASK lines) appear in the Kanban view.
+6. Drop a custom `.md` into `<vault>/.system/templates/` → it appears in the picker without a restart (watcher hot-reload).
+7. Smart-graph passthrough: author a template body containing `{{embed:abc-123}}` → insert → the embed token survives rendering intact.
+
 

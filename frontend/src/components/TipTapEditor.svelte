@@ -18,6 +18,7 @@
     docToBlocks
   } from '../lib/editor'
   import type { ParsedBlock } from '../lib/editor'
+  import TemplatePicker from '../templates/TemplatePicker.svelte'
   import { settings } from '../settings/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
 
@@ -50,6 +51,7 @@
   let isFocused = $state(false)
   let suppressUpdate = false
   let showSlashMenu = $state(false)
+  let showTemplatePicker = $state(false)
 
   const initialDoc = blocksToDoc(blocks)
   const initialKey = `${blocks.map((b) => b.id).join(',')}:${blocks.length}`
@@ -230,7 +232,24 @@
       editorInstance.commands.insertContent(today)
     } else if (commandId === 'embed') {
       editorInstance.commands.insertContent('{{embed:')
+    } else if (commandId === 'template') {
+      // The `/` text is already deleted above; open the picker. The editor
+      // preserves its selection state, so when the user confirms the rendered
+      // blocks are inserted at the cursor position (ARCHITECTURE §5.1 — the
+      // UniqueBlockIds extension mints fresh UUIDs for the inserted nodes).
+      showTemplatePicker = true
     }
+  }
+
+  // Insert rendered template blocks at the cursor. Called by the TemplatePicker
+  // (insert mode) via onInsertBlocks. The blocksToDoc converter produces
+  // ProseMirror node JSON; insertContent inserts at the current selection.
+  // UniqueBlockIds (appendTransaction) guards against any UUID collision.
+  function handleTemplateInsert(blocks: ParsedBlock[]): void {
+    if (!editorInstance || editorInstance.isDestroyed) return
+    const doc = blocksToDoc(blocks)
+    editorInstance.commands.insertContent(doc.content)
+    editorInstance.commands.focus()
   }
 
   // --- Focus lock (reuses the #38 TTL-lease bindings) -----------------------
@@ -313,6 +332,14 @@
     />
   {/if}
 </div>
+
+{#if showTemplatePicker}
+  <TemplatePicker
+    mode="insert"
+    onClose={() => (showTemplatePicker = false)}
+    onInsertBlocks={handleTemplateInsert}
+  />
+{/if}
 
 <style>
   .tiptap-editor-host {
