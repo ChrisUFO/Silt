@@ -50,6 +50,11 @@ var TaskCheckboxRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s+(.*)$`)
 // the switch in scanTaskTokens. Keys are case-insensitive.
 var TaskTokenRegex = regexp.MustCompile(`\[([\w]+)::\s*([^\]]*)\]`)
 
+// whitespaceRun collapses consecutive whitespace into a single space. Used
+// in scanTaskTokens to normalize the description after token stripping.
+// Hoisted to package level so the regex is compiled once, not per line.
+var whitespaceRun = regexp.MustCompile(`\s+`)
+
 // IDRegex captures the trailing block-identity comment. The format is:
 //   <!-- id: uuid -->
 // or (with per-block file_date, post per-day-file-model removal):
@@ -171,7 +176,7 @@ func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priorit
 	description = strings.TrimSpace(TaskTokenRegex.ReplaceAllString(remainder, ""))
 	// Collapse multiple spaces left by token removal (e.g. "text  more"
 	// after a token between them was stripped).
-	description = regexp.MustCompile(`\s+`).ReplaceAllString(description, " ")
+	description = whitespaceRun.ReplaceAllString(description, " ")
 
 	for _, m := range matches {
 		key := strings.ToLower(m[1])

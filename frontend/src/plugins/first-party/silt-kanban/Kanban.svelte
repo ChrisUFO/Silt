@@ -825,6 +825,7 @@
   card={selectedCard}
   {ctx}
   onClose={() => (selectedCard = null)}
+  onMetaChanged={reload}
 />
 
 {#if menuCol}

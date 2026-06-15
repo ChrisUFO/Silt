@@ -634,4 +634,32 @@ describe('Kanban plugin (#19)', () => {
 
     expect(pinBtn).not.toBeDisabled()
   })
+
+  it('board reloads after a pin toggle in the detail panel (onMetaChanged)', async () => {
+    const updateTaskMeta = vi.fn().mockResolvedValue(true)
+    render(Kanban, {
+      ctx: makeCtx({ updateTaskMeta }),
+      manifest: MANIFEST
+    })
+    await flush()
+
+    // Clear the initial-load query so we can isolate the reload.
+    mocks.sqliteQuery.mockClear()
+
+    // Open the detail panel and toggle pin.
+    const card = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    await fireEvent.click(card)
+    await flush()
+
+    const dialog = screen.getByRole('dialog')
+    const pinBtn = within(dialog).getByRole('button', { name: /pin/i })
+    await fireEvent.click(pinBtn)
+    await flush()
+
+    // updateTaskMeta resolved → onMetaChanged → reload() → sqliteQuery.
+    expect(updateTaskMeta).toHaveBeenCalledTimes(1)
+    expect(mocks.sqliteQuery).toHaveBeenCalledTimes(1)
+  })
 })

@@ -30,9 +30,13 @@
     card: KanbanCard | null
     ctx: PluginContext
     onClose: () => void
+    // Called after a successful updateTaskMeta so the parent board can
+    // re-query and reflect the new pin/progress on the card. Without this,
+    // the board's lanes hold stale data until the next unrelated reload.
+    onMetaChanged?: () => void
   }
 
-  let { card, ctx, onClose }: Props = $props()
+  let { card, ctx, onClose, onMetaChanged }: Props = $props()
 
   const PRIORITY_LABELS: Record<number, string> = {
     1: 'Critical',
@@ -83,6 +87,7 @@
     metaError = ''
     try {
       await ctx.updateTaskMeta(card.id, { pinned: pinState })
+      onMetaChanged?.()
     } catch (e) {
       pinState = prev
       metaError = e instanceof Error ? e.message : String(e)
@@ -106,6 +111,7 @@
     void (async () => {
       try {
         await ctx.updateTaskMeta(card.id, { progress: v })
+        onMetaChanged?.()
       } catch (err) {
         if (my !== progressSeq) return
         progressState = prev
