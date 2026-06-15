@@ -432,55 +432,11 @@ The ProseMirror schema defines three block node types (`taskBlock`, `noteBlock`,
 
 NodeView components (`TaskBlockView`, `NoteBlockView`, `HeaderBlockView`) render the Svelte UI for each block type — checkbox cycle for tasks, drag handles, meta badges. The slash menu (`/` at block start) surfaces commands to change block types.
 
-5.2 Responsive Drag-and-Drop Kanban Store
+5.2 Drag-and-Drop Kanban Board
 
-Svelte stores track active task states across dashboard Kanban lanes. Moving a card updates the store and sends mutations directly across the IPC bridge to ensure immediate sync back to disk.
+The Kanban board is a first-party plugin (`silt-kanban`, `frontend/src/plugins/first-party/silt-kanban/Kanban.svelte`) that uses the identical `PluginContext` SDK as Agenda and Calendar — no direct `window.go.*` access. It queries tasks via `ctx.sqliteQuery` and shifts status via `ctx.updateBlockState`, preserving the "core feature decoupling" contract (SPECS §8.3).
 
-import { writable } from 'svelte/store';
-
-export interface KanbanCard {
-    id: string;
-    title: string;
-    status: 'TODO' | 'DOING' | 'DONE';
-    owner?: string;
-    dueDate?: string;
-    priority: number;
-}
-
-function createKanbanStore() {
-    const { subscribe, set, update } = writable<Record<string, KanbanCard[]>>({
-        TODO: [],
-        DOING: [],
-        DONE: []
-    });
-
-    return {
-        subscribe,
-        loadTasks: (tasks: KanbanCard[]) => {
-            const cols = { TODO: [], DOING: [], DONE: [] };
-            tasks.forEach(t => cols[t.status].push(t));
-            set(cols);
-        },
-        moveCard: async (cardId: string, fromCol: string, toCol: string, targetIndex: number) => {
-            update(cols => {
-                const card = cols[fromCol].find(c => c.id === cardId);
-                if (!card) return cols;
-
-                // Mutate state locally for instant visual feedback
-                cols[fromCol] = cols[fromCol].filter(c => c.id !== cardId);
-                card.status = toCol as 'TODO' | 'DOING' | 'DONE';
-                cols[toCol].splice(targetIndex, 0, card);
-
-                return cols;
-            });
-
-            // Write change back to filesystem and SQLite Cache
-            await window.go.parser.App.UpdateBlockState(cardId, toCol);
-        }
-    };
-}
-
-export const kanbanStore = createKanbanStore();
+Cards are rendered as `role="button"` elements with `aria-grabbed`/`aria-label` and animated with Svelte's native `svelte/animate/flip` (200ms cubic-out, per DESIGN.md §6). HTML5 drag-and-drop drives the data; the FLIP animation repositions remaining cards in the same paint frame. Keyboard users change status with ArrowLeft/ArrowRight directly; Enter/click navigates to the source block. The board supports multi-level scope (vault / notebook / section / page) via a segmented control, with the SQL `WHERE` clause built per scope level.
 
 
 6. Race Conditions, Locking, & Cooldowns

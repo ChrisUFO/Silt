@@ -11,6 +11,16 @@ Repo-specific rules that augment the global `~/.config/opencode/AGENTS.md`.
   test the contract at the IPC boundary (mock the Wails bindings) rather than
   driving the rendered webview.
 
+## Accessibility
+
+- **Address all reasonable a11y warnings.** We are not aiming for full WCAG
+  compliance, but every Svelte `a11y_*` warning or obvious gap should be fixed
+  or explicitly justified. Prefer the correct semantic element/role, proper
+  `aria-label`/`aria-labelledby`, keyboard operability, and `aria-live` regions
+  for dynamic updates. Suppress a warning with `svelte-ignore` only when the
+  interaction genuinely cannot be expressed semantically (and leave a comment
+  explaining why).
+
 ## Conventions
 
 - Follow `ARCHITECTURE.md` (topology, SQLite schema, IPC contract) and
