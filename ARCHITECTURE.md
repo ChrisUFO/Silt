@@ -287,6 +287,46 @@ func (a *App) GetAppVersion() string
 
 The theme engine is a four-stage pipeline (DESIGN.md §7 / SPECS.md §6.4): canonical schema -> settings persistence -> loader -> runtime injection. It lives in backend/themes and frontend/src/theme and reuses the existing App-binding -> JSON RPC -> Svelte store IPC topology; it does NOT touch SQLite or the file write lock (the only disk write is AppSettings, via the atomic settings.json writer).
 
+Pipeline (single source of truth shared with DESIGN.md §7 / SPECS.md §6.4):
+
+```
+  <vault>/.system/themes/*.json          (on-disk user themes)
+          │  +  embed.FS cyber_forest.json (guaranteed fallback)
+          ▼
+  +----------------------------------------------------------+
+  | Go: backend/themes                                       |
+  |   validate.go  ParseAndValidate (schema sandbox)         |
+  |   loader.go    ListThemes / ResolveActive / LoadByID      |
+  |   importer.go  ImportThemeFromPath / ExportThemeToPath    |
+  |   cache.go     CachedThemeByID (mtime-aware, launch path) |
+  |   default.go   embedded canonical default                |
+  +----------------------------------------------------------+
+          │  Wails JSON RPC (single Bind: { app })
+          │   ListThemes / GetActiveTheme / ApplyTheme
+          │   ImportTheme / ExportActiveTheme / PickThemeFile
+          │   events: theme:changed | themes:changed
+          ▼
+  +----------------------------------------------------------+
+  | Svelte store (frontend/src/theme/store.svelte.ts)        |
+  |   themeState   active id/name/mode + dark/light maps     |
+  |   themesState  listing + flat tokens (picker previews)   |
+  |   resolves "system" locally via prefers-color-scheme     |
+  +----------------------------------------------------------+
+          │  injectTokens(tokens)
+          ▼
+  ONE <style id="silt-theme">:root{ ... }</style>   (one DOM write
+                                                    -> one recalc
+                                                    -> same-tick repaint;
+                                                       index.css :root is
+                                                       startup fallback only)
+
+  AppSettings (user-global settings.json): { active_theme, theme_mode }
+          ▲  atomic write via vault.SaveSettings
+          │  ApplyTheme persists here (the only disk write in the engine)
+```
+
+Storage layout: theme files live in `<vault>/.system/themes/*.json` (see SPECS §3.2). The canonical default (`cyber_forest.json`) is embedded in the binary via `//go:embed` (default.go) and is also the file `ScaffoldVault` writes when bootstrapping a vault, so there is a single source of truth for the default's content. Settings persistence (the active id + mode) is the user-global `settings.json`, not the vault config — it must be known before any vault is open, and it is the only disk write in the entire theme pipeline.
+
 backend/themes package:
 - theme.go — Go structs mirroring the canonical modes-based schema; Theme.Flatten(mode) -> map[string]string of CSS custom-property names (--bg-void, --accent-primary-start, ...) for one mode. HexToRGB converts bg.void to a native RGBA for the webview background. An optional theme-level Typography struct (font_family, mono_font_family, headline_font) emits --font-body, --font-mono, --font-headline when present — these override the config-provided --editor-* variables via CSS fallback chains in index.css.
 - validate.go — Validate(*Theme) returns structured per-field ValidationErrors (missing tokens, malformed colors). schema_version is informational (forward compatible). isValidColor narrows the accepted color grammar to #hex / rgb() / rgba() — anything else (named colors, hsl(), url(), <script>, expression()) is rejected at validation time, which is the sandbox for user-imported themes. isValidFontFamily validates optional typography fields by rejecting CSS-breaking characters (;, {, }, <, >) — the same sandbox-by-validation approach used for colors.

@@ -93,4 +93,24 @@ describe('injectTokens', () => {
     // No dangling ';' preceded by an empty value segment.
     expect(el.textContent).not.toMatch(/--empty:;/)
   })
+
+  it('applying a new theme changes --bg-void WITHOUT remounting the style element (#50)', () => {
+    // The same-tick-repaint / no-remount contract is the core #46/#50
+    // guarantee: switching the active theme rewrites the SAME <style>
+    // element's textContent (one DOM write -> one recalc) rather than
+    // creating a new element. Assert both halves: (1) exactly one
+    // element exists after two applies, and (2) the resolved computed
+    // value reflects the LATEST injection (proving the rewrite carried
+    // the new value, not a stale copy).
+    injectTokens({ '--bg-void': '#0c0c0e' })
+    const firstEl = document.getElementById(STYLE_ID)
+
+    injectTokens({ '--bg-void': '#101010' })
+    const els = document.querySelectorAll(`#${STYLE_ID}`)
+    expect(els.length).toBe(1)
+    // The element instance is reused (same node), not recreated.
+    expect(els[0]).toBe(firstEl)
+    // The live computed value reflects the second injection.
+    expect(readToken('--bg-void')).toBe('#101010')
+  })
 })

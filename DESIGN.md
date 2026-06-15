@@ -45,7 +45,7 @@ The canonical theme schema is modes-based (`modes.dark` / `modes.light`) with hu
       },
       "text": {
         "primary": "#dee3e6",
-        "muted": "#71717a",
+        "muted": "#8b8b94",
         "disabled": "#4b5563"
       },
       "accent": {
@@ -81,7 +81,7 @@ The canonical theme schema is modes-based (`modes.dark` / `modes.light`) with hu
       },
       "text": {
         "primary": "#0f172a",
-        "muted": "#64748b",
+        "muted": "#4d5667",
         "disabled": "#94a3b8"
       },
       "accent": {

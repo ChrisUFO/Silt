@@ -19,6 +19,7 @@ Notes are organized **Notebook › Section › Page** (OneNote-style): each Page
 
 - **Notebook › Section › Page hierarchy** — OneNote-style folders on disk; a Page streams its daily files into one infinite-scroll timeline.
 - **Smart Graph** — slash-delimited hierarchical tags (`#work/sogav/milestone-one`), global block references (`((uuid))`) with hover previews, and live dual-bound embeds (`{{embed:uuid}}`).
+- **Themeable** — the entire shell is driven by a single JSON theme (colors + optional fonts). Ship your own palette by dropping a `.json` into `<vault>/.system/themes/` or importing it from **Settings → Appearance**. See the [authoring guide](./docs/THEMING.md).
 - **Plugin SDK + first-party plugins** — Agenda (rolling task timeline) and Calendar (month/week grids) are built on the same `PluginContext` SDK as third-party plugins. Install community plugins from `.silt-plugin` archives via the in-app Plugin Manager.
 - **No File Lock-In** — Your data lives in flat directories of basic Markdown `.md` files.
 - **Zero-Bloat Performance** — No Electron. Idle allocation sits below 65MB RAM with sub-16ms input rendering.
@@ -37,6 +38,7 @@ Each concern has a single source of truth. Refer to the file that owns the topic
 | [**ARCHITECTURE.md**](ARCHITECTURE.md) | Engineering blueprint: process topology, Go backend internals, SQLite schema, IPC API contract, concurrency model, plugin loader. |
 | [**DESIGN.md**](DESIGN.md) | Design system: Refined Cyber-Ink vision, color tokens, typography, component specs, motion, accessibility. |
 | [**docs/PLUGIN_DEVELOPMENT.md**](docs/PLUGIN_DEVELOPMENT.md) | How to author, package (`.silt-plugin`), and install Silt plugins — with the full PluginContext SDK reference. |
+| [**docs/THEMING.md**](docs/THEMING.md) | How to author, import, and select Silt themes — the canonical token schema reference and a copy-pasteable blank template. |
 | [**TESTING.md**](TESTING.md) | Test coverage matrix, benchmarks, manual verification checklist, known gaps. |
 
 ---

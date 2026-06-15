@@ -261,7 +261,7 @@ Borders, Guidelines, & Rules: #27272a (Crisp zinc gray)
 
 Primary Text: #e4e4e7 (Light warm gray)
 
-Muted Text & Metadata: #71717a (Medium cool gray)
+Muted Text & Metadata: #8b8b94 (Medium cool gray)
 
 Active Highlights & Guideline Markers: #2dd4bf (Refined teal, 400-shade)
 
@@ -334,7 +334,7 @@ Schema Example (cyber_forest.json, dark mode shown):
     "dark": {
       "bg": { "void": "#0c0c0e", "surface": "#121215", "panel": "#161619", "hover": "#1c1c21", "active": "#222226" },
       "border": { "muted": "#1e1e23", "zinc": "#27272a", "active": "#3f3f46", "focus": "#52525b" },
-      "text": { "primary": "#dee3e6", "muted": "#71717a", "disabled": "#4b5563" },
+      "text": { "primary": "#dee3e6", "muted": "#8b8b94", "disabled": "#4b5563" },
       "accent": {
         "primary": { "start": "#2dd4bf", "end": "#0d9488", "glow": "rgba(20, 184, 166, 0.15)" },
         "secondary": { "start": "#6366f1", "end": "#a855f7", "glow": "rgba(168, 85, 247, 0.12)" }

@@ -3,6 +3,7 @@ package themes
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -172,7 +173,11 @@ func validateMode(prefix string, m Mode) ValidationErrors {
 // is intentionally narrow (no hsl/named-colors) and validates component
 // ranges (rgb 0-255 or 0%-100%, alpha 0-1) so malformed values like
 // rgba(999,0,0,0.5) are caught at validation time rather than silently
-// clamped by the CSS engine.
+// clamped by the CSS engine. NaN/Inf are explicitly rejected: Go's
+// strconv.ParseFloat accepts "NaN"/"Inf" with a nil error, and NaN
+// comparisons (v < 0 || v > 255) are both false, so a value like
+// rgba(NaN,0,0,0.5) would otherwise slip through the range guards and
+// bypass the schema sandbox (#48).
 func isValidColor(s string) bool {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -213,7 +218,7 @@ func isValidColor(s string) bool {
 			num = p[:len(p)-1]
 		}
 		v, err := strconv.ParseFloat(num, 64)
-		if err != nil {
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 			return false
 		}
 		if i == wantParts-1 && wantParts == 4 {
