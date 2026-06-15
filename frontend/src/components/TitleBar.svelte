@@ -34,6 +34,12 @@
 
   let maximised = $state(false)
 
+  // Platform detection (#61): on macOS, Wails auto-injects the native
+  // traffic-light buttons, so we hide our in-app controls and reserve a
+  // left inset for them. Detection via navigator.userAgent is safe (the
+  // guard only activates on Mac; detection failure → show controls).
+  let isMac = $state(false)
+
   async function syncMaximised() {
     try {
       maximised = await WindowIsMaximised()
@@ -44,6 +50,7 @@
 
   onMount(() => {
     syncMaximised()
+    isMac = /mac/i.test(navigator.platform || navigator.userAgent)
     // Maximize/restore triggers a viewport resize; re-sync the icon then.
     const onResize = () => syncMaximised()
     window.addEventListener('resize', onResize)
@@ -71,7 +78,8 @@
     <div
       class="flex items-center gap-2 h-full flex-shrink-0 transition-all duration-200 ease-out overflow-hidden"
       style:width={sidebarCollapsed ? '0px' : sidebarWidth + 'px'}
-      class:px-4={!sidebarCollapsed}
+      style:padding-left={isMac && !sidebarCollapsed ? '80px' : undefined}
+      class:px-4={!sidebarCollapsed && !isMac}
       class:px-3={sidebarCollapsed}
     >
       <img src={logo} alt="Silt" class="w-6 h-6 flex-shrink-0" />
@@ -135,35 +143,37 @@
 
     <div class="w-px h-6 bg-border-muted mx-1"></div>
 
-    <!-- Window controls (no-drag zone) -->
-    <div class="flex items-center h-full">
-      <button
-        onclick={() => WindowMinimise()}
-        aria-label="Minimize"
-        title="Minimize"
-        class="h-full w-11 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
-      >
-        <span class="material-symbols-outlined text-[18px]">remove</span>
-      </button>
-      <button
-        onclick={handleToggleMax}
-        aria-label={maximised ? 'Restore' : 'Maximize'}
-        title={maximised ? 'Restore' : 'Maximize'}
-        class="h-full w-11 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
-      >
-        <span class="material-symbols-outlined text-[18px]"
-          >{maximised ? 'fullscreen_exit' : 'crop_square'}</span
+    <!-- Window controls (hidden on macOS — Wails injects native traffic lights) -->
+    {#if !isMac}
+      <div class="flex items-center h-full">
+        <button
+          onclick={() => WindowMinimise()}
+          aria-label="Minimize"
+          title="Minimize"
+          class="h-full w-11 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
         >
-      </button>
-      <button
-        onclick={() => Quit()}
-        aria-label="Close"
-        title="Close"
-        class="h-full w-11 flex items-center justify-center text-text-muted hover:bg-error hover:text-white transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
-      >
-        <span class="material-symbols-outlined text-[18px]">close</span>
-      </button>
-    </div>
+          <span class="material-symbols-outlined text-[18px]">remove</span>
+        </button>
+        <button
+          onclick={handleToggleMax}
+          aria-label={maximised ? 'Restore' : 'Maximize'}
+          title={maximised ? 'Restore' : 'Maximize'}
+          class="h-full w-11 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
+        >
+          <span class="material-symbols-outlined text-[18px]"
+            >{maximised ? 'fullscreen_exit' : 'crop_square'}</span
+          >
+        </button>
+        <button
+          onclick={() => Quit()}
+          aria-label="Close"
+          title="Close"
+          class="h-full w-11 flex items-center justify-center text-text-muted hover:bg-error hover:text-white transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
+        >
+          <span class="material-symbols-outlined text-[18px]">close</span>
+        </button>
+      </div>
+    {/if}
   </div>
 </header>
 

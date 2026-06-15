@@ -20,8 +20,16 @@ export interface SqliteQueryResult {
 }
 
 export interface PluginContext {
+  /**
+   * The active notebook. This is a LIVE reactive getter (#69): reading it
+   * inside a Svelte reactive context (template, $derived, $effect) tracks
+   * navigation changes automatically. Do NOT destructure in init() — that
+   * captures a stale snapshot. Read it at query/render time instead.
+   */
   activeNotebook: string
+  /** Active section — same reactive semantics as activeNotebook. */
   activeSection: string
+  /** Active page — same reactivity as activeNotebook. */
   activePage: string
   /**
    * Read-only SQL against the in-memory index (SELECT/WITH only). Returns

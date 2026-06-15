@@ -29,6 +29,7 @@
   import TemplatePicker from './templates/TemplatePicker.svelte'
   import { matchHotkey } from './settings/hotkeys'
   import SidebarResizeHandle from './components/SidebarResizeHandle.svelte'
+  import { setActiveLocation } from './plugins/location.svelte'
   import logo from './assets/logo.svg'
 
   let isInitialized = $state(false)
@@ -46,6 +47,12 @@
   let sidebarWidth = $state(256)
   let manuallyCollapsed = $state(false)
   let sidebarDragging = $state(false)
+
+  // Sync active navigation to the reactive plugin location (#69). Plugins
+  // read ctx.activeNotebook/Section/Page via live getters backed by this state.
+  $effect(() => {
+    setActiveLocation(activeNotebook, activeSection, activePage)
+  })
   let showSearch = $state(false)
   let showSettings = $state(false)
   let settingsTab = $state('general')

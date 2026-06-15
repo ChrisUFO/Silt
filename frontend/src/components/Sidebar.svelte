@@ -11,7 +11,9 @@
     RenameNotebook,
     DeletePage,
     DeleteSection,
-    DeleteNotebook
+    DeleteNotebook,
+    GetNavOrder,
+    SetNavOrder
   } from '../../wailsjs/go/main/App.js'
 
   interface NavPage {
@@ -91,6 +93,123 @@
     label: string
   } | null>(null)
 
+  // Nav order for drag-to-reorder (#68). Explicit ordering from config.yaml;
+  // items not in the map fall back to alphabetical.
+  let navOrder = $state<{ notebooks: string[]; sections: Record<string, string[]>; pages: Record<string, string[]> }>({
+    notebooks: [],
+    sections: {},
+    pages: {}
+  })
+  let dragItem = $state<{ level: string; name: string; section?: string } | null>(null)
+  let dropTarget = $state<{ level: string; name: string; before: boolean } | null>(null)
+
+  function sortByName<T extends { name: string }>(items: T[], order: string[] | undefined): T[] {
+    if (!order || order.length === 0) return items
+    const orderMap = new Map(order.map((n, i) => [n, i]))
+    return [...items].sort((a, b) => {
+      const ai = orderMap.has(a.name) ? orderMap.get(a.name)! : Infinity
+      const bi = orderMap.has(b.name) ? orderMap.get(b.name)! : Infinity
+      if (ai !== bi) return ai - bi
+      return a.name.localeCompare(b.name)
+    })
+  }
+
+  async function loadNavOrder() {
+    try {
+      const order = await GetNavOrder()
+      navOrder = {
+        notebooks: order.notebooks ?? [],
+        sections: Object.fromEntries(Object.entries(order.sections ?? {})),
+        pages: Object.fromEntries(Object.entries(order.pages ?? {}))
+      }
+    } catch {
+      // Pre-vault or config not loaded — alphabetical fallback
+    }
+  }
+
+  async function persistSectionOrder(notebook: string, sections: string[]) {
+    navOrder.sections[notebook] = sections
+    try {
+      await SetNavOrder({ notebooks: navOrder.notebooks, sections: navOrder.sections, pages: navOrder.pages })
+    } catch (e) {
+      console.error('SetNavOrder failed:', e)
+    }
+  }
+
+  async function persistPageOrder(sectionKey: string, pages: string[]) {
+    navOrder.pages[sectionKey] = pages
+    try {
+      await SetNavOrder({ notebooks: navOrder.notebooks, sections: navOrder.sections, pages: navOrder.pages })
+    } catch (e) {
+      console.error('SetNavOrder failed:', e)
+    }
+  }
+
+  // Drag-and-drop handlers (#68)
+  function handleDragStart(e: DragEvent, level: string, name: string, section?: string) {
+    dragItem = { level, name, section }
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', name)
+    }
+  }
+
+  function handleDragOver(e: DragEvent, level: string, name: string) {
+    if (!dragItem || dragItem.level !== level) return
+    e.preventDefault()
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    // Determine if dropping before or after based on mouse position
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const before = e.clientY < rect.top + rect.height / 2
+    dropTarget = { level, name, before }
+  }
+
+  function handleDragLeave() {
+    dropTarget = null
+  }
+
+  function handleDrop(e: DragEvent, level: string, targetName: string, notebook?: string, section?: string) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!dragItem || dragItem.level !== level || dragItem.name === targetName) {
+      dragItem = null
+      dropTarget = null
+      return
+    }
+
+    if (level === 'section' && notebook) {
+      const sorted = sortByName(activeNotebookObj?.sections ?? [], navOrder.sections[notebook])
+      const names = sorted.map((s) => s.name)
+      const fromIdx = names.indexOf(dragItem.name)
+      const toIdx = names.indexOf(targetName)
+      if (fromIdx === -1 || toIdx === -1) return
+      names.splice(fromIdx, 1)
+      const insertAt = dropTarget?.before ? names.indexOf(targetName) : names.indexOf(targetName) + 1
+      names.splice(insertAt, 0, dragItem.name)
+      persistSectionOrder(notebook, names)
+    } else if (level === 'page' && section) {
+      const sec = activeNotebookObj?.sections.find((s) => s.name === section)
+      const sectionKey = `${notebook ?? activeNotebook}/${section}`
+      const sorted = sortByName(sec?.pages ?? [], navOrder.pages[sectionKey])
+      const names = sorted.map((p) => p.name)
+      const fromIdx = names.indexOf(dragItem.name)
+      const toIdx = names.indexOf(targetName)
+      if (fromIdx === -1 || toIdx === -1) return
+      names.splice(fromIdx, 1)
+      const insertAt = dropTarget?.before ? names.indexOf(targetName) : names.indexOf(targetName) + 1
+      names.splice(insertAt, 0, dragItem.name)
+      persistPageOrder(sectionKey, names)
+    }
+
+    dragItem = null
+    dropTarget = null
+  }
+
+  function handleDragEnd() {
+    dragItem = null
+    dropTarget = null
+  }
+
   // Expanded section names (within the active notebook). The active section is
   // always expanded so the active path stays visible (spatial memory).
   let expandedSections = $state<Set<string>>(new Set())
@@ -98,6 +217,12 @@
   let activeNotebookObj = $derived(
     tree.notebooks.find((nb) => nb.name === activeNotebook)
   )
+
+  // Sections sorted by nav_order (falling back to alphabetical) for #68.
+  let sortedSections = $derived.by(() => {
+    if (!activeNotebookObj) return []
+    return sortByName(activeNotebookObj.sections, navOrder.sections[activeNotebook] ?? [])
+  })
 
   // Sections are optional — a page can live directly under a notebook — so the
   // only persistent hint is "create/open a notebook"; section guidance is
@@ -408,7 +533,11 @@
 
   onMount(() => {
     loadNavigation()
-    const handleRefresh = () => loadNavigation()
+    loadNavOrder()
+    const handleRefresh = () => {
+      loadNavigation()
+      loadNavOrder()
+    }
     window.addEventListener('refresh-navigation', handleRefresh)
     return () => {
       window.removeEventListener('refresh-navigation', handleRefresh)
@@ -593,13 +722,21 @@
           No sections yet.<br />Create a section to add pages.
         </div>
       {:else}
-        {#each activeNotebookObj.sections as sec (sec.name)}
+        {#each sortedSections as sec (sec.name)}
           {@const isExpanded = expandedSections.has(sec.name)}
           <div class="mb-0.5">
             <!-- Section header -->
             <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
             <div
               class="group flex items-center gap-1 px-2 py-1.5 cursor-pointer rounded hover:bg-bg-hover transition-colors"
+              class:drag-over-top={dropTarget?.level === 'section' && dropTarget.name === sec.name && dropTarget.before}
+              class:drag-over-bottom={dropTarget?.level === 'section' && dropTarget.name === sec.name && !dropTarget.before}
+              draggable="true"
+              ondragstart={(e) => handleDragStart(e, 'section', sec.name)}
+              ondragover={(e) => handleDragOver(e, 'section', sec.name)}
+              ondragleave={handleDragLeave}
+              ondrop={(e) => handleDrop(e, 'section', sec.name, activeNotebook)}
+              ondragend={handleDragEnd}
               onclick={() => toggleSection(sec.name)}
               oncontextmenu={(e) => openContextMenu(e, 'section', activeNotebook, sec.name)}
               role="treeitem"
@@ -648,12 +785,18 @@
                     No pages. Click + to add one.
                   </div>
                 {:else}
-                  {#each sec.pages as pg (pg.name)}
+                  {#each sortByName(sec.pages, navOrder.pages[`${activeNotebook}/${sec.name}`] ?? []) as pg (pg.name)}
                     {@const isActive =
                       activeSection === sec.name && activePage === pg.name}
                     <button
                       onclick={() => handleSelectPage(sec.name, pg.name)}
                       oncontextmenu={(e) => openContextMenu(e, 'page', activeNotebook, sec.name, pg.name)}
+                      draggable="true"
+                      ondragstart={(e) => handleDragStart(e, 'page', pg.name, sec.name)}
+                      ondragover={(e) => handleDragOver(e, 'page', pg.name)}
+                      ondragleave={handleDragLeave}
+                      ondrop={(e) => handleDrop(e, 'page', pg.name, activeNotebook, sec.name)}
+                      ondragend={handleDragEnd}
                       class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
                       class:bg-bg-hover={isActive}
                       class:text-accent-primary-start={isActive}
@@ -892,5 +1035,11 @@
   }
   .context-menu-item:hover {
     background-color: var(--bg-hover);
+  }
+  :global(.drag-over-top) {
+    box-shadow: inset 0 2px 0 var(--accent-primary-start);
+  }
+  :global(.drag-over-bottom) {
+    box-shadow: inset 0 -2px 0 var(--accent-primary-start);
   }
 </style>
