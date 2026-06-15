@@ -274,46 +274,77 @@ func TestBGVoid(t *testing.T) {
 	}
 }
 
+// firstClassIDs is the curated roster of embedded first-class theme ids.
+// A test pins this exactly so an accidental addition/removal of a shipped
+// theme is caught (the picker's first-party set is an intentional product
+// decision, not a side effect of the embed).
+var firstClassIDs = map[string]bool{
+	DefaultThemeID:    true,
+	"silt-terra-noir": true,
+	"silt-linen":      true,
+	"silt-stark":      true,
+	"silt-graphite":   true,
+}
+
+// assertEmbeddedSet asserts that res contains exactly the embedded
+// first-class roster, with the primary default labeled source="default"
+// and every other first-class theme source="bundled", and that
+// FlatTokens carries a dark+light map per id.
+func assertEmbeddedSet(t *testing.T, res *ListThemesResult) {
+	t.Helper()
+	if got, want := len(res.Themes), len(firstClassIDs); got != want {
+		t.Fatalf("expected %d embedded first-class themes, got %d: %+v", want, got, res.Themes)
+	}
+	for _, ti := range res.Themes {
+		if !firstClassIDs[ti.ID] {
+			t.Errorf("unexpected theme id %q in embedded-only listing", ti.ID)
+		}
+		wantSrc := "bundled"
+		if ti.ID == DefaultThemeID {
+			wantSrc = "default"
+		}
+		if ti.Source != wantSrc {
+			t.Errorf("theme %q source = %q, want %q", ti.ID, ti.Source, wantSrc)
+		}
+		ft, ok := res.FlatTokens[ti.ID]
+		if !ok {
+			t.Errorf("theme %q missing FlatTokens", ti.ID)
+			continue
+		}
+		if len(ft.Dark) == 0 || len(ft.Light) == 0 {
+			t.Errorf("theme %q has empty FlatTokens (dark=%d light=%d)", ti.ID, len(ft.Dark), len(ft.Light))
+		}
+	}
+}
+
 func TestListThemes_EmptyDir(t *testing.T) {
 	dir := t.TempDir() // exists but empty
 	res, err := ListThemes(dir)
 	if err != nil {
 		t.Fatalf("ListThemes empty dir: %v", err)
 	}
-	// Empty dir → only the embedded default.
-	if len(res.Themes) != 1 {
-		t.Fatalf("expected 1 theme (default), got %d", len(res.Themes))
-	}
-	if res.Themes[0].ID != DefaultThemeID || res.Themes[0].Source != "default" {
-		t.Errorf("expected embedded default, got %+v", res.Themes[0])
-	}
+	// Empty dir → the full embedded first-class roster (default + 4 palettes).
+	assertEmbeddedSet(t, res)
 }
 
 func TestListThemes_MissingDir(t *testing.T) {
 	// A nonexistent themes dir (fresh vault before scaffold) is not an
-	// error and yields the embedded default.
+	// error and yields the embedded first-class roster.
 	res, err := ListThemes(filepath.Join(t.TempDir(), "does-not-exist"))
 	if err != nil {
 		t.Fatalf("ListThemes missing dir: %v", err)
 	}
-	if len(res.Themes) != 1 || res.Themes[0].ID != DefaultThemeID {
-		t.Fatalf("expected embedded default only, got %+v", res.Themes)
-	}
+	assertEmbeddedSet(t, res)
 }
 
 func TestListThemes_EmptyPath(t *testing.T) {
 	// An empty themesDir (no vault open yet) must not call os.ReadDir("") and
-	// must still yield the embedded default rather than erroring.
+	// must still yield the embedded first-class roster rather than erroring.
 	res, err := ListThemes("")
 	if err != nil {
 		t.Fatalf("ListThemes empty path: %v", err)
 	}
-	if len(res.Themes) != 1 || res.Themes[0].ID != DefaultThemeID {
-		t.Fatalf("expected embedded default only for empty path, got %+v", res.Themes)
-	}
-	if res.Themes[0].Source != "default" {
-		t.Errorf("expected source=default, got %q", res.Themes[0].Source)
-	}
+	assertEmbeddedSet(t, res)
 }
 
 func TestListThemes_OnDiskPlusMalformed(t *testing.T) {
@@ -325,13 +356,21 @@ func TestListThemes_OnDiskPlusMalformed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListThemes: %v", err)
 	}
-	// custom + embedded default = 2 themes; broken.json surfaces in Errors.
+	// custom + the 5 embedded first-class themes = 6; broken.json surfaces in Errors.
 	ids := map[string]bool{}
 	for _, ti := range res.Themes {
 		ids[ti.ID] = true
 	}
-	if !ids["test-theme"] || !ids[DefaultThemeID] {
-		t.Fatalf("expected test-theme + default, got %v", ids)
+	if !ids["test-theme"] {
+		t.Fatalf("expected on-disk test-theme, got %v", ids)
+	}
+	for id := range firstClassIDs {
+		if !ids[id] {
+			t.Errorf("expected embedded first-class theme %q, got %v", id, ids)
+		}
+	}
+	if len(res.Themes) != 1+len(firstClassIDs) {
+		t.Errorf("expected %d themes (1 on-disk + %d embedded), got %d", 1+len(firstClassIDs), len(firstClassIDs), len(res.Themes))
 	}
 	if len(res.Errors) != 1 || !strings.Contains(res.Errors[0].File, "broken.json") {
 		t.Fatalf("expected 1 load error for broken.json, got %+v", res.Errors)

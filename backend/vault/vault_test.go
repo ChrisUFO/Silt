@@ -176,3 +176,49 @@ func TestValidThemeMode(t *testing.T) {
 	}
 }
 
+// TestScaffoldVault_WritesAllFirstClassThemes: a fresh scaffold writes every
+// embedded first-class theme file into <vault>/.system/themes/ (the default +
+// the four Sprint 8 palettes), so the full first-party set is editable on disk.
+func TestScaffoldVault_WritesAllFirstClassThemes(t *testing.T) {
+	vaultPath := t.TempDir()
+	if err := ScaffoldVault(vaultPath); err != nil {
+		t.Fatalf("ScaffoldVault: %v", err)
+	}
+	files, err := themes.EmbeddedThemeFiles()
+	if err != nil {
+		t.Fatalf("EmbeddedThemeFiles: %v", err)
+	}
+	for fn := range files {
+		p := filepath.Join(vaultPath, ".system", "themes", fn)
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("expected scaffolded theme %s: %v", fn, err)
+		}
+	}
+}
+
+// TestScaffoldVault_ThemesIdempotent: re-running ScaffoldVault never
+// overwrites a user's existing theme file (the existence guard). A hand-edited
+// sentinel on disk must survive a second scaffold.
+func TestScaffoldVault_ThemesIdempotent(t *testing.T) {
+	vaultPath := t.TempDir()
+	if err := ScaffoldVault(vaultPath); err != nil {
+		t.Fatalf("ScaffoldVault first run: %v", err)
+	}
+	// Mutate the on-disk default with a sentinel and re-scaffold.
+	defaultPath := filepath.Join(vaultPath, ".system", "themes", "cyber_forest.json")
+	const sentinel = "// user-edit sentinel"
+	if err := os.WriteFile(defaultPath, []byte(sentinel), 0o644); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+	if err := ScaffoldVault(vaultPath); err != nil {
+		t.Fatalf("ScaffoldVault second run: %v", err)
+	}
+	got, err := os.ReadFile(defaultPath)
+	if err != nil {
+		t.Fatalf("read after re-scaffold: %v", err)
+	}
+	if string(got) != sentinel {
+		t.Errorf("ScaffoldVault overwrote an existing user theme; expected sentinel to survive")
+	}
+}
+

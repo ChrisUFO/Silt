@@ -203,3 +203,69 @@ func TestWCAG_DefaultTheme_MutedTextAA(t *testing.T) {
 		}
 	}
 }
+
+// --- First-class theme WCAG coverage (Sprint 8) ---------------------------
+//
+// The four new first-class themes (Terra Noir, Linen, Stark, Graphite) are
+// measured against the SAME matrix as the default: primary text >= 7:1 (AAA)
+// and muted text >= 4.5:1 (AA) on all five backgrounds in both modes, plus the
+// two accent starts >= 3:1 (AA non-text) on the canvas. The Sprint 7 harness
+// was designed so Sprint 8 "adds rows, not code" — these tests are those rows.
+//
+// text.disabled and the glow tokens are decorative/non-essential per WCAG and
+// are intentionally not asserted here (documented in DESIGN.md); only tokens
+// that carry meaning (body text, metadata text, focus/selection accents) are
+// guarded. Starter palettes from the issues were tuned where the 5-background
+// matrix caught a failure (the same lesson as the default's light-muted).
+
+// assertWCAG runs the full primary/muted/accent matrix for one theme across
+// both modes. Failure messages name the theme, mode, token, and the fix
+// direction so a failing palette is actionable.
+func assertWCAG(t *testing.T, th *Theme) {
+	t.Helper()
+	backgrounds := []string{"--bg-void", "--bg-surface", "--bg-panel", "--bg-hover", "--bg-active"}
+	for _, mode := range []string{"dark", "light"} {
+		flat := th.Flatten(mode)
+		for _, bg := range backgrounds {
+			if r := approxRatio(t, flat["--text-primary"], flat[bg]); r < 7.0 {
+				t.Errorf("%s [%s]: text.primary on %s = %.2f:1, want >= 7.1 (AAA)",
+					th.ID, mode, bg, r)
+			}
+			if r := approxRatio(t, flat["--text-muted"], flat[bg]); r < 4.5 {
+				t.Errorf("%s [%s]: text.muted on %s = %.2f:1, want >= 4.5 (AA). "+
+					"Bump modes.%s.text.muted lighter (dark) / darker (light).",
+					th.ID, mode, bg, r, mode)
+			}
+		}
+		for _, fg := range []string{"--accent-primary-start", "--accent-secondary-start"} {
+			if r := approxRatio(t, flat[fg], flat["--bg-void"]); r < 3.0 {
+				t.Errorf("%s [%s]: %s on bg.void = %.2f:1, want >= 3.0 (AA non-text)",
+					th.ID, mode, fg, r)
+			}
+		}
+	}
+}
+
+// TestWCAG_FirstClassThemes_AllMeetsTargets asserts every embedded first-class
+// theme meets the WCAG matrix. It also logs every measured ratio so a future
+// palette regression is obvious from the test output (auditable, like the
+// default's ReportsAllRatios test).
+func TestWCAG_FirstClassThemes_AllMeetsTargets(t *testing.T) {
+	all, err := EmbeddedThemes()
+	if err != nil {
+		t.Fatalf("EmbeddedThemes: %v", err)
+	}
+	for _, th := range all {
+		// Skip the default — it has its own dedicated assertions above (and
+		// its own golden snapshot). This test covers the Sprint 8 additions.
+		if th.ID == DefaultThemeID {
+			continue
+		}
+		for mode, ps := range themePairs(th) {
+			for _, p := range ps {
+				t.Logf("[%-14s %-5s] %-32s = %.2f:1", th.ID, mode, p.label, approxRatio(t, p.fg, p.bg))
+			}
+		}
+		assertWCAG(t, th)
+	}
+}

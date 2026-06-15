@@ -52,6 +52,12 @@ func CachedThemeByID(themesDir, id string) (*Theme, error) {
 		return ParseDefault()
 	}
 	if themesDir == "" {
+		// No vault open yet: resolve a first-class id from embed so the
+		// pre-CSS paint matches the active theme rather than flashing the
+		// default; fall back to the default for unknown ids.
+		if t, ok := ParseEmbeddedByID(id); ok {
+			return t, nil
+		}
 		return ParseDefault()
 	}
 
@@ -60,11 +66,14 @@ func CachedThemeByID(themesDir, id string) (*Theme, error) {
 	path := filepath.Join(themesDir, id+".json")
 	info, err := os.Stat(path)
 	if err != nil {
-		// The id is not on disk; fall back to the embedded default rather
-		// than failing the launch — the user might have a stale active id
-		// pointing at a file they deleted. The first paint is then the
-		// default's bg.void, which is the shipped first-paint color and
-		// is always safe.
+		// The id is not on disk. Before falling back to the default, try
+		// the embedded first-class copy: a wiped themes dir (or an existing
+		// vault scaffolded before the theme shipped) should still resolve a
+		// non-default first-class active theme so the first paint matches.
+		// A genuinely unknown id still falls through to the default.
+		if t, ok := ParseEmbeddedByID(id); ok {
+			return t, nil
+		}
 		return ParseDefault()
 	}
 

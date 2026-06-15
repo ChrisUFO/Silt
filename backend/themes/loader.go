@@ -127,15 +127,41 @@ func ListThemes(themesDir string) (*ListThemesResult, error) {
 		}
 	}
 
-	// Always guarantee the embedded default is selectable. If a user's
-	// on-disk theme overrides the default id, their version already won the
-	// dedup above; otherwise append the embedded default.
-	if !seenIDs[DefaultThemeID] {
-		if dt, derr := ParseDefault(); derr == nil {
+	// Always guarantee the embedded first-class themes are selectable. A
+	// theme whose id is already on disk won the dedup above (on-disk wins,
+	// preserving the existing contract); otherwise append the embedded copy
+	// so the picker shows the full first-party set even on an empty/wiped
+	// vault or an existing vault scaffolded before a theme shipped.
+	embedded, embedErr := EmbeddedThemes()
+	if embedErr != nil {
+		// An embed corruption is a release-blocking build bug (caught by
+		// EmbeddedThemes tests in CI). Keep the picker usable by falling
+		// back to just the default rather than bricking the UI — the same
+		// defensive posture the original single-default path used.
+		if dt, derr := ParseDefault(); derr == nil && !seenIDs[dt.ID] {
 			res.Themes = append(res.Themes, dt.AsInfo("default"))
-			res.FlatTokens[DefaultThemeID] = FlatTokensPerMode{
+			res.FlatTokens[dt.ID] = FlatTokensPerMode{
 				Dark:  dt.Flatten("dark"),
 				Light: dt.Flatten("light"),
+			}
+		}
+	} else {
+		for _, t := range embedded {
+			if seenIDs[t.ID] {
+				continue
+			}
+			seenIDs[t.ID] = true
+			// The primary default is labeled "default" (unchanged); the
+			// other embedded first-class themes are "bundled" so the UI
+			// can tell a shipped palette from a user's on-disk copy.
+			source := "bundled"
+			if t.ID == DefaultThemeID {
+				source = "default"
+			}
+			res.Themes = append(res.Themes, t.AsInfo(source))
+			res.FlatTokens[t.ID] = FlatTokensPerMode{
+				Dark:  t.Flatten("dark"),
+				Light: t.Flatten("light"),
 			}
 		}
 	}
@@ -160,6 +186,13 @@ func ResolveActive(themesDir, activeID, mode string) (*Theme, error) {
 		if err == nil {
 			return t, nil
 		}
+		// 2. Not on disk — try the embedded first-class copy so a
+		// non-default first-class theme resolves even when the themes dir
+		// is wiped or the vault predates the theme shipping. Without this
+		// step the active theme would flash the default palette on launch.
+		if t, ok := ParseEmbeddedByID(activeID); ok {
+			return t, nil
+		}
 		// Surface why the selected theme didn't load so theme-file issues
 		// aren't invisible; still fall back to the default (never brick the
 		// app). Skipped pre-vault (themesDir=="") because the empty-dir
@@ -169,8 +202,8 @@ func ResolveActive(themesDir, activeID, mode string) (*Theme, error) {
 		}
 	}
 
-	// 2. If the selected id IS the default and it is not on disk, use the
-	// embedded copy.
+	// 3. Final fallback: the embedded default. The concrete theme is always
+	// non-nil on success because the embedded default is the final fallback.
 	if t, err := ParseDefault(); err == nil {
 		return t, nil
 	}

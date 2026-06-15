@@ -192,14 +192,22 @@ plugins:
 		}
 	}
 
-	// 3. Scaffold default theme (cyber_forest.json). The canonical theme
-	// content lives in backend/themes and is embedded in the binary; writing
-	// it from that single source of truth keeps the scaffolded file identical
-	// to the runtime fallback theme.
-	themePath := filepath.Join(vaultPath, ".system", "themes", "cyber_forest.json")
-	if _, err := os.Stat(themePath); os.IsNotExist(err) {
-		if err := os.WriteFile(themePath, themes.DefaultThemeJSON(), 0644); err != nil {
-			return fmt.Errorf("failed to write cyber_forest.json theme: %w", err)
+	// 3. Scaffold the first-class themes. The canonical content lives in
+	// backend/themes/themes and is embedded in the binary; writing every
+	// embedded file from that single source of truth keeps the scaffolded
+	// copies identical to the runtime fallback set. Each write is guarded
+	// by an existence check so a user who edits (or deletes) one is never
+	// overwritten — only missing files are created.
+	themeFiles, err := themes.EmbeddedThemeFiles()
+	if err != nil {
+		return fmt.Errorf("failed to read embedded first-class themes: %w", err)
+	}
+	for fileName, raw := range themeFiles {
+		themePath := filepath.Join(vaultPath, ".system", "themes", fileName)
+		if _, err := os.Stat(themePath); os.IsNotExist(err) {
+			if err := os.WriteFile(themePath, raw, 0644); err != nil {
+				return fmt.Errorf("failed to write theme %s: %w", fileName, err)
+			}
 		}
 	}
 

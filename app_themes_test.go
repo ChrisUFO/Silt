@@ -223,13 +223,22 @@ func TestGetActiveTheme_BeforeVaultOpen(t *testing.T) {
 	if res.ID != themes.DefaultThemeID {
 		t.Errorf("expected embedded default, got %q", res.ID)
 	}
-	// And ListThemes returns just the embedded default.
+	// And ListThemes returns the embedded first-class set (the default +
+	// the four shipped palettes) even before a vault is open.
 	listing, err := app.ListThemes()
 	if err != nil {
 		t.Fatalf("ListThemes pre-vault: %v", err)
 	}
-	if len(listing.Themes) != 1 || listing.Themes[0].Source != "default" {
-		t.Errorf("expected embedded default only pre-vault, got %+v", listing.Themes)
+	ids := map[string]bool{}
+	for _, ti := range listing.Themes {
+		ids[ti.ID] = true
+	}
+	for _, id := range []string{
+		themes.DefaultThemeID, "silt-terra-noir", "silt-linen", "silt-stark", "silt-graphite",
+	} {
+		if !ids[id] {
+			t.Errorf("expected embedded first-class theme %q pre-vault, got %v", id, ids)
+		}
 	}
 }
 
@@ -382,12 +391,22 @@ func TestImportTheme_IPCValidationFailure(t *testing.T) {
 	if !found {
 		t.Errorf("expected error on accent.primary.start, got: %+v", res.ValidationErrors)
 	}
-	// No file written under themes/.
+	// No file written under themes/ beyond the scaffolded first-class set
+	// (the rejected import must add nothing). The scaffold writes every
+	// embedded first-class theme, so those are the expected baseline.
 	themesDir := filepath.Join(app.vaultPath, ".system", "themes")
 	entries, _ := os.ReadDir(themesDir)
+	files, err := themes.EmbeddedThemeFiles()
+	if err != nil {
+		t.Fatalf("EmbeddedThemeFiles: %v", err)
+	}
+	scaffolded := make(map[string]bool, len(files))
+	for fn := range files {
+		scaffolded[fn] = true
+	}
 	imported := 0
 	for _, e := range entries {
-		if e.Name() != themes.DefaultThemeID+".json" {
+		if !scaffolded[e.Name()] {
 			imported++
 		}
 	}
