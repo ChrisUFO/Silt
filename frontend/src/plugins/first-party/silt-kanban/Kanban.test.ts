@@ -1,6 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  within
+} from '@testing-library/svelte'
 
 // jsdom doesn't implement Element.getAnimations(), which Svelte's
 // animate:flip directive calls internally when list items reposition.
@@ -160,6 +166,14 @@ async function flush() {
 
 describe('Kanban plugin (#19)', () => {
   beforeEach(() => {
+    // Reset the kanban plugin settings to defaults. Column add/remove
+    // and filter tests mutate settings.config via persistColumns/
+    // persistFilters; without this reset, those mutations leak into the
+    // next test's initialColumns()/initialFilters() reads.
+    mocks.settings.config.plugins.plugin_settings['silt-kanban'] = {
+      default_col: 'TODO',
+      columns: ['TODO', 'DOING', 'DONE']
+    }
     mocks.sqliteQuery.mockReset()
     mocks.updateBlockState.mockReset()
     // PluginContext.sqliteQuery now returns {rows, truncated} (the SDK
@@ -575,5 +589,49 @@ describe('Kanban plugin (#19)', () => {
     ).toBeInTheDocument()
     expect(mocks.saveConfig).toHaveBeenCalledTimes(1)
     confirmSpy.mockRestore()
+  })
+
+  it('pin button disables during the in-flight write to prevent concurrent toggles', async () => {
+    let resolvePin!: (v: boolean) => void
+    const updateTaskMeta = vi.fn(
+      () => new Promise<boolean>((r) => (resolvePin = r))
+    )
+    render(Kanban, {
+      ctx: makeCtx({ updateTaskMeta }),
+      manifest: MANIFEST
+    })
+    await flush()
+
+    // Open the detail panel.
+    const card = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    await fireEvent.click(card)
+    await flush()
+
+    const dialog = screen.getByRole('dialog')
+    const pinBtn = within(dialog).getByRole('button', { name: /pin/i })
+    expect(pinBtn).not.toBeDisabled()
+
+    // Click pin — the optimistic state flips + the IPC call is dispatched.
+    await fireEvent.click(pinBtn)
+    await flush()
+
+    // While the write is in-flight, the button is disabled so a second
+    // rapid click can't race the Go-side file write (LockFileWrite
+    // serializes per-file but preserves Go IPC arrival order, not JS
+    // dispatch order — disabling the control prevents overlap entirely).
+    expect(pinBtn).toBeDisabled()
+    expect(updateTaskMeta).toHaveBeenCalledTimes(1)
+
+    // A second click while disabled is a no-op.
+    await fireEvent.click(pinBtn)
+    expect(updateTaskMeta).toHaveBeenCalledTimes(1)
+
+    // Resolve the write — the button re-enables.
+    resolvePin(true)
+    await flush()
+
+    expect(pinBtn).not.toBeDisabled()
   })
 })
