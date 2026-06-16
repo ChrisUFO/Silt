@@ -494,6 +494,36 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 
 # Sprint Follow-Ups — Issues #61, #62, #63, #64, #68, #69, #75, #79, #83
 
+## Sprint: Template follow-ups + dep pull-ins (#85, #86, #88, #89, #93–#98)
+
+Closes the six template follow-up issues (PRs #99, #121) plus the four open dependencies that gated them (#85 Smart Graph NodeViews, #86 save-failure toast, #88 ListNavigation deep-nesting, #89 sanitizePathSegment). All work in one branch (`feat/template-followups-93-98`) so the tests run as real assertions — no `t.Skip` workarounds.
+
+### Automated Tests
+
+Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (frontend, vitest).
+
+### Go coverage added
+
+| File | Tests | What is covered |
+|---|---|---|
+| `app.go` (#89) | `TestSanitizePathSegment` (table updated) | `2.0..2.1` and `a..b..c` preserved; `..foo` / `....foo` / `../etc/passwd` still stripped (boundary-only `..` strip) |
+| `app.go` (Phase 7) | `sanitizeSectionPath` helper + `CreatePageFromTemplate` integration | Multi-segment section paths (`Projects/Active`) survive the sanitize pass — closes the latent bug where `Projects/Active` was being mangled to `ProjectsActive` by the single-segment sanitizer |
+| `app_nav_test.go` (#88) | `TestListNavigation_DeepNesting` | Multi-level section tree (Work > Projects > Active > Site.md) appears in the navigation at the correct depth |
+| `app_templates_test.go` (#93, #97, #98, #96) | `TestCreatePageFromTemplate_EmbedAndRefPreservedInFile`, `TestCreatePageFromTemplate_DeepSection_AppearsInNavigation`, `TestCreatePageFromTemplate_SanitizesEdgeCaseNames` (6 sub-cases), `TestRegisterPluginTemplates_IPC` | Smart-graph passthrough through the file-write IPC; deep-section page visibility; sanitization edge cases (internal `..` preserved, leading `..` stripped, exact `..` rejected); plugin-template registry round-trip |
+| `backend/templates/loader_test.go` (#96) | `TestRegisterPluginTemplates_HappyPath`, `..._RejectsEmptyPluginID`, `..._RejectsNilSlice`, `..._RejectsMismatchedSource`, `..._RejectsMismatchedPluginID`, `TestUnregisterPluginTemplates_Idempotent`, `TestGetPluginTemplate_ResolvesURI`, `..._NotFound`, `..._InvalidURI` (3 sub-cases), `TestListTemplates_IncludesPluginTemplates`, `TestGetTemplate_PluginURI`, `TestRejectPluginIDInFrontmatter` | Plugin-template registry round-trip: register / unregister / list / get / invalid URI / dedup with on-disk / on-disk frontmatter `plugin_id:` rejection |
+
+### Frontend coverage added
+
+| File | Tests | What is covered |
+|---|---|---|
+| `frontend/src/notifications/store.test.ts` (new, #86) | 9 tests | `pushNotification` / `dismissNotification` / `clearAllNotifications`; auto-dismiss timing; action callback; test reset |
+| `frontend/src/components/ToastContainer.test.ts` (new, #86) | 7 tests | role=alert / role=status, aria-live=assertive / polite, action button wires to handler + dismiss, dismiss button, multi-stack rendering |
+| `frontend/src/templates/TemplatePicker.test.ts` (#95, #94, #96) | +5 tests | Pre-filled page-name field in new-page mode; `focus-page-title` event dispatch on success; `onCreatedPage` callback regression; toast pushed on `CreatePageFromTemplate` / `RenderTemplateBlocks` failure; plugin templates group under `Plugins / <plugin_id>` |
+| `frontend/src/components/SidebarSection.test.ts` (new, #88) | 7 tests | Renders pages when expanded; hidden when collapsed; recursive children; click + keyboard (Enter/Space) toggle; `aria-level` per depth; page click invokes `onSelectPage` |
+| `frontend/src/lib/editor/converters.test.ts` (#85) | +4 tests | `{{embed:uuid}}` tokenized as embedNode; `((uuid))` tokenized as blockReferenceNode; full-text round-trip with both; top-level embedNode round-trip |
+
+Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (frontend, vitest). All ten Go packages pass; `npm run check` reports 0 errors and 0 warnings; `npm test` runs **162 vitest tests** across 23 files.
+
 ## Automated Tests
 
 Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (frontend).
