@@ -44,10 +44,14 @@ export interface PluginContext {
    * Update per-task metadata (pin, progress). Both fields are optional;
    * pass undefined to skip a field. Pin and progress are file-resident
    * user intent — the call round-trips through the markdown file.
+   *
+   * Pin is tri-state (#123): `true`→`[pin:: true]`, `false`→`[pin:: false]`
+   * (explicit unpinned, preserved across round-trips), `null`→clears the
+   * token entirely. `undefined` leaves the pin unchanged.
    */
   updateTaskMeta: (
     id: string,
-    meta: { pinned?: boolean; progress?: number }
+    meta: { pinned?: boolean | null; progress?: number }
   ) => Promise<boolean>
 }
 

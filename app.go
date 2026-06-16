@@ -2782,11 +2782,16 @@ func (a *App) PluginUpdateBlockState(blockID, status string) (bool, error) {
 // re-indexed so SQLite reflects the new state.
 //
 // Sentinels allow partial updates:
-//   pin:      -1 = no change, 0 = unpin, 1 = pin
+//   pin:      -2 = clear (remove the [pin::] token), -1 = no change,
+//             0 = explicitly unpin ([pin:: false]), 1 = pin ([pin:: true])
 //   progress: -1 = no change, 0-100 = set value (0 clears the token)
+//
+// The tri-state pin sentinel preserves a typed [pin:: false] across UI
+// toggles: the renderer emits exactly one pin token from the *bool, so
+// pin → unpin → pin can never produce two competing tokens (#123).
 func (a *App) PluginUpdateTaskMeta(blockID string, pin int, progress int) (bool, error) {
-	if pin != -1 && pin != 0 && pin != 1 {
-		return false, fmt.Errorf("invalid pin value %d (valid: -1=no change, 0=unpin, 1=pin)", pin)
+	if pin < -2 || pin > 1 {
+		return false, fmt.Errorf("invalid pin value %d (valid: -2=clear, -1=no change, 0=unpin, 1=pin)", pin)
 	}
 	if progress < -1 || progress > 100 {
 		return false, fmt.Errorf("invalid progress value %d (valid: -1=no change, 0-100)", progress)
@@ -2845,7 +2850,16 @@ func (a *App) PluginUpdateTaskMeta(blockID string, pin int, progress int) (bool,
 		for i := range parsedBlocks {
 			if parsedBlocks[i].ID == blockID && parsedBlocks[i].Type == parser.BlockTask {
 				if pin != -1 {
-					parsedBlocks[i].Pinned = pin == 1
+					switch pin {
+					case -2:
+						parsedBlocks[i].Pinned = nil // remove the token
+					case 0:
+						b := false
+						parsedBlocks[i].Pinned = &b // [pin:: false]
+					case 1:
+						b := true
+						parsedBlocks[i].Pinned = &b // [pin:: true]
+					}
 				}
 				if progress != -1 {
 					parsedBlocks[i].Progress = progress

@@ -21,10 +21,15 @@ type ParsedBlock struct {
 	DueDate    string    `json:"due_date,omitempty"`
 	Priority   int       `json:"priority,omitempty"`
 	// Pinned is the user-set "sticky" flag surfaced in the Kanban card
-	// chrome (`!pin` in the markdown inline task syntax). It is user
-	// intent and lives only in the file; the SQLite index is allowed to
-	// cache it for query speed but the file is the source of truth.
-	Pinned bool `json:"pinned,omitempty"`
+	// chrome (`[pin:: true]` / `[pinned:: true]` in the markdown inline task
+	// syntax). It is a TRI-STATE pointer so the renderer can distinguish
+	// "no pin token present" (nil → omit the token) from an explicit
+	// `[pin:: false]` (&false → emit the token). This preserves a typed
+	// `[pin:: false]` across parse → render without polluting ExtraTokens
+	// (#123). It is user intent and lives only in the file; the SQLite
+	// index caches a 0/1 projection for query speed but the file is the
+	// source of truth.
+	Pinned *bool `json:"pinned,omitempty"`
 	// Progress is a 0-100 user-set progress indicator (`[progress:: N]`
 	// or `[prog:: N]` in the markdown inline task syntax). 0 = not set
 	// (renderer omits the marker). Lives only in the file; SQLite caches
@@ -177,8 +182,9 @@ type TaskResult struct {
 	Priority     int       `json:"priority,omitempty"`
 	// Pinned + Progress mirror the ParsedBlock fields (see ARCHITECTURE.md
 	// §0 "Storage-of-Truth Tiers" — these are file-resident user intent;
-	// the SQLite index is allowed to cache them, not to own them).
-	Pinned       bool      `json:"pinned,omitempty"`
+	// the SQLite index is allowed to cache them, not to own them). Pinned
+	// is a tri-state pointer for parity with ParsedBlock.Pinned (#123).
+	Pinned       *bool    `json:"pinned,omitempty"`
 	Progress     int       `json:"progress,omitempty"`
 	// CommentsCount is the number of indented child NOTE blocks beneath
 	// this task (the "comments on a task" UX from the Stitch reference).

@@ -109,6 +109,48 @@ func TestIndexFileBlocks_InsertsBlocksTasksAndTags(t *testing.T) {
 	}
 }
 
+// TestIndexFileBlocks_PinnedProjection verifies the markdown *bool pin state
+// (nil / &false / &true) projects onto the INTEGER 0/1 tasks.pinned cache
+// column. The tri-state lives only in the parse→render cycle; SQLite caches a
+// plain 0/1 for query speed (nil and &false both project to 0). Covers a
+// previously-missing assertion (#123).
+func TestIndexFileBlocks_PinnedProjection(t *testing.T) {
+	dm := newTestDB(t)
+
+	boolPtr := func(b bool) *bool { return &b }
+	mk := func(id string, pinned *bool) parser.ParsedBlock {
+		b := sampleTaskBlock(id, 1)
+		b.Pinned = pinned
+		return b
+	}
+	blocks := []parser.ParsedBlock{
+		mk("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", boolPtr(true)),  // -> 1
+		mk("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", boolPtr(false)), // -> 0
+		mk("cccccccc-cccc-cccc-cccc-cccccccccccc", nil),            // -> 0
+	}
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks failed: %v", err)
+	}
+
+	cases := []struct {
+		id   string
+		want int
+	}{
+		{"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1},
+		{"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 0},
+		{"cccccccc-cccc-cccc-cccc-cccccccccccc", 0},
+	}
+	for _, c := range cases {
+		var got int
+		if err := dm.db.QueryRow("SELECT pinned FROM tasks WHERE block_id = ?", c.id).Scan(&got); err != nil {
+			t.Fatalf("select pinned for %s: %v", c.id, err)
+		}
+		if got != c.want {
+			t.Errorf("%s: expected pinned=%d, got %d", c.id, c.want, got)
+		}
+	}
+}
+
 func TestIndexFileBlocks_ReplacesExistingRows(t *testing.T) {
 	dm := newTestDB(t)
 

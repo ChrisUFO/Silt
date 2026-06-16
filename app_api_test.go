@@ -1438,14 +1438,29 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 			t.Errorf("expected [pin:: true] in file after pin, got:\n%s", string(got))
 		}
 
-		// Unpin clears the token (renderer omits [pin:: false]).
+		// Unpin writes an explicit [pin:: false] (tri-state #123): the token
+		// is preserved so a user-typed [pin:: false] survives round-trips and
+		// toggling cannot silently revert.
 		ok, err = app.PluginUpdateTaskMeta(taskID, 0, -1)
 		if err != nil || !ok {
 			t.Fatalf("PluginUpdateTaskMeta pin=0: ok=%v err=%v", ok, err)
 		}
 		got, _ = os.ReadFile(filePath)
+		if !strings.Contains(string(got), "[pin:: false]") {
+			t.Errorf("expected [pin:: false] in file after unpin, got:\n%s", string(got))
+		}
+		if strings.Count(string(got), "[pin::") != 1 {
+			t.Errorf("expected exactly one [pin:: token after unpin, got:\n%s", string(got))
+		}
+
+		// pin=-2 clears the token entirely (nil → renderer omits it).
+		ok, err = app.PluginUpdateTaskMeta(taskID, -2, -1)
+		if err != nil || !ok {
+			t.Fatalf("PluginUpdateTaskMeta pin=-2: ok=%v err=%v", ok, err)
+		}
+		got, _ = os.ReadFile(filePath)
 		if strings.Contains(string(got), "[pin::") {
-			t.Errorf("expected [pin::] token removed after unpin, got:\n%s", string(got))
+			t.Errorf("expected [pin::] token removed after clear (pin=-2), got:\n%s", string(got))
 		}
 	})
 

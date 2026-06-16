@@ -167,7 +167,7 @@ func parseLeadingIndent(line string, spacesPerTab int) int {
 // Adding a new metadata type is a one-line addition to the switch below.
 // Unknown keys are preserved in extraTokens so the file round-trips
 // without data loss.
-func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned bool, progress int, description string, extraTokens []string) {
+func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned *bool, progress int, description string, extraTokens []string) {
 	priority = 3 // default; 0 from the regex means "not set"
 	progress = 0
 	matches := TaskTokenRegex.FindAllStringSubmatch(remainder, -1)
@@ -194,12 +194,17 @@ func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priorit
 				fmt.Sscanf(val, "%d", &priority)
 			}
 		case "pin", "pinned":
-			// Boolean: only explicit truthy values ("true"/"yes"/"1")
-			// set pinned=true. Anything else (including typos like
-			// "maybe", "foo", or "2") is false — the renderer normalises
-			// to [pin:: true] so the round-trip is stable regardless.
+			// Tri-state (#123): the token's PRESENCE is what matters —
+			// any [pin:: ...] sets a non-nil pointer so the renderer can
+			// distinguish "explicitly unpinned" (&false → [pin:: false])
+			// from "no pin token" (nil → omit). Only explicit truthy
+			// values ("true"/"yes"/"1") set &true; anything else (false,
+			// "no", "0", empty, typos) sets &false. The renderer emits
+			// exactly one pin token from the pointer, so toggling via the
+			// UI can never produce two competing tokens.
 			v := strings.ToLower(val)
-			pinned = v == "true" || v == "yes" || v == "1"
+			b := v == "true" || v == "yes" || v == "1"
+			pinned = &b
 		case "progress", "prog":
 			if val != "" {
 				fmt.Sscanf(val, "%d", &progress)
@@ -615,8 +620,12 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		if block.Owner != "" {
 			tokens = append(tokens, fmt.Sprintf("[owner:: %s]", block.Owner))
 		}
-		if block.Pinned {
-			tokens = append(tokens, "[pin:: true]")
+		if block.Pinned != nil {
+			if *block.Pinned {
+				tokens = append(tokens, "[pin:: true]")
+			} else {
+				tokens = append(tokens, "[pin:: false]")
+			}
 		}
 		if block.Progress > 0 {
 			tokens = append(tokens, fmt.Sprintf("[progress:: %d]", block.Progress))

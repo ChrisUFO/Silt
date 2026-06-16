@@ -49,12 +49,21 @@ export function makePluginContext(): PluginContext {
     updateBlockState: (id, status: TaskStatus) =>
       PluginUpdateBlockState(id, status),
     // Pin/progress are file-resident user intent (ARCHITECTURE §0). The
-    // Go side uses int sentinels (-1 = no change, 0/1 = pin value); the
-    // SDK wrapper translates the ergonomic boolean/number API to them.
+    // Go side uses int sentinels for the tri-state pin (#123):
+    //   -2 = clear the [pin::] token, -1 = no change,
+    //    0 = [pin:: false], 1 = [pin:: true]
+    // and -1/0..100 for progress. The SDK wrapper translates the ergonomic
+    // boolean|null / number API to those sentinels.
     updateTaskMeta: (id, meta) =>
       PluginUpdateTaskMeta(
         id,
-        meta.pinned === undefined ? -1 : meta.pinned ? 1 : 0,
+        meta.pinned === undefined
+          ? -1
+          : meta.pinned === null
+            ? -2
+            : meta.pinned
+              ? 1
+              : 0,
         meta.progress === undefined ? -1 : meta.progress
       )
   }

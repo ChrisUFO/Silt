@@ -636,7 +636,7 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, block
 				dueDate = block.DueDate
 			}
 			pinnedVal := 0
-			if block.Pinned {
+			if block.Pinned != nil && *block.Pinned {
 				pinnedVal = 1
 			}
 			linksCount := len(parser.BlockRefRegex.FindAllString(block.RawText, -1))
@@ -797,7 +797,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 					dueDate = block.DueDate
 				}
 				pinnedVal := 0
-				if block.Pinned {
+				if block.Pinned != nil && *block.Pinned {
 					pinnedVal = 1
 				}
 				// Compute comments_count (child NOTE blocks) and links_count
