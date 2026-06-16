@@ -699,6 +699,51 @@ func TestPluginRawQuery_TruncationFlag(t *testing.T) {
 	}
 }
 
+// TestPluginRawQuery_TruncationCapHit verifies the cap-hit path: when a
+// query exceeds maxPluginQueryRows, Truncated must be true and the result
+// must be capped to exactly maxPluginQueryRows rows. Uses a temporarily
+// lowered cap to avoid seeding 5000+ rows in CI.
+func TestPluginRawQuery_TruncationCapHit(t *testing.T) {
+	app := newTestApp(t)
+	// Seed 10 task blocks in a single file (writeSamplePage overwrites
+	// per-file, so we build one file with multiple blocks).
+	notebook, section, page := "Work", "Journal", "Daily"
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	var lines []string
+	lines = append(lines, "# Title <!-- id: 11111111-1111-1111-1111-111111111111 -->")
+	lines = append(lines, "")
+	for i := range 10 {
+		id := fmt.Sprintf("aaaaaaaa-0000-0000-0000-%012d", i)
+		lines = append(lines, fmt.Sprintf("- [ ] task %d <!-- id: %s -->", i, id))
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	writeFile(t, filePath, content)
+	blocks, meta, _, _, err := parser.ParseFileContent(content, notebook, section, page, "2026-06-13", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	// Temporarily lower the cap to 3 so we can exercise the truncation
+	// branch without seeding thousands of rows.
+	origCap := maxPluginQueryRows
+	maxPluginQueryRows = 3
+	t.Cleanup(func() { maxPluginQueryRows = origCap })
+
+	res, err := app.PluginRawQuery("SELECT id FROM blocks", nil)
+	if err != nil {
+		t.Fatalf("PluginRawQuery: %v", err)
+	}
+	if !res.Truncated {
+		t.Errorf("expected Truncated=true when result exceeds cap (%d rows, cap %d)", len(res.Rows), maxPluginQueryRows)
+	}
+	if len(res.Rows) != maxPluginQueryRows {
+		t.Errorf("expected exactly %d rows (cap), got %d", maxPluginQueryRows, len(res.Rows))
+	}
+}
+
 func TestPluginUpdateBlockState_WrapsUpdate(t *testing.T) {
 	app := newTestApp(t)
 	taskID := "55555555-5555-5555-5555-555555555555"
@@ -1353,4 +1398,123 @@ func TestMigratePerDayFiles_SkipsWhenTargetExists(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(pageDir, "2026-06-01.md")); err != nil {
 		t.Errorf("original date file should be preserved when target exists")
 	}
+}
+
+// seedTaskFile writes a page with one task + one note, indexes it, and
+// returns the file path + the task/note block IDs. Shared setup for the
+// PluginUpdateTaskMeta coverage below.
+func seedTaskFile(t *testing.T, app *App) (filePath, taskID, noteID string) {
+	t.Helper()
+	notebook, section, page := "Work", "Journal", "Daily"
+	filePath = filepath.Join(app.vaultPath, notebook, section, page+".md")
+	taskID = "22222222-2222-2222-2222-222222222222"
+	noteID = "55555555-5555-5555-5555-555555555555"
+	content := "# Today <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
+		"\n" +
+		"- [ ] ship [owner:: Alice] <!-- id: " + taskID + " -->\n" +
+		"- a note <!-- id: " + noteID + " -->\n"
+	writeFile(t, filePath, content)
+	blocks, meta, _, _, err := parser.ParseFileContent(content, notebook, section, page, "2026-06-13", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+	return filePath, taskID, noteID
+}
+
+func TestPluginUpdateTaskMeta(t *testing.T) {
+	t.Run("pin toggle round-trips through markdown", func(t *testing.T) {
+		app := newTestApp(t)
+		filePath, taskID, _ := seedTaskFile(t, app)
+
+		ok, err := app.PluginUpdateTaskMeta(taskID, 1, -1)
+		if err != nil || !ok {
+			t.Fatalf("PluginUpdateTaskMeta pin=1: ok=%v err=%v", ok, err)
+		}
+		got, _ := os.ReadFile(filePath)
+		if !strings.Contains(string(got), "[pin:: true]") {
+			t.Errorf("expected [pin:: true] in file after pin, got:\n%s", string(got))
+		}
+
+		// Unpin clears the token (renderer omits [pin:: false]).
+		ok, err = app.PluginUpdateTaskMeta(taskID, 0, -1)
+		if err != nil || !ok {
+			t.Fatalf("PluginUpdateTaskMeta pin=0: ok=%v err=%v", ok, err)
+		}
+		got, _ = os.ReadFile(filePath)
+		if strings.Contains(string(got), "[pin::") {
+			t.Errorf("expected [pin::] token removed after unpin, got:\n%s", string(got))
+		}
+	})
+
+	t.Run("progress set round-trips through markdown", func(t *testing.T) {
+		app := newTestApp(t)
+		filePath, taskID, _ := seedTaskFile(t, app)
+
+		ok, err := app.PluginUpdateTaskMeta(taskID, -1, 75)
+		if err != nil || !ok {
+			t.Fatalf("PluginUpdateTaskMeta progress=75: ok=%v err=%v", ok, err)
+		}
+		got, _ := os.ReadFile(filePath)
+		if !strings.Contains(string(got), "[progress:: 75]") {
+			t.Errorf("expected [progress:: 75] in file, got:\n%s", string(got))
+		}
+	})
+
+	t.Run("no-op sentinels return true without writing", func(t *testing.T) {
+		app := newTestApp(t)
+		filePath, taskID, _ := seedTaskFile(t, app)
+		before, _ := os.ReadFile(filePath)
+
+		ok, err := app.PluginUpdateTaskMeta(taskID, -1, -1)
+		if err != nil || !ok {
+			t.Fatalf("no-op: ok=%v err=%v", ok, err)
+		}
+		after, _ := os.ReadFile(filePath)
+		if string(before) != string(after) {
+			t.Errorf("no-op should not touch the file\nbefore:\n%s\nafter:\n%s", before, after)
+		}
+	})
+
+	t.Run("invalid pin value rejected", func(t *testing.T) {
+		app := newTestApp(t)
+		_, taskID, _ := seedTaskFile(t, app)
+		ok, err := app.PluginUpdateTaskMeta(taskID, 2, -1)
+		if ok || err == nil {
+			t.Errorf("pin=2 should be rejected, got ok=%v err=%v", ok, err)
+		}
+	})
+
+	t.Run("invalid progress value rejected", func(t *testing.T) {
+		app := newTestApp(t)
+		_, taskID, _ := seedTaskFile(t, app)
+		ok, err := app.PluginUpdateTaskMeta(taskID, -1, 200)
+		if ok || err == nil {
+			t.Errorf("progress=200 should be rejected, got ok=%v err=%v", ok, err)
+		}
+	})
+
+	t.Run("non-task block rejected", func(t *testing.T) {
+		app := newTestApp(t)
+		_, _, noteID := seedTaskFile(t, app)
+		ok, err := app.PluginUpdateTaskMeta(noteID, 1, -1)
+		if ok || err == nil {
+			t.Errorf("non-task block should be rejected, got ok=%v err=%v", ok, err)
+		}
+	})
+
+	t.Run("block missing from file returns error", func(t *testing.T) {
+		app := newTestApp(t)
+		filePath, taskID, _ := seedTaskFile(t, app)
+		// Overwrite the file so the indexed block is no longer present
+		// (simulates a concurrent external edit that removed the line).
+		writeFile(t, filePath, "# Empty\n- [ ] different task <!-- id: 99999999-9999-9999-9999-999999999999 -->\n")
+
+		ok, err := app.PluginUpdateTaskMeta(taskID, 1, -1)
+		if ok || err == nil {
+			t.Errorf("missing block should error, got ok=%v err=%v", ok, err)
+		}
+	})
 }

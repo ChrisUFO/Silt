@@ -179,6 +179,23 @@ func TestParseLine_PinAndProgress(t *testing.T) {
 			t.Errorf("bare word `pin` must not set Pinned=true")
 		}
 	})
+	t.Run("non-truthy [pin::] value does not parse as pinned", func(t *testing.T) {
+		cases := map[string]bool{
+			// truthy
+			"[pin:: true]": true, "[pin:: yes]": true, "[pin:: 1]": true,
+			// falsy
+			"[pin:: false]": false, "[pin:: no]": false, "[pin:: 0]": false, "[pin:: ]": false,
+			// typos / garbage — must NOT silently parse as true
+			"[pin:: maybe]": false, "[pin:: foo]": false, "[pin:: 2]": false,
+		}
+		for token, want := range cases {
+			line := "- [ ] test " + token + " <!-- id: 12345678-1234-1234-1234-123456789012 -->"
+			block, _, _ := ParseLine(line, 1, 4)
+			if block.Pinned != want {
+				t.Errorf("%s: expected Pinned=%v, got %v", token, want, block.Pinned)
+			}
+		}
+	})
 	t.Run("progress > 100 clamps to 100", func(t *testing.T) {
 		line := "- [ ] Overflow [progress:: 999] <!-- id: 55555555-5555-5555-5555-555555555555 -->"
 		block, _, _ := ParseLine(line, 1, 4)
@@ -200,6 +217,57 @@ func TestParseLine_PinAndProgress(t *testing.T) {
 		}
 		if parsed2.CleanText != parsed.CleanText {
 			t.Errorf("round-trip CleanText drift: %q → %q", parsed.CleanText, parsed2.CleanText)
+		}
+	})
+}
+
+// TestParseLine_UnknownTokens verifies that unrecognised [key:: value]
+// Dataview tokens (e.g. third-party fields like [project:: alpha]) survive
+// the parse → render round-trip so files stay interoperable with
+// Obsidian/Dataview (SPECS.md §4.1).
+func TestParseLine_UnknownTokens(t *testing.T) {
+	t.Run("unknown token collected into ExtraTokens", func(t *testing.T) {
+		line := "- [ ] Build feature [due:: 2026-08-03] [project:: alpha] <!-- id: 77777777-7777-7777-7777-777777777777 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if len(block.ExtraTokens) != 1 {
+			t.Fatalf("expected 1 extra token, got %d: %v", len(block.ExtraTokens), block.ExtraTokens)
+		}
+		if block.ExtraTokens[0] != "[project:: alpha]" {
+			t.Errorf("expected '[project:: alpha]', got %q", block.ExtraTokens[0])
+		}
+		// Known token still parsed correctly.
+		if block.DueDate != "2026-08-03" {
+			t.Errorf("expected DueDate=2026-08-03, got %q", block.DueDate)
+		}
+		// Unknown token stripped from the description.
+		if block.CleanText != "Build feature" {
+			t.Errorf("expected CleanText='Build feature', got %q", block.CleanText)
+		}
+	})
+	t.Run("multiple unknown tokens round-trip through render", func(t *testing.T) {
+		line := "- [ ] Task [project:: alpha] [estimate:: 3h] [priority:: 1] <!-- id: 88888888-8888-8888-8888-888888888888 -->"
+		parsed, _, _ := ParseLine(line, 1, 4)
+		rendered := renderBlock(parsed, 4)
+		// Re-parse the rendered output.
+		parsed2, _, _ := ParseLine(rendered, 1, 4)
+		if len(parsed2.ExtraTokens) != 2 {
+			t.Fatalf("expected 2 extra tokens after round-trip, got %d: %v", len(parsed2.ExtraTokens), parsed2.ExtraTokens)
+		}
+		// Both unknown tokens preserved verbatim.
+		expectExtra := map[string]bool{"[project:: alpha]": false, "[estimate:: 3h]": false}
+		for _, tok := range parsed2.ExtraTokens {
+			if _, ok := expectExtra[tok]; ok {
+				expectExtra[tok] = true
+			}
+		}
+		for tok, found := range expectExtra {
+			if !found {
+				t.Errorf("extra token %q missing after round-trip; got %v", tok, parsed2.ExtraTokens)
+			}
+		}
+		// Known token still parsed correctly.
+		if parsed2.Priority != 1 {
+			t.Errorf("expected Priority=1 after round-trip, got %d", parsed2.Priority)
 		}
 	})
 }

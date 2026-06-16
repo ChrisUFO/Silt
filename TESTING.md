@@ -459,13 +459,13 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 
 | File | Tests | What is covered |
 |---|---|---|
-| `frontend/src/plugins/first-party/silt-kanban/Kanban.test.ts` (20 tests) | 3-lane render, task bucketing, default page-scope, scope-change re-query, click → detail panel, "Open in editor" → navigate-to-block, ArrowRight/Enter/Space keyboard, error revert, empty state, scope-button enable/disable, truncation banner, race guard, owner/priority filter SQL clauses, Add/Remove column persistence | Kanban plugin IPC boundary |
+| `frontend/src/plugins/first-party/silt-kanban/Kanban.test.ts` (24 tests) | 3-lane render, task bucketing, default page-scope, scope-change re-query, click → detail panel, "Open in editor" → navigate-to-block, ArrowRight/Enter/Space keyboard, error revert, empty state, scope-button enable/disable, truncation banner, race guard, owner/priority filter SQL clauses, Add/Remove column persistence, pin-pending disable, board reload after meta toggle, custom-column drop rejection, scope radiogroup arrow-key nav | Kanban plugin IPC boundary |
 | `frontend/src/plugins/first-party/silt-agenda/Agenda.test.ts` (4 tests) | Date-bucket loading, mark-done → ctx.updateBlockState, click → navigate-to-block, empty state | Agenda plugin IPC boundary |
 | `frontend/src/plugins/first-party/silt-calendar/Calendar.test.ts` (3 tests) | Month-grid rendering, Today button, click → navigate-to-block | Calendar plugin IPC boundary |
 | `frontend/src/components/PluginView.test.ts` (3 tests) | Happy-path render, load-error path, not-registered empty state | Plugin host view |
 | `frontend/src/components/Sidebar.test.ts` (2 tests) | Collapse render, Change Vault handler | Sidebar interactions |
 
-`npm test` now runs **123 vitest tests** across 20 files (was 46 across 6). `npm run check` reports **0 errors**.
+`npm test` now runs **128 vitest tests** across 20 files (was 46 across 6). `npm run check` reports **0 errors**.
 
 ### Dead-code cleanup
 
@@ -491,7 +491,6 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 - **System tray (#23):** Wails v2.12 has an internal `TrayMenu` struct but no public runtime API to register tray menus. The tray icon + minimize-to-tray feature is blocked by this API gap; deferred to Wails v3 adoption.
 - **Sidebar tree-render test:** The Sidebar's `loadNavigation` runs in `onMount`, which does not fire reliably under Svelte 5 + testing-library/jsdom (unlike `$effect`, which Kanban/Agenda/Calendar use). Tree rendering is covered by manual verification; the Sidebar test covers collapse + Change Vault.
 
----
 
 # Sprint Follow-Ups — Issues #61, #62, #63, #64, #68, #69, #75, #79, #83
 

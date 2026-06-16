@@ -32,6 +32,11 @@ export function makePluginContext(): PluginContext {
     get activePage() {
       return loc.page
     },
+    // The Go side returns PluginRawQueryResult{Rows, Truncated}. Surface the
+    // structured shape (not just Rows) so plugins can warn on truncation;
+    // a missing/empty Rows slice is normalised to [] for the caller's
+    // convenience (Wails sometimes hands back undefined for an empty
+    // top-level struct, especially before the vault is open).
     sqliteQuery: (sql, params) =>
       PluginRawQuery(sql, params ?? []).then((res) => {
         const out: SqliteQueryResult = {
@@ -43,6 +48,9 @@ export function makePluginContext(): PluginContext {
     mutateBlock: (id, text) => PluginMutateBlock(id, text),
     updateBlockState: (id, status: TaskStatus) =>
       PluginUpdateBlockState(id, status),
+    // Pin/progress are file-resident user intent (ARCHITECTURE §0). The
+    // Go side uses int sentinels (-1 = no change, 0/1 = pin value); the
+    // SDK wrapper translates the ergonomic boolean/number API to them.
     updateTaskMeta: (id, meta) =>
       PluginUpdateTaskMeta(
         id,

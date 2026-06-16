@@ -1,6 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  within
+} from '@testing-library/svelte'
 
 // jsdom doesn't implement Element.getAnimations(), which Svelte's
 // animate:flip directive calls internally when list items reposition.
@@ -160,6 +166,14 @@ async function flush() {
 
 describe('Kanban plugin (#19)', () => {
   beforeEach(() => {
+    // Reset the kanban plugin settings to defaults. Column add/remove
+    // and filter tests mutate settings.config via persistColumns/
+    // persistFilters; without this reset, those mutations leak into the
+    // next test's initialColumns()/initialFilters() reads.
+    mocks.settings.config.plugins.plugin_settings['silt-kanban'] = {
+      default_col: 'TODO',
+      columns: ['TODO', 'DOING', 'DONE']
+    }
     mocks.sqliteQuery.mockReset()
     mocks.updateBlockState.mockReset()
     // PluginContext.sqliteQuery now returns {rows, truncated} (the SDK
@@ -409,9 +423,10 @@ describe('Kanban plugin (#19)', () => {
     render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    // The status region explains the cap + tells the user how to recover.
+    // The status region shows the loaded count (derived from rows.length,
+    // not a hard-coded literal) + tells the user how to recover.
     const status = screen.getByRole('status')
-    expect(status.textContent).toContain('5000')
+    expect(status.textContent).toContain(String(SAMPLE_ROWS.length))
     expect(status.textContent).toMatch(/narrow.*scope/i)
   })
 
@@ -574,5 +589,214 @@ describe('Kanban plugin (#19)', () => {
     ).toBeInTheDocument()
     expect(mocks.saveConfig).toHaveBeenCalledTimes(1)
     confirmSpy.mockRestore()
+  })
+
+  it('pin button disables during the in-flight write to prevent concurrent toggles', async () => {
+    let resolvePin!: (v: boolean) => void
+    const updateTaskMeta = vi.fn(
+      () => new Promise<boolean>((r) => (resolvePin = r))
+    )
+    render(Kanban, {
+      ctx: makeCtx({ updateTaskMeta }),
+      manifest: MANIFEST
+    })
+    await flush()
+
+    // Open the detail panel.
+    const card = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    await fireEvent.click(card)
+    await flush()
+
+    const dialog = screen.getByRole('dialog')
+    const pinBtn = within(dialog).getByRole('button', { name: /pin/i })
+    expect(pinBtn).not.toBeDisabled()
+
+    // Click pin — the optimistic state flips + the IPC call is dispatched.
+    await fireEvent.click(pinBtn)
+    await flush()
+
+    // While the write is in-flight, the button is disabled so a second
+    // rapid click can't race the Go-side file write (LockFileWrite
+    // serializes per-file but preserves Go IPC arrival order, not JS
+    // dispatch order — disabling the control prevents overlap entirely).
+    expect(pinBtn).toBeDisabled()
+    expect(updateTaskMeta).toHaveBeenCalledTimes(1)
+
+    // A second click while disabled is a no-op.
+    await fireEvent.click(pinBtn)
+    expect(updateTaskMeta).toHaveBeenCalledTimes(1)
+
+    // Resolve the write — the button re-enables.
+    resolvePin(true)
+    await flush()
+
+    expect(pinBtn).not.toBeDisabled()
+  })
+
+  it('board reloads after a pin toggle in the detail panel (onMetaChanged)', async () => {
+    const updateTaskMeta = vi.fn().mockResolvedValue(true)
+    render(Kanban, {
+      ctx: makeCtx({ updateTaskMeta }),
+      manifest: MANIFEST
+    })
+    await flush()
+
+    // Clear the initial-load query so we can isolate the reload.
+    mocks.sqliteQuery.mockClear()
+
+    // Open the detail panel and toggle pin.
+    const card = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    await fireEvent.click(card)
+    await flush()
+
+    const dialog = screen.getByRole('dialog')
+    const pinBtn = within(dialog).getByRole('button', { name: /pin/i })
+    await fireEvent.click(pinBtn)
+    await flush()
+
+    // updateTaskMeta resolved → onMetaChanged → reload() → sqliteQuery.
+    expect(updateTaskMeta).toHaveBeenCalledTimes(1)
+    expect(mocks.sqliteQuery).toHaveBeenCalledTimes(1)
+  })
+
+  it('dropping a card on a custom (non-status) column is a no-op', async () => {
+    // Add a custom column alongside the standard statuses.
+    mocks.settings.config.plugins.plugin_settings['silt-kanban'].columns = [
+      'TODO',
+      'DOING',
+      'DONE',
+      'Backlog'
+    ]
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    const backlogSection = screen.getByRole('group', { name: 'Backlog' })
+
+    // Simulate a drag from To Do + drop on Backlog. The dragStart sets
+    // the module-scoped dragCard; the drop fires onLaneDrop with
+    // toStatus='Backlog', which the guard rejects.
+    await fireEvent.dragStart(todoCard)
+    await fireEvent.drop(backlogSection)
+    await flush()
+
+    // No status mutation dispatched — the Go handler never sees an
+    // invalid status, and no error banner is shown.
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('scope radiogroup supports arrow-key navigation (WAI-ARIA)', async () => {
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const radiogroup = screen.getByRole('radiogroup', { name: 'Board scope' })
+
+    // Default scope is 'page' (activePage set). ArrowLeft moves to Section.
+    mocks.sqliteQuery.mockClear()
+    await fireEvent.keyDown(radiogroup, { key: 'ArrowLeft' })
+    await flush()
+
+    // The reload fired with a section-scope WHERE clause (no b.page).
+    expect(mocks.sqliteQuery).toHaveBeenCalled()
+    const sql = mocks.sqliteQuery.mock.calls.at(-1)![0] as string
+    expect(sql).toContain('b.section = ?')
+    expect(sql).not.toContain('b.page = ?')
+
+    // ArrowRight moves back to page scope.
+    mocks.sqliteQuery.mockClear()
+    await fireEvent.keyDown(radiogroup, { key: 'ArrowRight' })
+    await flush()
+
+    expect(mocks.sqliteQuery).toHaveBeenCalled()
+    const sql2 = mocks.sqliteQuery.mock.calls.at(-1)![0] as string
+    expect(sql2).toContain('b.page = ?')
+  })
+
+  it('progress slider disables during in-flight write', async () => {
+    let resolveMeta!: (v: boolean) => void
+    const updateTaskMeta = vi.fn(
+      () => new Promise<boolean>((r) => (resolveMeta = r))
+    )
+    render(Kanban, {
+      ctx: makeCtx({ updateTaskMeta }),
+      manifest: MANIFEST
+    })
+    await flush()
+
+    // Open detail panel.
+    const card = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    await fireEvent.click(card)
+    await flush()
+
+    const dialog = screen.getByRole('dialog')
+    const slider = within(dialog).getByLabelText('Task progress')
+    expect(slider).not.toBeDisabled()
+
+    // Change the slider — IPC fires, control disables.
+    await fireEvent.change(slider, { target: { value: '75' } })
+    await flush()
+
+    expect(slider).toBeDisabled()
+    expect(updateTaskMeta).toHaveBeenCalledTimes(1)
+
+    // Resolve — re-enables.
+    resolveMeta(true)
+    await flush()
+    expect(slider).not.toBeDisabled()
+  })
+
+  it('moveSeq: earlier move failure does not revert a later move', async () => {
+    // Move #1 (t1 TODO→DOING) will fail after a 50ms delay; move #2
+    // (t1 DOING→DONE) resolves immediately. Without moveSeq, move #1's
+    // revert would wipe move #2's optimistic state.
+    mocks.updateBlockState
+      .mockImplementationOnce(async () => {
+        await new Promise((r) => setTimeout(r, 50))
+        throw new Error('lock held')
+      })
+      .mockResolvedValueOnce(true)
+
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Move #1: TODO → DOING.
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    todoCard.focus()
+    await fireEvent.keyDown(todoCard, { key: 'ArrowRight' })
+    await flush()
+
+    // Card "Write tests" is now in DOING (optimistic). Find it there.
+    const doingLane = screen.getByRole('group', { name: 'In Progress' })
+    const movedCard = Array.from(
+      doingLane.querySelectorAll<HTMLElement>('[data-card]')
+    ).find((el) => el.textContent?.includes('Write tests'))!
+    movedCard.focus()
+
+    // Move #2: DOING → DONE (resolves immediately).
+    await fireEvent.keyDown(movedCard, { key: 'ArrowRight' })
+
+    // Wait for move #1's delayed rejection to settle.
+    await new Promise((r) => setTimeout(r, 100))
+    await flush()
+
+    // Card should be in DONE (move #2), NOT reverted by move #1's failure.
+    const doneLane = screen.getByRole('group', { name: 'Done' })
+    const doneHasCard = Array.from(
+      doneLane.querySelectorAll('[data-card]')
+    ).some((el) => el.textContent?.includes('Write tests'))
+    expect(doneHasCard).toBe(true)
+    // No error banner — the stale failure was suppressed by moveSeq.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })

@@ -50,10 +50,10 @@ var TaskCheckboxRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s+(.*)$`)
 // the switch in scanTaskTokens. Keys are case-insensitive.
 var TaskTokenRegex = regexp.MustCompile(`\[([\w]+)::\s*([^\]]*)\]`)
 
-// TaskRegex is an alias for TaskCheckboxRegex, kept for backward
-// compatibility with external callers that reference it. The actual
-// parsing now flows through TaskCheckboxRegex + TaskTokenRegex.
-var TaskRegex = TaskCheckboxRegex
+// whitespaceRun collapses consecutive whitespace into a single space. Used
+// in scanTaskTokens to normalize the description after token stripping.
+// Hoisted to package level so the regex is compiled once, not per line.
+var whitespaceRun = regexp.MustCompile(`\s+`)
 
 // IDRegex captures the trailing block-identity comment. The format is:
 //   <!-- id: uuid -->
@@ -70,10 +70,6 @@ var BlockRefRegex = regexp.MustCompile(`\(\(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}
 
 // EmbedRegex matches a live block embed {{embed:uuid}}.
 var EmbedRegex = regexp.MustCompile(`\{\{embed:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}\}`)
-
-// whitespaceRunRegex collapses consecutive whitespace into a single space.
-// Hoisted to package-level so scanTaskTokens doesn't recompile it per line.
-var whitespaceRunRegex = regexp.MustCompile(`\s+`)
 
 func generateUUIDv4() string {
 	return uuid.New().String()
@@ -163,14 +159,15 @@ func parseLeadingIndent(line string, spacesPerTab int) int {
 
 // scanTaskTokens extracts all Dataview [key:: value] inline metadata
 // tokens from a task line's remainder (the text after the checkbox).
-// Returns the parsed fields and the description with tokens stripped.
+// Returns the parsed fields, the description with known tokens stripped,
+// and any unrecognised tokens preserved verbatim for forward-compatible
+// round-tripping (Obsidian/Dataview interop — SPECS.md §4.1).
 //
 // The function is the single source of truth for token → field mapping.
 // Adding a new metadata type is a one-line addition to the switch below.
-// Unknown keys are silently ignored (forward-compatible: a future token
-// the parser doesn't know about is preserved in the description so the
-// file round-trips without data loss).
-func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned bool, progress int, description string) {
+// Unknown keys are preserved in extraTokens so the file round-trips
+// without data loss.
+func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned bool, progress int, description string, extraTokens []string) {
 	priority = 3 // default; 0 from the regex means "not set"
 	progress = 0
 	matches := TaskTokenRegex.FindAllStringSubmatch(remainder, -1)
@@ -180,7 +177,7 @@ func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priorit
 	description = strings.TrimSpace(TaskTokenRegex.ReplaceAllString(remainder, ""))
 	// Collapse multiple spaces left by token removal (e.g. "text  more"
 	// after a token between them was stripped).
-	description = whitespaceRunRegex.ReplaceAllString(description, " ")
+	description = whitespaceRun.ReplaceAllString(description, " ")
 
 	for _, m := range matches {
 		key := strings.ToLower(m[1])
@@ -197,9 +194,12 @@ func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priorit
 				fmt.Sscanf(val, "%d", &priority)
 			}
 		case "pin", "pinned":
-			// Boolean: "true"/"yes"/"1"/non-empty → true; "false"/"no"/"0"/"" → false
+			// Boolean: only explicit truthy values ("true"/"yes"/"1")
+			// set pinned=true. Anything else (including typos like
+			// "maybe", "foo", or "2") is false — the renderer normalises
+			// to [pin:: true] so the round-trip is stable regardless.
 			v := strings.ToLower(val)
-			pinned = v == "true" || v == "yes" || v == "1" || (val != "" && v != "false" && v != "no" && v != "0")
+			pinned = v == "true" || v == "yes" || v == "1"
 		case "progress", "prog":
 			if val != "" {
 				fmt.Sscanf(val, "%d", &progress)
@@ -210,6 +210,10 @@ func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priorit
 					progress = 100
 				}
 			}
+		default:
+			// Unrecognised key — preserve the full [key:: value] token
+			// verbatim so it survives the parse → render round-trip.
+			extraTokens = append(extraTokens, m[0])
 		}
 	}
 	return
@@ -248,7 +252,7 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 		}
 
 		// Scan for [key:: value] metadata tokens in the remainder.
-		owner, startDate, dueDate, priority, pinned, progress, description := scanTaskTokens(remainder)
+		owner, startDate, dueDate, priority, pinned, progress, description, extraTokens := scanTaskTokens(remainder)
 
 		depth := parseLeadingIndent(indent, spacesPerTab)
 
@@ -263,9 +267,10 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 			StartDate:  startDate,
 			DueDate:    dueDate,
 			Priority:   priority,
-			Pinned:     pinned,
-			Progress:   progress,
-			LineNumber: lineNumber,
+			Pinned:      pinned,
+			Progress:    progress,
+			ExtraTokens: extraTokens,
+			LineNumber:  lineNumber,
 			FileDate:   blockFileDate,
 		}, newLine, modified
 	}
@@ -616,6 +621,9 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		if block.Progress > 0 {
 			tokens = append(tokens, fmt.Sprintf("[progress:: %d]", block.Progress))
 		}
+		// Append unknown Dataview tokens verbatim so they survive the
+		// round-trip (Obsidian/Dataview interop — SPECS.md §4.1).
+		tokens = append(tokens, block.ExtraTokens...)
 
 		tokenStr := ""
 		if len(tokens) > 0 {

@@ -25,11 +25,18 @@ type ParsedBlock struct {
 	// intent and lives only in the file; the SQLite index is allowed to
 	// cache it for query speed but the file is the source of truth.
 	Pinned bool `json:"pinned,omitempty"`
-	// Progress is a 0-100 user-set progress indicator (`[p:N]` in the
-	// markdown inline task syntax). 0 = not set (renderer omits the
-	// marker). Lives only in the file; SQLite caches for query speed.
+	// Progress is a 0-100 user-set progress indicator (`[progress:: N]`
+	// or `[prog:: N]` in the markdown inline task syntax). 0 = not set
+	// (renderer omits the marker). Lives only in the file; SQLite caches
+	// for query speed.
 	Progress int `json:"progress,omitempty"`
-	LineNumber int `json:"line_number"`
+	// ExtraTokens preserves unknown [key:: value] Dataview tokens that the
+	// parser doesn't recognise (e.g. `[project:: alpha]`, `[estimate:: 3h]`).
+	// These round-trip through parse → render so files stay interoperable
+	// with Obsidian/Dataview (SPECS.md §4.1). Each entry is the full
+	// `[key:: value]` string as it appeared in the source.
+	ExtraTokens []string `json:"extra_tokens,omitempty"`
+	LineNumber  int      `json:"line_number"`
 	FileDate   string `json:"file_date,omitempty"`
 }
 

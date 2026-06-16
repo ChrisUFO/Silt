@@ -14,7 +14,7 @@ correctness regression, not a style choice.
 | **Content** | Markdown (`.md`) | Vault root + per-page files | Block bodies, task markers, per-task metadata, block identity (`<!-- id: uuid @ YYYY-MM-DD -->`) | `[/] DOING TASK [Alice] (2026-06-15) #2 !pin [p:50] Implement search <!-- id: 7c2a… @ 2026-06-15 -->` |
 | **Per-vault UI preferences** | YAML | `<vault>/.system/config.yaml` | Per-vault, per-plugin settings: active/disabled plugin list, Kanban columns, Kanban filter state, hotkey bindings, editor font sizes, theme typography overrides | `plugins.plugin_settings.silt-kanban.columns: [Backlog, In Progress, Review, Done]` |
 | **User-global, pre-vault** | JSON | `<config>/silt/settings.json` | Settings that must be known before any vault is open: active theme id, dark/light/system mode, non-vault font preferences | `{"active_theme": "silt-graphite", "mode": "dark"}` |
-| **Working memory** | SQLite (WAL) | `<vault>/.system/index.sqlite*` | Re-derivable caches: block↔location projection, FTS5 search index, denormalized counts (comments, links), file mtime/size for incremental re-index | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache |
+| **Working memory** | SQLite (WAL) | `<vault>/.system/index.sqlite*` | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (comments/links counts, pin, progress — all re-derived from markdown on re-index), file mtime/size for incremental re-index | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache |
 
 **The cardinal rules:**
 
@@ -40,12 +40,16 @@ correctness regression, not a style choice.
    recovery path for any SQLite corruption is *delete the index file
    and relaunch* — that is the documented, supported operation. SQLite
    is allowed to hold the block↔location projection, FTS5, file
-   mtime/size caches, and computed counts (comments, links). It is
-   **forbidden** to hold user intent: pin state, progress, custom
-   column names, filter state, theme id, hotkey bindings. New
-   features that need persistent per-task state must extend the
-   markdown inline task syntax and round-trip through the parser +
-   renderer; per-vault UI state goes in YAML.
+   mtime/size caches, and re-derived per-task caches (comments/links
+   counts, pin, progress — re-derived from markdown `[pin:: true]` /
+   `[progress:: N]` tokens on every re-index, exactly like the counts).
+   It is **forbidden** to hold user intent *as the source of truth*:
+   pin state, progress, custom column names, filter state, theme id,
+   hotkey bindings must round-trip through the markdown inline task
+   syntax (per-block) or YAML/JSON (per-vault/per-user). The cached
+   pin/progress columns in the `tasks` table are projections for query
+   speed, not authoritative — delete the index and they rebuild from
+   markdown.
 
 5. **Settings can be stored in JSON** (the pre-vault / user-global
    tier), but only when the data must be available before a vault is
@@ -151,7 +155,16 @@ package parser
 
 import "regexp"
 
-var TaskRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s(TODO|DOING|DONE)\sTASK(?:\s\[([^\]]*)\])?(?:\(([^)]*)\))?(?:#(\d+))?\s(.*)$`)
+// TaskCheckboxRegex matches a GFM checkbox item (`- [ ]`, `- [/]`, `- [x]`)
+// plus the remainder of the line. Any checkbox item is a task — the legacy
+// TASK keyword was dropped in favour of the Dataview inline-metadata
+// standard (SPECS.md §4.1).
+var TaskCheckboxRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s+(.*)$`)
+
+// TaskTokenRegex scans the checkbox remainder for `[key:: value]` Dataview
+// tokens (due, start, owner, priority, pin, progress). Order-independent
+// and extensible via a one-line addition to the scanTaskTokens dispatch.
+var TaskTokenRegex = regexp.MustCompile(`\[([\w]+)::\s*([^\]]*)\]`)
 
 type BlockType string
 
@@ -224,22 +237,27 @@ deliberate, non-overlapping responsibilities:
     so the editor can jump-to-source by block id in O(1).
   - Denormalized per-task caches that are expensive to recompute on
     every query (e.g. `comments_count` = number of child NOTE blocks,
-    `links_count` = number of `((uuid))` references in the block body).
-    These are **derived** from markdown structure (parent_id, raw_content)
-    and re-derived on every re-index; they live in SQLite for query speed,
+    `links_count` = number of `((uuid))` references in the block body,
+    `pinned`/`progress` projected from the `[pin:: true]` /
+    `[progress:: N]` markdown tokens). These are **derived** from
+    markdown structure (parent_id, raw_content, inline metadata) and
+    re-derived on every re-index; they live in SQLite for query speed,
     not because they are user state.
   - The FTS5 full-text index over `clean_content` for `SearchBlocks`.
   - The `files` table (path → mtime/size) that powers incremental re-index.
 
-**It is not allowed to store user intent in SQLite.** Pin, progress, custom
-column names, filter state, theme id, hotkey bindings — these are all user
-intent and must live in the markdown inline syntax (for per-block
-metadata) or in YAML/JSON (for per-vault / per-user preferences). New
-features that need persistent per-task state must extend the markdown
-inline task syntax (`!pin`, `[p:N]`, etc.) and round-trip through the
-parser + renderer; if the data is per-user/per-vault, it goes in YAML
-config. This is what "local-first" means: the user's files on disk
-*are* the product.
+**It is not allowed to store user intent as the source of truth in SQLite.**
+Pin, progress, custom column names, filter state, theme id, hotkey
+bindings — these are all user intent and must live in the markdown inline
+syntax (for per-block metadata) or in YAML/JSON (for per-vault / per-user
+preferences). The `pinned`/`progress` columns in the `tasks` table are the
+exception that proves the rule: they are re-derived projections cached for
+the Kanban query, rebuilt from markdown on every re-index, and never
+written to by user action directly. New features that need persistent
+per-task state must extend the markdown inline task syntax (`[pin:: true]`,
+`[progress:: N]`, etc.) and round-trip through the parser + renderer; if
+the data is per-user/per-vault, it goes in YAML config. This is what
+"local-first" means: the user's files on disk *are* the product.
 
 The on-disk SQLite lives in WAL mode at `<vault>/.system/index.sqlite`
 (+ `.sqlite-wal` + `.sqlite-shm`). On restart only files whose
@@ -298,6 +316,10 @@ CREATE TABLE tasks (
     start_date TEXT,         -- YYYY-MM-DD or NULL
     due_date TEXT,           -- YYYY-MM-DD or NULL
     priority INTEGER,        -- 1, 2, 3
+    pinned INTEGER DEFAULT 0,         -- 0/1; cached from [pin:: true] markdown token
+    progress INTEGER DEFAULT 0,       -- 0-100; cached from [progress:: N] markdown token
+    comments_count INTEGER DEFAULT 0, -- derived: child NOTE blocks
+    links_count INTEGER DEFAULT 0,    -- derived: ((uuid)) references in body
     FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
 );
 
@@ -383,23 +405,6 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 // enumerated from the on-disk folder structure (source of truth) with block
 // counts merged from the index. Section-less pages group under section "".
 func (a *App) ListNavigation() (NavigationTree, error)
-
-// Rename/Delete lifecycle (#62, #83). Rename updates frontmatter in every
-// affected .md file and re-indexes (block UUIDs are preserved so references
-// and embeds keep resolving). Delete moves to .system/trash/ for recovery.
-func (a *App) RenamePage(notebook, section, oldName, newName string) error
-func (a *App) RenameSection(notebook, oldName, newName string) error
-func (a *App) RenameNotebook(oldName, newName string) error
-func (a *App) DeletePage(notebook, section, page string) error
-func (a *App) DeleteSection(notebook, section string) error
-func (a *App) DeleteNotebook(notebook string) error
-
-// UI preferences (#63, #68). Sidebar width and nav ordering persist in
-// config.yaml under the ui: block (per-vault YAML tier per §0).
-func (a *App) GetSidebarWidth() int
-func (a *App) SetSidebarWidth(px int) error
-func (a *App) GetNavOrder() (config.NavOrder, error)
-func (a *App) SetNavOrder(order config.NavOrder) error
 
 // System configuration (see §8). GetSystemConfig returns the parsed
 // .system/config.yaml; SaveSystemConfig validates + atomically persists +
@@ -655,7 +660,7 @@ Global settings — editor defaults, parsing rules, hotkeys, and the plugin regi
 
 8.1 Parser (backend/config)
 
-config.SystemConfig mirrors the SPECS §9.1 schema (notebooks / editor / parsing / hotkeys / plugins / ui). The `ui:` block holds per-vault UI preferences: `sidebar_width` (px, clamped 200–480, default 256, #63) and `nav_order` (explicit ordering for the sidebar navigator tree, #68). Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
+config.SystemConfig mirrors the SPECS §9.1 schema (notebooks / editor / parsing / hotkeys / plugins). Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
 
 8.2 Hot-Reload (backend/config.ConfigWatcher)
 

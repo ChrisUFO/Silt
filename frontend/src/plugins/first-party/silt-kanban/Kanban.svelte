@@ -17,6 +17,7 @@
   type Scope = 'vault' | 'notebook' | 'section' | 'page'
 
   const ALL_STATUSES: TaskStatus[] = ['TODO', 'DOING', 'DONE']
+  const SCOPES: Scope[] = ['vault', 'notebook', 'section', 'page']
 
   // Scope defaults to the most-specific active nav level; the user can
   // widen/narrow via the segmented control.
@@ -25,6 +26,38 @@
     if (ctx.activeSection) return 'section'
     if (ctx.activeNotebook) return 'notebook'
     return 'vault'
+  }
+
+  function isScopeDisabled(s: string): boolean {
+    if (s === 'notebook') return !ctx.activeNotebook
+    if (s === 'section') return !ctx.activeSection
+    if (s === 'page') return !ctx.activePage
+    return false
+  }
+
+  // WAI-ARIA radiogroup keyboard pattern: ArrowLeft/Right move selection
+  // between enabled options (wrapping), Home/End jump to the boundaries.
+  // Roving tabindex (checked radio = 0, others = -1) ensures Tab enters
+  // the group on the active option and leaves on the next Tab.
+  function onScopeKeydown(e: KeyboardEvent) {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return
+    e.preventDefault()
+    const dir = e.key === 'ArrowLeft' || e.key === 'End' ? -1 : 1
+    let start: number
+    if (e.key === 'Home') start = 0
+    else if (e.key === 'End') start = SCOPES.length - 1
+    else start = (SCOPES.indexOf(scope) + dir + SCOPES.length) % SCOPES.length
+    for (let i = 0; i < SCOPES.length; i++) {
+      const next =
+        (((start + i * dir) % SCOPES.length) + SCOPES.length) % SCOPES.length
+      if (!isScopeDisabled(SCOPES[next])) {
+        scope = SCOPES[next]
+        ;(e.currentTarget as HTMLElement)
+          .querySelector<HTMLElement>(`[data-scope="${SCOPES[next]}"]`)
+          ?.focus()
+        return
+      }
+    }
   }
 
   let scope = $state<Scope>(defaultScope())
@@ -42,6 +75,10 @@
   // user knows to narrow the scope (Vault → Notebook/Section/Page) rather
   // than silently missing tasks.
   let truncated = $state(false)
+  // Raw row count from the last query, surfaced in the truncation banner
+  // so the copy stays in sync with the Go-side cap (maxPluginQueryRows)
+  // instead of hard-coding a literal that can drift if the cap is tuned.
+  let loadedCount = $state(0)
 
   // Columns come from config.yaml (plugins.plugin_settings.silt-kanban.columns),
   // falling back to the canonical TODO/DOING/DONE triple. Now mutable: the
@@ -148,12 +185,16 @@
       where.push(`t.priority IN (${f.priorities.map(() => '?').join(', ')})`)
       params.push(...f.priorities)
     }
+    // Due-date filter clauses. NOTE: date('now') is UTC, not local time.
+    // Users near timezone boundaries may see off-by-one results for the
+    // "today" / "overdue" / "this week" quick-picks near midnight UTC.
+    // Tracked as #118 — fix requires threading the local timezone into
+    // the plugin SQL layer.
     if (f.dueDate) {
-      if (f.dueDate === 'overdue')
-        where.push("(t.due_date IS NOT NULL AND t.due_date != '' AND t.due_date < date('now', 'localtime'))")
-      else if (f.dueDate === 'today') where.push("t.due_date = date('now', 'localtime')")
+      if (f.dueDate === 'overdue') where.push("t.due_date < date('now')")
+      else if (f.dueDate === 'today') where.push("t.due_date = date('now')")
       else if (f.dueDate === 'week')
-        where.push("t.due_date BETWEEN date('now', 'localtime') AND date('now', 'localtime', '+7 days')")
+        where.push("t.due_date BETWEEN date('now') AND date('now', '+7 days')")
       else if (f.dueDate === 'none')
         where.push("(t.due_date IS NULL OR t.due_date = '')")
     }
@@ -199,6 +240,7 @@
       }
       lanes = bucket
       truncated = wasTruncated
+      loadedCount = (rows as unknown[]).length
     } catch (e) {
       if (my !== loadSeq) return
       errorMsg = e instanceof Error ? e.message : String(e)
@@ -362,6 +404,11 @@
 
   function onLaneDragOver(e: DragEvent, status: TaskStatus) {
     if (!dragCard) return
+    // Custom (non-status) columns don't accept card drops — skip
+    // preventDefault so the browser shows a "no-drop" cursor and the
+    // drop event never fires. Matches the keyboard path's guard in
+    // onCardKeydown (ALL_STATUSES.includes).
+    if (!ALL_STATUSES.includes(status)) return
     e.preventDefault()
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
     dragOverStatus = status
@@ -381,6 +428,14 @@
   function onLaneDrop(e: DragEvent, toStatus: TaskStatus) {
     e.preventDefault()
     if (!dragCard || !dragFromStatus) return
+    // Defense-in-depth: onLaneDragOver already blocks custom columns,
+    // but if a drop somehow fires, reject it here rather than sending
+    // an invalid status to Go (which would reject + trigger a confusing
+    // optimistic-move-then-revert error banner).
+    if (!ALL_STATUSES.includes(toStatus)) {
+      cleanupDrag()
+      return
+    }
     const card = dragCard
     const from = dragFromStatus
     const targetIndex = dragOverStatus === toStatus ? dragOverIndex : -1
@@ -398,12 +453,18 @@
     draggingId = null
   }
 
+  // Monotonic token so a failed earlier move can't revert over a later
+  // optimistic move. Without this, rapid double-moves where call #1 fails
+  // would restore prevLanes (captured before call #2's optimistic state),
+  // wiping call #2's move as well. Mirrors loadSeq / progressSeq.
+  let moveSeq = 0
   async function commitMove(
     card: KanbanCard,
     fromStatus: TaskStatus,
     toStatus: TaskStatus,
     targetIndex: number
   ) {
+    const my = ++moveSeq
     moveError = ''
     // Snapshot for revert on failure.
     const prevLanes = { ...lanes }
@@ -427,6 +488,9 @@
     try {
       await ctx.updateBlockState(card.id, toStatus)
     } catch (e) {
+      // A newer move started after this one; its optimistic state is
+      // authoritative, so don't revert to the stale snapshot.
+      if (my !== moveSeq) return
       moveError = e instanceof Error ? e.message : String(e)
       lanes = prevLanes
       liveMessage = 'Move failed — reverted.'
@@ -492,24 +556,25 @@
       {manifest.name}
     </h1>
     <!-- Scope selector (segmented control) -->
+    <!-- svelte-ignore a11y_no_static_element_interactions
+         role="radiogroup" is a composite widget that handles arrow-key
+         navigation for its radio children per WAI-ARIA APG. -->
     <div
       class="flex items-center gap-0.5 bg-bg-surface border border-border-muted rounded-lg p-0.5 ml-2"
       role="radiogroup"
       aria-label="Board scope"
+      tabindex="-1"
+      onkeydown={onScopeKeydown}
     >
-      {#each ['vault', 'notebook', 'section', 'page'] as s}
+      {#each SCOPES as s}
         <button
-          onclick={() => (scope = s as Scope)}
+          data-scope={s}
+          onclick={() => (scope = s)}
           role="radio"
           aria-checked={scope === s}
-          disabled={(s === 'notebook' && !ctx.activeNotebook) ||
-            (s === 'section' && !ctx.activeSection) ||
-            (s === 'page' && !ctx.activePage)}
-          title={(s === 'notebook' && !ctx.activeNotebook) ||
-          (s === 'section' && !ctx.activeSection) ||
-          (s === 'page' && !ctx.activePage)
-            ? `Select a ${String(s)} first`
-            : undefined}
+          tabindex={scope === s ? 0 : -1}
+          disabled={isScopeDisabled(s)}
+          title={isScopeDisabled(s) ? `Select a ${String(s)} first` : undefined}
           class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           class:bg-bg-hover={scope === s}
           class:text-accent-primary-start={scope === s}
@@ -567,7 +632,7 @@
     >
       <span class="material-symbols-outlined text-[16px]">info</span>
       <span>
-        Showing the first 5000 tasks. Narrow the scope to a Notebook, Section,
+        Showing the first {loadedCount} tasks. Narrow the scope to a Notebook, Section,
         or Page to see tasks beyond the cap.
       </span>
     </div>
@@ -821,6 +886,7 @@
   card={selectedCard}
   {ctx}
   onClose={() => (selectedCard = null)}
+  onMetaChanged={reload}
 />
 
 {#if menuCol}

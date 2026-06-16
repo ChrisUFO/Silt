@@ -2429,8 +2429,10 @@ func (a *App) SetNavOrder(order config.NavOrder) error {
 }
 
 // maxPluginQueryRows caps the number of rows returned by PluginRawQuery so a
-// plugin can't exhaust frontend memory with an unbounded SELECT.
-const maxPluginQueryRows = 5000
+// plugin can't exhaust frontend memory with an unbounded SELECT. A `var`
+// (not `const`) so tests can temporarily lower the cap without seeding
+// thousands of rows.
+var maxPluginQueryRows = 5000
 
 // migratePerDayFiles converts old-model per-day files (<page>/<date>.md) into
 // the new single-file-per-page model (<page>.md). For each directory that
@@ -2831,8 +2833,15 @@ func (a *App) PluginUpdateTaskMeta(blockID string, pin int, progress int) (bool,
 
 		frontmatter, body := splitFrontmatter(string(contentBytes))
 		if frontmatter == "" {
-			today := time.Now().Format("2006-01-02")
-			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(today))
+			// Use the date from the parsed metadata (derived from the
+			// file's mtime or frontmatter fallback), NOT time.Now(), so
+			// we don't inject today's date over a file whose blocks
+			// carry their own per-block file_date.
+			fmDate := meta.Date
+			if fmDate == "" {
+				fmDate = fileDate
+			}
+			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(fmDate))
 			body = string(contentBytes)
 		}
 		newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
@@ -2852,6 +2861,12 @@ func (a *App) PluginUpdateTaskMeta(blockID string, pin int, progress int) (bool,
 			if idxErr != nil {
 				log.Printf("PluginUpdateTaskMeta: IndexFileBlocks failed: %v", idxErr)
 			}
+		} else {
+			// The file write succeeded but re-parsing the rendered content
+			// failed — the index stays stale until the next fsnotify scan.
+			// This should never happen (the content was just rendered from
+			// successfully-parsed blocks) but log it so the gap is observable.
+			log.Printf("PluginUpdateTaskMeta: re-parse of rendered content failed (file written, index stale until next scan): %v", err)
 		}
 
 		for _, b := range blocks {

@@ -30,9 +30,13 @@
     card: KanbanCard | null
     ctx: PluginContext
     onClose: () => void
+    // Called after a successful updateTaskMeta so the parent board can
+    // re-query and reflect the new pin/progress on the card. Without this,
+    // the board's lanes hold stale data until the next unrelated reload.
+    onMetaChanged?: () => void
   }
 
-  let { card, ctx, onClose }: Props = $props()
+  let { card, ctx, onClose, onMetaChanged }: Props = $props()
 
   const PRIORITY_LABELS: Record<number, string> = {
     1: 'Critical',
@@ -61,37 +65,64 @@
   let pinState = $state(false)
   let progressState = $state(0)
   let metaError = $state('')
+  // Pending flags disable the control while an IPC write is in-flight.
+  // This serializes user interactions so two rapid pin toggles (or slider
+  // changes) can't race on the Go side — LockFileWrite serializes writes
+  // per file but preserves Go's IPC arrival order, not JS dispatch order,
+  // so concurrent in-flight calls can land out-of-order and leave the disk
+  // (last writer) out of sync with the optimistic UI state.
+  let pinPending = $state(false)
+  let progressPending = $state(false)
   $effect(() => {
+    // Read the individual fields so Svelte 5's fine-grained reactivity
+    // tracks them as deps — if the parent ever mutates card.pinned or
+    // card.progress on the same object identity, the effect re-runs.
+    void card?.pinned
+    void card?.progress
     pinState = card?.pinned ?? false
     progressState = card?.progress ?? 0
     metaError = ''
   })
 
   async function togglePin() {
-    if (!card) return
+    if (!card || pinPending) return
     const prev = pinState
     pinState = !pinState
+    pinPending = true
     metaError = ''
     try {
       await ctx.updateTaskMeta(card.id, { pinned: pinState })
+      onMetaChanged?.()
     } catch (e) {
       pinState = prev
       metaError = e instanceof Error ? e.message : String(e)
+    } finally {
+      pinPending = false
     }
   }
 
+  // Monotonic token so a failed earlier slider write can't revert over a
+  // successful later one. With the slider disabled during writes, the two
+  // can't overlap, but the guard is retained as defense-in-depth.
+  let progressSeq = 0
   function onProgressChange(e: Event) {
-    if (!card) return
+    if (!card || progressPending) return
     const v = Number((e.target as HTMLInputElement).value)
     const prev = progressState
+    const my = ++progressSeq
     progressState = v
+    progressPending = true
     metaError = ''
     void (async () => {
       try {
         await ctx.updateTaskMeta(card.id, { progress: v })
+        onMetaChanged?.()
       } catch (err) {
+        if (my !== progressSeq) return
         progressState = prev
         metaError = err instanceof Error ? err.message : String(err)
+      } finally {
+        progressPending = false
       }
     })()
   }
@@ -118,9 +149,11 @@
     }
   }
 
-  // Esc-to-close listener is bound for the panel's lifetime.
+  // Esc-to-close listener is bound only while the panel is open (card
+  // is non-null). When closed, no global keydown listener intercepts
+  // Esc presses that other handlers (Settings, command palette) may need.
   $effect(() => {
-    void card
+    if (!card) return
     window.addEventListener('keydown', onWindowKeydown)
     return () => window.removeEventListener('keydown', onWindowKeydown)
   })
@@ -252,7 +285,8 @@
         <button
           type="button"
           onclick={togglePin}
-          class="w-full flex items-center justify-between px-3 py-2 rounded border border-border-muted bg-bg-surface hover:bg-bg-hover transition-colors"
+          disabled={pinPending}
+          class="w-full flex items-center justify-between px-3 py-2 rounded border border-border-muted bg-bg-surface hover:bg-bg-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           aria-pressed={pinState}
         >
           <span
@@ -287,10 +321,16 @@
           min="0"
           max="100"
           value={progressState}
-          oninput={(e) => (progressState = Number((e.currentTarget as HTMLInputElement).value))}
+          oninput={(e) => {
+            if (!progressPending)
+              progressState = Number(
+                (e.currentTarget as HTMLInputElement).value
+              )
+          }}
           onchange={onProgressChange}
+          disabled={progressPending}
           aria-label="Task progress"
-          class="w-full accent-accent-secondary-start"
+          class="w-full accent-accent-secondary-start disabled:opacity-50"
         />
         <div
           class="mt-2 h-1 bg-bg-surface border border-border-muted rounded overflow-hidden"
