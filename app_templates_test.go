@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"silt/backend/parser"
 	"silt/backend/templates"
 )
 
@@ -383,6 +384,67 @@ func TestCreatePageFromTemplate_SanitizesEdgeCaseNames(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCreatePageFromTemplate_DeepSection_AppearsInNavigation is the regression
+// test for #97 (and the fix in #88). A page created from a template in a
+// deeply-nested section (e.g. `Work/Projects/Active`) lands at the correct
+// filesystem path AND appears in the navigation tree at the nested level.
+func TestCreatePageFromTemplate_DeepSection_AppearsInNavigation(t *testing.T) {
+	app := newTestApp(t)
+	notebook := "Work"
+	// Layout the deep section on disk first.
+	if err := os.MkdirAll(filepath.Join(app.vaultPath, notebook, "Projects", "Active"), 0o755); err != nil {
+		t.Fatalf("mkdir deep section: %v", err)
+	}
+
+	_, err := app.CreatePageFromTemplate(notebook, "Projects/Active", "SiteLaunch", "", "notes", map[string]string{"title": "Site Launch"})
+	if err != nil {
+		t.Fatalf("CreatePageFromTemplate in deep section: %v", err)
+	}
+
+	// File on disk at the multi-segment path.
+	wantPath := filepath.Join(app.vaultPath, notebook, "Projects", "Active", "SiteLaunch.md")
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Errorf("expected file at %s: %v", wantPath, err)
+	}
+
+	// Visible in the navigation tree under the nested section.
+	tree, err := app.ListNavigation()
+	if err != nil {
+		t.Fatalf("ListNavigation: %v", err)
+	}
+	if len(tree.Notebooks) != 1 {
+		t.Fatalf("expected 1 notebook, got %d", len(tree.Notebooks))
+	}
+	work := tree.Notebooks[0]
+	// Walk to Projects/Active and find the page.
+	var projects *parser.NavigationSection
+	for i := range work.Sections {
+		if work.Sections[i].Name == "Projects" {
+			projects = &work.Sections[i]
+			break
+		}
+	}
+	if projects == nil {
+		t.Fatalf("Projects section not found in navigation: %+v", work.Sections)
+	}
+	if len(projects.Children) == 0 {
+		t.Fatalf("Projects should have a nested child (Active), got none")
+	}
+	active := projects.Children[0]
+	if active.Name != "Active" {
+		t.Errorf("nested section name = %q, want Active", active.Name)
+	}
+	var found bool
+	for _, p := range active.Pages {
+		if p.Name == "SiteLaunch" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("SiteLaunch page not found in Active.Pages = %+v", active.Pages)
 	}
 }
 

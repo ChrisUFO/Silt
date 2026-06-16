@@ -980,7 +980,7 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 	}
 
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
+	safeSection := sanitizeSectionPath(section)
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return "", fmt.Errorf("notebook and page names are required (section is optional)")
@@ -990,7 +990,12 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 		safeDate = time.Now().Format("2006-01-02")
 	}
 
-	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
+	var filePath string
+	if safeSection == "" {
+		filePath = filepath.Join(a.vaultPath, safeNotebook, safePage+".md")
+	} else {
+		filePath = filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
+	}
 	if !isPathWithinVault(filePath, a.vaultPath) {
 		return "", fmt.Errorf("path escapes vault")
 	}
@@ -1261,6 +1266,25 @@ func sanitizePathSegment(s string) string {
 		cleaned = ""
 	}
 	return strings.TrimSpace(cleaned)
+}
+
+// sanitizeSectionPath sanitizes a multi-segment section path (e.g.
+// "Projects/Active"). Each segment is sanitized independently via
+// sanitizePathSegment, preserving the `/` separator so deeply-nested
+// section paths survive the sanitize pass (#88, #97). An empty input
+// (or all-empty segments) returns "".
+func sanitizeSectionPath(s string) string {
+	if s == "" {
+		return ""
+	}
+	parts := strings.Split(s, "/")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if c := sanitizePathSegment(p); c != "" {
+			out = append(out, c)
+		}
+	}
+	return strings.Join(out, "/")
 }
 
 // splitFrontmatter separates a leading YAML frontmatter block (--- ... ---)
