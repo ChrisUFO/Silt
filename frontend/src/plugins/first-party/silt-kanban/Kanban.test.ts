@@ -718,4 +718,85 @@ describe('Kanban plugin (#19)', () => {
     const sql2 = mocks.sqliteQuery.mock.calls.at(-1)![0] as string
     expect(sql2).toContain('b.page = ?')
   })
+
+  it('progress slider disables during in-flight write', async () => {
+    let resolveMeta!: (v: boolean) => void
+    const updateTaskMeta = vi.fn(
+      () => new Promise<boolean>((r) => (resolveMeta = r))
+    )
+    render(Kanban, {
+      ctx: makeCtx({ updateTaskMeta }),
+      manifest: MANIFEST
+    })
+    await flush()
+
+    // Open detail panel.
+    const card = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    await fireEvent.click(card)
+    await flush()
+
+    const dialog = screen.getByRole('dialog')
+    const slider = within(dialog).getByLabelText('Task progress')
+    expect(slider).not.toBeDisabled()
+
+    // Change the slider — IPC fires, control disables.
+    await fireEvent.change(slider, { target: { value: '75' } })
+    await flush()
+
+    expect(slider).toBeDisabled()
+    expect(updateTaskMeta).toHaveBeenCalledTimes(1)
+
+    // Resolve — re-enables.
+    resolveMeta(true)
+    await flush()
+    expect(slider).not.toBeDisabled()
+  })
+
+  it('moveSeq: earlier move failure does not revert a later move', async () => {
+    // Move #1 (t1 TODO→DOING) will fail after a 50ms delay; move #2
+    // (t1 DOING→DONE) resolves immediately. Without moveSeq, move #1's
+    // revert would wipe move #2's optimistic state.
+    mocks.updateBlockState
+      .mockImplementationOnce(async () => {
+        await new Promise((r) => setTimeout(r, 50))
+        throw new Error('lock held')
+      })
+      .mockResolvedValueOnce(true)
+
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Move #1: TODO → DOING.
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    todoCard.focus()
+    await fireEvent.keyDown(todoCard, { key: 'ArrowRight' })
+    await flush()
+
+    // Card "Write tests" is now in DOING (optimistic). Find it there.
+    const doingLane = screen.getByRole('group', { name: 'In Progress' })
+    const movedCard = Array.from(
+      doingLane.querySelectorAll<HTMLElement>('[data-card]')
+    ).find((el) => el.textContent?.includes('Write tests'))!
+    movedCard.focus()
+
+    // Move #2: DOING → DONE (resolves immediately).
+    await fireEvent.keyDown(movedCard, { key: 'ArrowRight' })
+
+    // Wait for move #1's delayed rejection to settle.
+    await new Promise((r) => setTimeout(r, 100))
+    await flush()
+
+    // Card should be in DONE (move #2), NOT reverted by move #1's failure.
+    const doneLane = screen.getByRole('group', { name: 'Done' })
+    const doneHasCard = Array.from(
+      doneLane.querySelectorAll('[data-card]')
+    ).some((el) => el.textContent?.includes('Write tests'))
+    expect(doneHasCard).toBe(true)
+    // No error banner — the stale failure was suppressed by moveSeq.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
 })

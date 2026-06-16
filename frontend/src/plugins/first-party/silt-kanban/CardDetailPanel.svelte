@@ -74,6 +74,11 @@
   let pinPending = $state(false)
   let progressPending = $state(false)
   $effect(() => {
+    // Read the individual fields so Svelte 5's fine-grained reactivity
+    // tracks them as deps — if the parent ever mutates card.pinned or
+    // card.progress on the same object identity, the effect re-runs.
+    void card?.pinned
+    void card?.progress
     pinState = card?.pinned ?? false
     progressState = card?.progress ?? 0
     metaError = ''
@@ -316,6 +321,12 @@
           min="0"
           max="100"
           value={progressState}
+          oninput={(e) => {
+            if (!progressPending)
+              progressState = Number(
+                (e.currentTarget as HTMLInputElement).value
+              )
+          }}
           onchange={onProgressChange}
           disabled={progressPending}
           aria-label="Task progress"

@@ -185,6 +185,11 @@
       where.push(`t.priority IN (${f.priorities.map(() => '?').join(', ')})`)
       params.push(...f.priorities)
     }
+    // Due-date filter clauses. NOTE: date('now') is UTC, not local time.
+    // Users near timezone boundaries may see off-by-one results for the
+    // "today" / "overdue" / "this week" quick-picks near midnight UTC.
+    // Tracked as #118 — fix requires threading the local timezone into
+    // the plugin SQL layer.
     if (f.dueDate) {
       if (f.dueDate === 'overdue') where.push("t.due_date < date('now')")
       else if (f.dueDate === 'today') where.push("t.due_date = date('now')")
