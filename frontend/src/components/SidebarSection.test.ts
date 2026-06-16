@@ -2,12 +2,18 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 import SidebarSection from './SidebarSection.svelte'
 
-function makeProps(overrides: Partial<{
-  section: { name: string; pages: { name: string; count: number }[]; children?: unknown[] }
-  depth: number
-  activeSection: string
-  expandedSections: Set<string>
-}> = {}) {
+type NavSectionShape = {
+  name: string
+  pages: { name: string; count: number }[]
+  children?: NavSectionShape[]
+}
+
+function makeProps(overrides: {
+  section?: NavSectionShape
+  depth?: number
+  activeSection?: string
+  expandedSections?: Set<string>
+} = {}) {
   return {
     section: overrides.section ?? { name: 'Journal', pages: [{ name: 'Daily', count: 5 }] },
     depth: overrides.depth ?? 0,
@@ -60,23 +66,25 @@ describe('SidebarSection (#88 deep-nesting)', () => {
   })
 
   it('renders nested children recursively (#88)', () => {
+    const deepSection: NavSectionShape = {
+      name: 'Projects',
+      pages: [],
+      children: [
+        {
+          name: 'Active',
+          pages: [{ name: 'SiteLaunch', count: 3 }],
+          children: [
+            {
+              name: 'Sub',
+              pages: [{ name: 'DeepPage', count: 1 }],
+              children: []
+            }
+          ]
+        }
+      ]
+    }
     const props = makeProps({
-      section: {
-        name: 'Projects',
-        pages: [],
-        children: [
-          {
-            name: 'Active',
-            pages: [{ name: 'SiteLaunch', count: 3 }],
-            children: [
-              {
-                name: 'Sub',
-                pages: [{ name: 'DeepPage', count: 1 }]
-              }
-            ]
-          }
-        ]
-      },
+      section: deepSection,
       expandedSections: new Set(['Projects', 'Active', 'Sub'])
     })
     render(SidebarSection, { props })

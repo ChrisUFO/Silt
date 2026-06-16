@@ -316,4 +316,67 @@ describe('uniqueIdPlugin', () => {
     )
     editor.destroy()
   })
+
+  // -- Smart Graph (#85) ----------------------------------------------------
+
+  const UUID_A = '11111111-1111-4111-8111-111111111111'
+  const UUID_B = '22222222-2222-4222-8222-222222222222'
+
+  it('tokenizes {{embed:uuid}} in clean_text as an embedNode (#85)', () => {
+    const block = mkBlock('NOTE', {
+      clean_text: `See {{embed:${UUID_A}}} for context.`
+    })
+    const doc = blocksToDoc([block])
+    const noteNode = doc.content[0] as any
+    const embeds = noteNode.content.filter((c: any) => c.type === 'embedNode')
+    expect(embeds).toHaveLength(1)
+    expect(embeds[0].attrs.uuid).toBe(UUID_A)
+    // Text before and after the embed.
+    const texts = noteNode.content
+      .filter((c: any) => c.type === 'text')
+      .map((c: any) => c.text)
+      .join('')
+    expect(texts).toBe('See  for context.')
+  })
+
+  it('tokenizes ((uuid)) in clean_text as a blockReferenceNode (#85)', () => {
+    const block = mkBlock('NOTE', {
+      clean_text: `Linked: ((${UUID_A})) and ((${UUID_B})).`
+    })
+    const doc = blocksToDoc([block])
+    const noteNode = doc.content[0] as any
+    const refs = noteNode.content.filter((c: any) => c.type === 'blockReferenceNode')
+    expect(refs).toHaveLength(2)
+    expect(refs[0].attrs.uuid).toBe(UUID_A)
+    expect(refs[1].attrs.uuid).toBe(UUID_B)
+  })
+
+  it('round-trips embeds and refs through docToBlocks (#85)', () => {
+    const block = mkBlock('NOTE', {
+      clean_text: `Pre {{embed:${UUID_A}}} mid ((${UUID_B})) post`
+    })
+    const doc = blocksToDoc([block])
+    const back = docToBlocks(doc)
+    expect(back).toHaveLength(1)
+    expect(back[0].clean_text).toBe(block.clean_text)
+  })
+
+  it('block-level embedNode (top-level) round-trips as a note carrying the token', () => {
+    // Direct doc construction: a top-level embedNode is preserved through
+    // docToBlocks as a NOTE block whose clean_text is the embed token.
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'embedNode',
+          attrs: { uuid: UUID_A }
+        } as any
+      ]
+    }
+    const back = docToBlocks(doc)
+    expect(back).toHaveLength(1)
+    expect(back[0].clean_text).toBe(`{{embed:${UUID_A}}}`)
+    expect(back[0].raw_text).toBe(`{{embed:${UUID_A}}}`)
+    expect(back[0].type).toBe('NOTE')
+  })
 })
