@@ -31,7 +31,10 @@ const mocks = vi.hoisted(() => ({
   },
   templateStatus: { kind: 'info' as const, message: '' },
   loadTemplates: vi.fn(),
-  clearTemplateStatus: vi.fn()
+  clearTemplateStatus: vi.fn(),
+  setTemplateStatus: vi.fn(),
+  notifications: { items: [] as Array<{ kind: string; message: string }> },
+  pushNotification: vi.fn()
 }))
 
 vi.mock('../../wailsjs/go/main/App.js', () => ({
@@ -54,8 +57,15 @@ vi.mock('./store.svelte', () => ({
   templateStatus: mocks.templateStatus,
   loadTemplates: mocks.loadTemplates,
   initTemplates: vi.fn(() => () => {}),
-  setTemplateStatus: vi.fn(),
+  setTemplateStatus: mocks.setTemplateStatus,
   clearTemplateStatus: mocks.clearTemplateStatus
+}))
+
+vi.mock('../notifications/store.svelte', () => ({
+  notificationsState: mocks.notifications,
+  pushNotification: mocks.pushNotification,
+  dismissNotification: vi.fn(),
+  clearAllNotifications: vi.fn()
 }))
 
 import TemplatePicker from './TemplatePicker.svelte'
@@ -64,6 +74,8 @@ describe('TemplatePicker (#55)', () => {
   beforeEach(() => {
     mocks.loadTemplates.mockReset()
     mocks.clearTemplateStatus.mockReset()
+    mocks.setTemplateStatus.mockReset()
+    mocks.pushNotification.mockReset()
   })
 
   afterEach(() => {
@@ -196,5 +208,55 @@ describe('TemplatePicker (#55)', () => {
     expect(event).toBeDefined()
     expect(onCreatedPage).toHaveBeenCalledWith('Sprint Day')
     dispatchSpy.mockRestore()
+  })
+
+  it('pushes a toast when CreatePageFromTemplate fails (#94)', async () => {
+    const { CreatePageFromTemplate } = await import('../../wailsjs/go/main/App.js')
+    ;(CreatePageFromTemplate as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('disk full')
+    )
+    const onCreatedPage = vi.fn()
+    render(TemplatePicker, {
+      props: {
+        mode: 'new-page',
+        notebook: 'Work',
+        section: '',
+        onClose: vi.fn(),
+        onCreatedPage
+      }
+    })
+    const input = screen.getByLabelText('Page name') as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'Will Fail' } })
+    await fireEvent.click(screen.getByText('Create Page'))
+    await vi.waitFor(() => {
+      expect(mocks.pushNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'error' })
+      )
+    })
+    expect(mocks.setTemplateStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'error' })
+    )
+    expect(onCreatedPage).not.toHaveBeenCalled()
+  })
+
+  it('pushes a toast when RenderTemplateBlocks fails (#94)', async () => {
+    const { RenderTemplateBlocks } = await import('../../wailsjs/go/main/App.js')
+    ;(RenderTemplateBlocks as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('IPC lost')
+    )
+    const onInsertBlocks = vi.fn()
+    render(TemplatePicker, {
+      props: { mode: 'insert', onClose: vi.fn(), onInsertBlocks }
+    })
+    await fireEvent.click(screen.getByText('Insert'))
+    await vi.waitFor(() => {
+      expect(mocks.pushNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'error' })
+      )
+    })
+    expect(mocks.setTemplateStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'error' })
+    )
+    expect(onInsertBlocks).not.toHaveBeenCalled()
   })
 })

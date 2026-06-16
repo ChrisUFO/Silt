@@ -70,6 +70,15 @@ Silt's Smart Graph uses `{{embed:uuid}}` for live block embeds and `((uuid))` fo
 
 A `{{token}}` that is not a built-in default, not a declared placeholder, and not a caller-supplied variable is **left untouched** and reported as a warning (never an error). This is forward-compatible: a template that uses a placeholder a future version of Silt will understand still loads today.
 
+### Error handling
+
+When a template write fails (disk full, focus-lock contention, IPC timeout, missing parent directory, etc.), the picker surfaces the error in two places:
+
+1. The **in-modal status region** (`role="status"`, `aria-live="polite"`) at the bottom of the picker, so the error is visible while the picker is open.
+2. A **global toast** (`role="alert"`, `aria-live="assertive"`) in the bottom-right corner, so the error is visible after the picker closes. The toast is the same channel `SaveFileBlocks` errors use (#86), giving the user one consistent error surface for all persistence failures.
+
+This applies to both `New Page from Template` and `Insert at cursor` flows.
+
 ---
 
 ## 3. Frontmatter schema reference

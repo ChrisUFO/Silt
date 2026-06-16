@@ -25,6 +25,7 @@
     setTemplateStatus,
     clearTemplateStatus
   } from './store.svelte'
+  import { pushNotification } from '../notifications/store.svelte'
 
   interface Props {
     mode: 'new-page' | 'insert'
@@ -232,9 +233,14 @@
         onClose()
       }
     } catch (e) {
-      setTemplateStatus({
+      const msg = e instanceof Error ? e.message : String(e)
+      setTemplateStatus({ kind: 'error', message: msg })
+      pushNotification({
         kind: 'error',
-        message: e instanceof Error ? e.message : String(e)
+        message:
+          mode === 'new-page'
+            ? `Failed to create page from template: ${msg}`
+            : `Failed to render template: ${msg}`
       })
     } finally {
       creating = false
