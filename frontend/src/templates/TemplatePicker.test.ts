@@ -41,7 +41,7 @@ vi.mock('../../wailsjs/go/main/App.js', () => ({
   SaveUserTemplate: vi.fn(),
   DeleteUserTemplate: vi.fn(),
   ReloadTemplates: vi.fn(),
-  CreatePageFromTemplate: vi.fn(),
+  CreatePageFromTemplate: vi.fn().mockResolvedValue('2026-06-15'),
   RenderTemplateBlocks: vi.fn().mockResolvedValue([])
 }))
 
@@ -140,5 +140,61 @@ describe('TemplatePicker (#55)', () => {
     await fireEvent.input(search, { target: { value: 'zzz-no-match' } })
 
     expect(screen.getByText('No templates match your search.')).toBeInTheDocument()
+  })
+
+  it('pre-fills the page-name field in new-page mode (#95)', () => {
+    render(TemplatePicker, {
+      props: {
+        mode: 'new-page',
+        notebook: 'Work',
+        section: '',
+        onClose: vi.fn(),
+        onCreatedPage: vi.fn()
+      }
+    })
+
+    const input = screen.getByLabelText('Page name') as HTMLInputElement
+    expect(input.value).toMatch(/^Page \d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('dispatches focus-page-title on successful CreatePageFromTemplate (#95)', async () => {
+    const { CreatePageFromTemplate } = await import('../../wailsjs/go/main/App.js')
+    ;(CreatePageFromTemplate as ReturnType<typeof vi.fn>).mockResolvedValue('2026-06-15')
+
+    const onCreatedPage = vi.fn()
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+
+    render(TemplatePicker, {
+      props: {
+        mode: 'new-page',
+        notebook: 'Work',
+        section: '',
+        onClose: vi.fn(),
+        onCreatedPage
+      }
+    })
+
+    const input = screen.getByLabelText('Page name') as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'Sprint Day' } })
+    const createBtn = screen.getByText('Create Page')
+    await fireEvent.click(createBtn)
+
+    await vi.waitFor(() => {
+      expect(CreatePageFromTemplate).toHaveBeenCalledWith(
+        'Work',
+        '',
+        'Sprint Day',
+        '',
+        'daily-note',
+        expect.any(Object)
+      )
+    })
+    expect(dispatchSpy).toHaveBeenCalled()
+    const event = dispatchSpy.mock.calls
+      .map((c) => c[0] as Event)
+      .find((e) => e.type === 'focus-page-title')
+    expect(event).toBeDefined()
+    expect(onCreatedPage).toHaveBeenCalledWith('Sprint Day')
+    dispatchSpy.mockRestore()
   })
 })

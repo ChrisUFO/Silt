@@ -187,8 +187,8 @@ placeholders:                               # optional; drives the picker form
 2. Search or browse the template list (grouped by category).
 3. Select a template — the right pane shows a live preview with today's date/time.
 4. Fill in any placeholders (user-declared fields appear below the preview).
-5. Enter a **page name**.
-6. Click **Create Page**. The new page is created with the rendered Markdown and opens in the editor.
+5. The **page name** field is pre-filled with `Page YYYY-MM-DD` and focused — you can edit it before confirming, or just press **Enter** to use the default.
+6. Click **Create Page**. The new page is created with the rendered Markdown, opens in the editor, and the inline title at the top of the page is focused and selected so you can immediately overwrite the name (the file is renamed on debounce via `RenamePage`, the OneNote model).
 
 ### Insert at cursor
 

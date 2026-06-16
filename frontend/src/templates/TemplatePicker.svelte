@@ -53,7 +53,16 @@
   let creating = $state(false)
   let listRefs: HTMLButtonElement[] = $state([])
   let searchEl: HTMLInputElement | null = $state(null)
+  let pageNameEl: HTMLInputElement | null = $state(null)
   let previouslyFocused: HTMLElement | null = null
+
+  function defaultPageName(): string {
+    const d = new Date()
+    const yyyy = d.getFullYear()
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    return `Page ${yyyy}-${mm}-${dd}`
+  }
 
   // Flat filtered list (search applies to title, description, category,
   // placeholder names, and id). Used for both display (grouped) and keyboard
@@ -214,6 +223,7 @@
           return
         }
         await CreatePageFromTemplate(notebook, section, name, '', selectedId, { ...placeholderValues })
+        window.dispatchEvent(new CustomEvent('focus-page-title'))
         onCreatedPage?.(name)
         onClose()
       } else {
@@ -248,7 +258,17 @@
     if (templatesState.items.length === 0 && !templatesState.loading) {
       void loadTemplates()
     }
-    setTimeout(() => searchEl?.focus(), 0)
+    if (mode === 'new-page' && !pageName) {
+      pageName = defaultPageName()
+    }
+    setTimeout(() => {
+      if (mode === 'new-page') {
+        pageNameEl?.focus()
+        if (pageNameEl) pageNameEl.select()
+      } else {
+        searchEl?.focus()
+      }
+    }, 0)
   })
 
   onDestroy(() => {
@@ -381,6 +401,7 @@
                 </label>
                 <input
                   id="tpl-page-name"
+                  bind:this={pageNameEl}
                   bind:value={pageName}
                   type="text"
                   placeholder="e.g. Sprint Planning"
