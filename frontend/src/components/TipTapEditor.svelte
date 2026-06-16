@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte'
+  import { onDestroy, untrack } from 'svelte'
   import { createEditor, EditorContent } from 'svelte-tiptap'
   import type { Editor } from 'svelte-tiptap'
   import StarterKit from '@tiptap/starter-kit'
@@ -14,12 +14,16 @@
     SiltBlockExtensionsWithNodeViews,
     UniqueBlockIds,
     SiltBlockKeymaps,
+    TaskMetaSuggest,
+    applyMetaSuggestion,
+    filterMetaKeys,
     blocksToDoc,
     docToBlocks
   } from '../lib/editor'
-  import type { ParsedBlock } from '../lib/editor'
+  import type { ParsedBlock, MetaKey, SuggestContext } from '../lib/editor'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import { settings } from '../settings/store.svelte'
+  import { measureFrameBudget } from '../lib/perf/frame-budget'
   import CommandPalette from './CommandPalette.svelte'
 
   interface Props {
@@ -53,8 +57,60 @@
   let showSlashMenu = $state(false)
   let showTemplatePicker = $state(false)
 
-  const initialDoc = blocksToDoc(blocks)
-  const initialKey = `${blocks.map((b) => b.id).join(',')}:${blocks.length}`
+  // --- Task metadata suggest (%-autocomplete) ------------------------------
+  // `metaPopup` is null when the popup is closed. While open it carries the
+  // active context (range/position), the filtered key list, and the
+  // highlighted index navigated by ↑/↓.
+  let metaPopup = $state<{
+    ctx: SuggestContext
+    items: MetaKey[]
+    selected: number
+  } | null>(null)
+
+  function onMetaChange(ctx: SuggestContext | null): void {
+    if (!ctx) {
+      metaPopup = null
+      return
+    }
+    const items = filterMetaKeys(ctx.query)
+    metaPopup = items.length === 0 ? null : { ctx, items, selected: 0 }
+  }
+
+  function onMetaNavigate(dir: 1 | -1): void {
+    if (!metaPopup) return
+    const n = metaPopup.items.length
+    metaPopup.selected = (metaPopup.selected + dir + n) % n
+  }
+
+  function onMetaSelectActive(): void {
+    if (!metaPopup || !editorInstance || editorInstance.isDestroyed) {
+      metaPopup = null
+      return
+    }
+    const item = metaPopup.items[metaPopup.selected]
+    metaPopup = null
+    if (item) applyMetaSuggestion(editorInstance, item.key)
+  }
+
+  function onMetaPick(key: string): void {
+    if (!editorInstance || editorInstance.isDestroyed) {
+      metaPopup = null
+      return
+    }
+    metaPopup = null
+    applyMetaSuggestion(editorInstance, key)
+  }
+
+  function metaPopupCoords(): { left: number; top: number } | null {
+    if (!metaPopup || !editorInstance || editorInstance.isDestroyed) return null
+    const c = editorInstance.view.coordsAtPos(metaPopup.ctx.from)
+    return { left: c.left, top: c.bottom }
+  }
+
+  // Capture the initial blocks under untrack to signal that the one-shot
+  // capture is intentional — the $effect below handles live reactivity (#64).
+  const initialDoc = untrack(() => blocksToDoc(blocks))
+  const initialKey = untrack(() => `${blocks.map((b) => b.id).join(',')}:${blocks.length}`)
   let lastSyncedBlocksKey = $state(initialKey)
   const editorStore = createEditor({
     extensions: [
@@ -71,6 +127,11 @@
       }),
       ...SiltBlockExtensionsWithNodeViews,
       UniqueBlockIds,
+      TaskMetaSuggest.configure({
+        onChange: onMetaChange,
+        onNavigate: onMetaNavigate,
+        onSelectActive: onMetaSelectActive
+      }),
       SiltBlockKeymaps,
       Placeholder.configure({
         placeholder: 'Type / for commands, or start writing…'
@@ -91,8 +152,10 @@
     onBlur: () => {
       isFocused = false
       stopHeartbeat()
-      void releaseFocus()
-      flushPendingSave()
+      // Flush the pending save BEFORE releasing the focus lock so an embed's
+      // MutateBlock retry sees the just-saved content rather than overwriting
+      // it (#64). The save is awaited, then the lock is released.
+      void flushPendingSave().then(() => releaseFocus())
       onBlockBlur?.()
     },
     onCreate: ({ editor }) => {
@@ -102,8 +165,7 @@
 
   onDestroy(() => {
     stopHeartbeat()
-    flushPendingSave()
-    void releaseFocus()
+    void flushPendingSave().then(() => releaseFocus())
   })
 
   // --- External content sync ------------------------------------------------
@@ -142,7 +204,9 @@
 
   async function doSave(): Promise<void> {
     if (!editorInstance || editorInstance.isDestroyed) return
-    const updatedBlocks = docToBlocks(editorInstance.getJSON())
+    const updatedBlocks = measureFrameBudget('tiptap-transaction', () =>
+      docToBlocks(editorInstance.getJSON())
+    )
     try {
       await SaveFileBlocks(notebook, section, page, updatedBlocks)
     } catch (e) {
@@ -151,12 +215,13 @@
     onUpdate(updatedBlocks)
   }
 
-  function flushPendingSave(): void {
+  function flushPendingSave(): Promise<void> {
     if (saveTimeout) {
       clearTimeout(saveTimeout)
       saveTimeout = null
-      void doSave()
+      return doSave()
     }
+    return Promise.resolve()
   }
 
   // --- Slash menu -----------------------------------------------------------
@@ -331,6 +396,26 @@
       onClose={() => (showSlashMenu = false)}
     />
   {/if}
+  {#if metaPopup}
+    {@const c = metaPopupCoords()}
+    {#if c}
+      <div class="meta-suggest" style="left:{c.left}px; top:{c.top}px">
+        {#each metaPopup.items as item, i}
+          <button
+            type="button"
+            class="meta-suggest-item"
+            class:selected={i === metaPopup.selected}
+            role="option"
+            aria-selected={i === metaPopup.selected}
+            onclick={() => onMetaPick(item.key)}
+          >
+            <span class="meta-suggest-key">{item.key}</span>
+            <span class="meta-suggest-desc">{item.description}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
+  {/if}
 </div>
 
 {#if showTemplatePicker}
@@ -352,5 +437,50 @@
   .tiptap-editor-host :global(.ProseMirror) {
     min-height: 22px;
     outline: none;
+  }
+
+  .meta-suggest {
+    position: fixed;
+    z-index: 50;
+    min-width: 240px;
+    margin-top: 4px;
+    padding: 4px;
+    border-radius: 8px;
+    background: var(--bg-surface, #1e1e22);
+    border: 1px solid var(--border-subtle, #33333a);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .meta-suggest-item {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 6px 8px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-primary, #e6e6e6);
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .meta-suggest-item.selected {
+    background: var(--accent-primary-start, #4f7cff);
+    color: #fff;
+  }
+
+  .meta-suggest-key {
+    font-family: var(--font-mono, monospace);
+    font-weight: 600;
+    font-size: 0.85rem;
+    min-width: 64px;
+  }
+
+  .meta-suggest-desc {
+    font-size: 0.8rem;
+    opacity: 0.8;
   }
 </style>

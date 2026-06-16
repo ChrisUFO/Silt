@@ -2,6 +2,61 @@ Engineering Architecture: Silt
 
 This document details the low-level system design, state machines, data pipelines, and performance constraints of Silt. It acts as the direct engineering blueprint for developers implementing the Go core and Svelte interface layers.
 
+## Storage-of-Truth Tiers (Read First)
+
+Silt's persistent storage is layered into four tiers with **deliberate,
+non-overlapping responsibilities**. Every new feature MUST be designed
+against this map before writing code. Violating these tiers is a
+correctness regression, not a style choice.
+
+| Tier | Format | Location | Holds | Example |
+|---|---|---|---|---|
+| **Content** | Markdown (`.md`) | Vault root + per-page files | Block bodies, task markers, per-task metadata, block identity (`<!-- id: uuid @ YYYY-MM-DD -->`) | `[/] DOING TASK [Alice] (2026-06-15) #2 !pin [p:50] Implement search <!-- id: 7c2a… @ 2026-06-15 -->` |
+| **Per-vault UI preferences** | YAML | `<vault>/.system/config.yaml` | Per-vault, per-plugin settings: active/disabled plugin list, Kanban columns, Kanban filter state, hotkey bindings, editor font sizes, theme typography overrides | `plugins.plugin_settings.silt-kanban.columns: [Backlog, In Progress, Review, Done]` |
+| **User-global, pre-vault** | JSON | `<config>/silt/settings.json` | Settings that must be known before any vault is open: active theme id, dark/light/system mode, non-vault font preferences | `{"active_theme": "silt-graphite", "mode": "dark"}` |
+| **Working memory** | SQLite (WAL) | `<vault>/.system/index.sqlite*` | Re-derivable caches: block↔location projection, FTS5 search index, denormalized counts (comments, links), file mtime/size for incremental re-index | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache |
+
+**The cardinal rules:**
+
+1. **Markdown is the source of truth for content.** Every per-block
+   metadata field (status, owner, priority, dates, pin, progress) MUST
+   round-trip through the markdown inline task syntax. The block
+   identity comment is the only identifier stored in the file; the file
+   position and the inline syntax are the source for everything else.
+   Deleting the entire `<vault>` should be recoverable by re-creating
+   the YAML config — the markdown files are the *product*.
+
+2. **YAML holds per-vault, per-user, per-plugin UI preferences** that
+   don't belong in any individual block. If two plugins want different
+   values, they live in YAML, not in markdown.
+
+3. **JSON holds user-global, pre-vault settings.** A user can have a
+   theme picked before they ever open a vault. The active theme id
+   cannot wait for a vault to be loaded; it must live in user-global
+   JSON.
+
+4. **SQLite is working memory, not a system of record.** Every row in
+   the index MUST be reproducible from the markdown + YAML above. The
+   recovery path for any SQLite corruption is *delete the index file
+   and relaunch* — that is the documented, supported operation. SQLite
+   is allowed to hold the block↔location projection, FTS5, file
+   mtime/size caches, and computed counts (comments, links). It is
+   **forbidden** to hold user intent: pin state, progress, custom
+   column names, filter state, theme id, hotkey bindings. New
+   features that need persistent per-task state must extend the
+   markdown inline task syntax and round-trip through the parser +
+   renderer; per-vault UI state goes in YAML.
+
+5. **Settings can be stored in JSON** (the pre-vault / user-global
+   tier), but only when the data must be available before a vault is
+   open. Everything else that is per-vault goes in YAML.
+
+This is the local-first contract: the user's files on disk *are* the
+product. The Svelte UI, the Go backend, and the SQLite index are all
+projections of those files, not the other way around.
+
+---
+
 1. System Topology & Process Boundaries
 
 The Silt system runs as a single local process. The operating system boundary separates the low-level compiled disk-access layer from the lightweight front-end view frame using native platform Webview IPC handles:
@@ -46,7 +101,7 @@ The Go runtime orchestrates system access, monitors local storage directories, p
 
 2.1 File System Monitor (fsnotify Pipeline)
 
-To allow interoperability with external plain-text editors (e.g., VS Code, Obsidian), the Go backend implements an active directory watcher using github.com/fsnotify/fsnotify.
+To allow interoperability with external plain-text editors (e.g., VS Code), the Go backend implements an active directory watcher using github.com/fsnotify/fsnotify.
 
 The Feedback Loop Prevention Strategy
 
@@ -140,7 +195,62 @@ func EnsureBlockID(line string) (string, string, bool) {
 
 3. SQLite Schema & Query Optimization Layer
 
-SQLite is a persistent on-disk index in WAL mode at `<vault>/.system/index.sqlite` (+ `.sqlite-wal` + `.sqlite-shm`). On restart only files whose `mtime`+`size` differ from the last successful index are re-parsed and re-indexed; a cold start (no index file yet, or the 3 index files deleted by the user) performs a full scan and rebuild. Markdown remains the source of truth — the index is disposable and disposable only; deleting the 3 `.system/index.sqlite*` files is the documented recovery path. This durable, incremental model is what lets Silt scale to dozens of notebooks and thousands of pages without rebuilding the whole index on every launch.
+**Storage-of-truth principle.** Silt's persistent storage is layered with
+deliberate, non-overlapping responsibilities:
+
+- **Markdown files** (`.md` in the vault) are the **source of truth for
+  content**. Every block, every task marker, every per-task flag (status,
+  owner, priority, dates, pin, progress) round-trips through the markdown
+  inline syntax. The block identity comment (`<!-- id: uuid @ YYYY-MM-DD -->`)
+  is the only identifier stored in the file; everything else is derived
+  from the line's position in the file.
+- **YAML** (`<vault>/.system/config.yaml`) is the **source of truth for
+  per-user, per-vault, per-plugin UI preferences**: active plugin list,
+  disabled plugin list, per-plugin settings (e.g. Kanban column list,
+  Kanban filter state, theme typography overrides, hotkey bindings,
+  editor font sizes).
+- **JSON** is the **source of truth for user-global, pre-vault settings**:
+  `settings.json` (the active theme + mode) lives at
+  `<config>/silt/settings.json` and is the only disk write in the theme
+  pipeline, because the active theme must be known *before* a vault is
+  open. It is also where non-vault, non-theme user preferences go (font
+  pickers, etc.).
+- **SQLite** (`<vault>/.system/index.sqlite*`) is **working memory only**:
+  a derived, re-derivable cache. It is not a system of record. Any data
+  in SQLite must be reproducible from the markdown + YAML above; deleting
+  the index file is the documented recovery path. SQLite is *allowed* to
+  hold:
+  - The block ↔ file-location projection (notebook/section/page/line/file_date),
+    so the editor can jump-to-source by block id in O(1).
+  - Denormalized per-task caches that are expensive to recompute on
+    every query (e.g. `comments_count` = number of child NOTE blocks,
+    `links_count` = number of `((uuid))` references in the block body).
+    These are **derived** from markdown structure (parent_id, raw_content)
+    and re-derived on every re-index; they live in SQLite for query speed,
+    not because they are user state.
+  - The FTS5 full-text index over `clean_content` for `SearchBlocks`.
+  - The `files` table (path → mtime/size) that powers incremental re-index.
+
+**It is not allowed to store user intent in SQLite.** Pin, progress, custom
+column names, filter state, theme id, hotkey bindings — these are all user
+intent and must live in the markdown inline syntax (for per-block
+metadata) or in YAML/JSON (for per-vault / per-user preferences). New
+features that need persistent per-task state must extend the markdown
+inline task syntax (`!pin`, `[p:N]`, etc.) and round-trip through the
+parser + renderer; if the data is per-user/per-vault, it goes in YAML
+config. This is what "local-first" means: the user's files on disk
+*are* the product.
+
+The on-disk SQLite lives in WAL mode at `<vault>/.system/index.sqlite`
+(+ `.sqlite-wal` + `.sqlite-shm`). On restart only files whose
+`mtime`+`size` differ from the last successful index are re-parsed and
+re-indexed; a cold start (no index file yet, or the 3 index files
+deleted by the user) performs a full scan and rebuild. The recovery
+path is documented and intentional: deleting the 3 `.system/index.sqlite*`
+files is safe because every row in them is re-derivable from the
+markdown + YAML on the next launch. This durable, incremental model is
+what lets Silt scale to dozens of notebooks and thousands of pages
+without rebuilding the whole index on every launch.
 
 The connection is opened by `db.NewDatabaseManager(dbPath)` (pass `""` for an ephemeral in-memory shared-cache DB, used in tests and before a vault is open). The pragmas below run on every open. `journal_mode=WAL` is persistent in the file header, so once the first on-disk open creates a WAL-mode file, every later connection — including the plugin SDK's read-only handle — inherits it without re-running the pragma.
 
@@ -194,9 +304,9 @@ CREATE TABLE tasks (
 -- Namespace Hierarchical Tags
 CREATE TABLE tags (
     block_id TEXT NOT NULL,
-    raw_path TEXT NOT NULL,  -- 'work/sogav/milestone-one'
+    raw_path TEXT NOT NULL,  -- 'work/project/milestone-one'
     level_0 TEXT NOT NULL,   -- 'work'
-    level_1 TEXT,            -- 'sogav'
+    level_1 TEXT,            -- 'project'
     level_2 TEXT,            -- 'milestone-one'
     PRIMARY KEY(block_id, raw_path),
     FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
@@ -250,9 +360,9 @@ type App struct {
 	db  *sql.DB
 }
 
-// FetchPageTimeline returns day-grouped blocks for the streaming Page
-// (notebook/section/page), paged for infinite virtualization scroll.
-func (a *App) FetchPageTimeline(notebook, section, page string, offset int, limit int) ([]DayGroup, error)
+// FetchPageBlocks returns a flat list of all blocks for a page (single file),
+// ordered by line_number. Each block carries its own file_date.
+func (a *App) FetchPageBlocks(notebook, section, page string) ([]ParsedBlock, error)
 
 // UpdateBlockState transitions task checkbox and updates raw plaintext files atomically
 func (a *App) UpdateBlockState(blockID string, newState string) error
@@ -273,6 +383,23 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 // enumerated from the on-disk folder structure (source of truth) with block
 // counts merged from the index. Section-less pages group under section "".
 func (a *App) ListNavigation() (NavigationTree, error)
+
+// Rename/Delete lifecycle (#62, #83). Rename updates frontmatter in every
+// affected .md file and re-indexes (block UUIDs are preserved so references
+// and embeds keep resolving). Delete moves to .system/trash/ for recovery.
+func (a *App) RenamePage(notebook, section, oldName, newName string) error
+func (a *App) RenameSection(notebook, oldName, newName string) error
+func (a *App) RenameNotebook(oldName, newName string) error
+func (a *App) DeletePage(notebook, section, page string) error
+func (a *App) DeleteSection(notebook, section string) error
+func (a *App) DeleteNotebook(notebook string) error
+
+// UI preferences (#63, #68). Sidebar width and nav ordering persist in
+// config.yaml under the ui: block (per-vault YAML tier per §0).
+func (a *App) GetSidebarWidth() int
+func (a *App) SetSidebarWidth(px int) error
+func (a *App) GetNavOrder() (config.NavOrder, error)
+func (a *App) SetNavOrder(order config.NavOrder) error
 
 // System configuration (see §8). GetSystemConfig returns the parsed
 // .system/config.yaml; SaveSystemConfig validates + atomically persists +
@@ -432,55 +559,11 @@ The ProseMirror schema defines three block node types (`taskBlock`, `noteBlock`,
 
 NodeView components (`TaskBlockView`, `NoteBlockView`, `HeaderBlockView`) render the Svelte UI for each block type — checkbox cycle for tasks, drag handles, meta badges. The slash menu (`/` at block start) surfaces commands to change block types.
 
-5.2 Responsive Drag-and-Drop Kanban Store
+5.2 Drag-and-Drop Kanban Board
 
-Svelte stores track active task states across dashboard Kanban lanes. Moving a card updates the store and sends mutations directly across the IPC bridge to ensure immediate sync back to disk.
+The Kanban board is a first-party plugin (`silt-kanban`, `frontend/src/plugins/first-party/silt-kanban/Kanban.svelte`) that uses the identical `PluginContext` SDK as Agenda and Calendar — no direct `window.go.*` access. It queries tasks via `ctx.sqliteQuery` and shifts status via `ctx.updateBlockState`, preserving the "core feature decoupling" contract (SPECS §8.3).
 
-import { writable } from 'svelte/store';
-
-export interface KanbanCard {
-    id: string;
-    title: string;
-    status: 'TODO' | 'DOING' | 'DONE';
-    owner?: string;
-    dueDate?: string;
-    priority: number;
-}
-
-function createKanbanStore() {
-    const { subscribe, set, update } = writable<Record<string, KanbanCard[]>>({
-        TODO: [],
-        DOING: [],
-        DONE: []
-    });
-
-    return {
-        subscribe,
-        loadTasks: (tasks: KanbanCard[]) => {
-            const cols = { TODO: [], DOING: [], DONE: [] };
-            tasks.forEach(t => cols[t.status].push(t));
-            set(cols);
-        },
-        moveCard: async (cardId: string, fromCol: string, toCol: string, targetIndex: number) => {
-            update(cols => {
-                const card = cols[fromCol].find(c => c.id === cardId);
-                if (!card) return cols;
-
-                // Mutate state locally for instant visual feedback
-                cols[fromCol] = cols[fromCol].filter(c => c.id !== cardId);
-                card.status = toCol as 'TODO' | 'DOING' | 'DONE';
-                cols[toCol].splice(targetIndex, 0, card);
-
-                return cols;
-            });
-
-            // Write change back to filesystem and SQLite Cache
-            await window.go.parser.App.UpdateBlockState(cardId, toCol);
-        }
-    };
-}
-
-export const kanbanStore = createKanbanStore();
+Cards are rendered as `role="button"` elements with `aria-grabbed`/`aria-label` and animated with Svelte's native `svelte/animate/flip` (200ms cubic-out, per DESIGN.md §6). HTML5 drag-and-drop drives the data; the FLIP animation repositions remaining cards in the same paint frame. Keyboard users change status with ArrowLeft/ArrowRight directly; Enter/click navigates to the source block. The board supports multi-level scope (vault / notebook / section / page) via a segmented control, with the SQL `WHERE` clause built per scope level.
 
 
 6. Race Conditions, Locking, & Cooldowns
@@ -572,7 +655,7 @@ Global settings — editor defaults, parsing rules, hotkeys, and the plugin regi
 
 8.1 Parser (backend/config)
 
-config.SystemConfig mirrors the SPECS §9.1 schema (notebooks / editor / parsing / hotkeys / plugins). Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
+config.SystemConfig mirrors the SPECS §9.1 schema (notebooks / editor / parsing / hotkeys / plugins / ui). The `ui:` block holds per-vault UI preferences: `sidebar_width` (px, clamped 200–480, default 256, #63) and `nav_order` (explicit ordering for the sidebar navigator tree, #68). Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
 
 8.2 Hot-Reload (backend/config.ConfigWatcher)
 
@@ -580,10 +663,29 @@ A dedicated fsnotify watcher observes the .system parent directory (not the file
 
 8.3 Settings Menu (frontend)
 
-The settings store (settings/store.svelte.ts) is a $state object exposing loadConfig/saveConfig, dirty tracking, and a config:changed / config:error subscription. The SettingsShell is a full-screen frosted overlay with a left tab rail (General / Appearance / Plugins / About), roving keyboard navigation (Arrow/Home/End, Esc to close), and ARIA tablist semantics. GeneralTab edits a local draft (Save/Revert) so an external hot-reload cannot fight a half-edited form; if an external change lands while the draft is dirty, the draft is preserved and a non-blocking "reload" notice is shown (never a silent clobber). The Plugins tab (#65) is the single plugin UI: rich cards (first-party bundled vs. third-party installed), enable/disable, uninstall (first-party protected), inline load errors, an expandable detail panel with per-plugin settings, and the .silt-plugin install flow. The standalone PluginManagerModal was removed in favour of this tab; the titlebar extension icon opens Settings → Plugins.
+The settings store (settings/store.svelte.ts) is a $state object exposing loadConfig/saveConfig, dirty tracking, and a config:changed / config:error subscription. The SettingsShell is a full-screen frosted overlay with a left tab rail (General / Appearance / Plugins / About), roving keyboard navigation (Arrow/Home/End, Esc to close), and ARIA tablist semantics. GeneralTab edits a local draft (Save/Revert) so an external hot-reload cannot fight a half-edited form; if an external change lands while the draft is dirty, the draft is preserved and a non-blocking "reload" notice is shown (never a silent clobber). The Plugins tab (#65) is the single plugin UI: rich cards (first-party bundled vs. third-party installed), enable/disable (all plugins — first-party via config.yaml `plugins.disabled` list, third-party via `.disabled` sentinel), uninstall (third-party only), inline load errors, an expandable detail panel with per-plugin settings, and the .silt-plugin install flow. The standalone PluginManagerModal was removed in favour of this tab; the titlebar extension icon opens Settings → Plugins.
 
 8.4 Editor Config Consumer (frontend)
 
 The editor-token pipeline (settings/editor-tokens.svelte.ts) mirrors the theme injector pattern (§4.4): editor.* config values (font_family, mono_font_family, font_size_px, line_height) are injected as CSS custom properties (--editor-font-family, --editor-mono-font-family, --editor-font-size, --editor-line-height) on :root via a dedicated <style id="silt-editor"> element, separate from the theme injector's <style id="silt-theme">. initEditorTokens() uses $effect.root to watch the reactive settings store, so config changes apply live (one DOM write → one recalculation → same-tick repaint) without a reload or remount. The index.css :root values are startup fallbacks only.
 
 BlockRenderer (the live block editor) consumes the full editor.* config surface: typography flows through the CSS variables (font-family, font-size, line-height on the contenteditable and read-mode divs); auto_save_delay_ms drives the triggerAutoSave debounce (0 = immediate, no timer); focus_highlight_ancestors gates the guide-rail active highlight; and indent_block / unindent_block hotkeys are matched via matchHotkey (settings/hotkeys.ts) so users can remap or disable them from Settings → General. The cycle_view_layout hotkey is wired in App.svelte's global keydown handler alongside open_search and toggle_sidebar, cycling through the main views (notes → tags → agenda → calendar → kanban).
+
+
+9. Performance Budgets & System Tray
+
+9.1 Boot-Scanner Budget (Hard Regression Gate)
+
+TestScanWorkspace_BudgetRegression (backend/parser/parser_test.go) seeds 1,000 small page files and asserts ScanWorkspace completes in under 450ms (baseline ~280ms on Ryzen AI MAX+ / Go 1.25 / Windows). The test runs in the normal `go test -race ./...` CI gate (skipped under `-short`) so a regression is caught immediately, not only when someone runs `-bench`.
+
+9.2 Atomic-Write Safety (Kill-Mid-Write WAL Recovery)
+
+TestAtomicWrite_KillMidWriteRecoversViaWAL (backend/db/db_test.go) simulates a destructive exit (SIGKILL / power loss) by closing the raw `*sql.DB` handle WITHOUT the `PRAGMA wal_checkpoint(TRUNCATE)` that `DatabaseManager.Close` performs. A subsequent `NewDatabaseManager` (the "next launch") auto-replays the WAL, recovering every committed block. The test also asserts zero stray `*.tmp` files in the vault directory. TestWriteFileAtomic_NoTruncatedFilesOnKill verifies 100 concurrent atomic writes to different files leave no truncated content.
+
+9.3 UI Frame-Budget Probe
+
+frontend/src/lib/perf/frame-budget.ts provides `measureFrameBudget(label, fn)` — a dev-only probe (gated on `?perf=1` in the URL; zero-cost pass-through otherwise) that wraps a callback in `performance.mark`/`measure` + `requestAnimationFrame` and logs the elapsed time against the 16ms frame budget. Instrumented on the three highest-stress paths: Kanban drag-drop settle, TipTap editor transaction (docToBlocks), and theme-token injection.
+
+9.4 System Tray (Deferred)
+
+Wails v2.12 has an internal `menu.TrayMenu` struct but does NOT expose a public runtime API to register tray menus from application code. The system tray icon + minimize-to-tray feature is blocked by this API gap and will be revisited when Wails v3 (which has full tray support) is adopted. The production build pipeline (`wails build --clean`), memory budget (<65MB idle), and cross-platform artifacts (Windows NSIS + portable zip, Linux AppImage + .deb) are the deliverables for issue #23.

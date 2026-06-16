@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +30,7 @@ func sampleTaskBlock(id string, line int) parser.ParsedBlock {
 		ID:         id,
 		Type:       parser.BlockTask,
 		Depth:      0,
-		RawText:    "- [ ] TODO TASK [Alice] sample task <!-- id: " + id + " -->",
+		RawText:    "- [ ] sample task [owner:: Alice] <!-- id: " + id + " -->",
 		CleanText:  "sample task",
 		Status:     "TODO",
 		Owner:      "Alice",
@@ -58,7 +59,7 @@ func TestIndexFileBlocks_InsertsBlocksTasksAndTags(t *testing.T) {
 		sampleTaskBlock("11111111-1111-1111-1111-111111111111", 1),
 		sampleNoteBlock("22222222-2222-2222-2222-222222222222", 2),
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", blocks, []string{"work/sogav"}); err != nil {
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", blocks, []string{"work/project"}); err != nil {
 		t.Fatalf("IndexFileBlocks failed: %v", err)
 	}
 
@@ -92,7 +93,7 @@ func TestIndexFileBlocks_InsertsBlocksTasksAndTags(t *testing.T) {
 		{
 			ID:         "33333333-3333-3333-3333-333333333333",
 			Type:       parser.BlockNote,
-			RawText:    "remember to follow up on #work/sogav and #systems/specs <!-- id: 33333333-3333-3333-3333-333333333333 -->",
+			RawText:    "remember to follow up on #work/project and #systems/specs <!-- id: 33333333-3333-3333-3333-333333333333 -->",
 			CleanText:  "remember to follow up on",
 			LineNumber: 1,
 		},
@@ -194,7 +195,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 		{
 			ID:        "11111111-1111-1111-1111-111111111111",
 			Type:      parser.BlockTask,
-			RawText:   "- [x] DONE TASK [Alice]#1 ship #work/sogav <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			RawText:   "- [x] ship [priority:: 1] [owner:: Alice] #work/project <!-- id: 11111111-1111-1111-1111-111111111111 -->",
 			CleanText: "ship",
 			Status:    "DONE",
 			Owner:     "Alice",
@@ -204,7 +205,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 		{
 			ID:        "22222222-2222-2222-2222-222222222222",
 			Type:      parser.BlockTask,
-			RawText:   "- [/] DOING TASK [Bob]#2 fix #work/sogav <!-- id: 22222222-2222-2222-2222-222222222222 -->",
+			RawText:   "- [/] fix [priority:: 2] [owner:: Bob] #work/project <!-- id: 22222222-2222-2222-2222-222222222222 -->",
 			CleanText: "fix",
 			Status:    "DOING",
 			Owner:     "Bob",
@@ -214,7 +215,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 		{
 			ID:        "33333333-3333-3333-3333-333333333333",
 			Type:      parser.BlockTask,
-			RawText:   "- [ ] TODO TASK [Alice]#3 research #work/sogav <!-- id: 33333333-3333-3333-3333-333333333333 -->",
+			RawText:   "- [ ] research [priority:: 3] [owner:: Alice] #work/project <!-- id: 33333333-3333-3333-3333-333333333333 -->",
 			CleanText: "research",
 			Status:    "TODO",
 			Owner:     "Alice",
@@ -253,7 +254,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 		},
 		{
 			name:     "filter by tag prefix",
-			filter:   parser.TaskQueryFilter{Tags: []string{"work/sogav"}},
+			filter:   parser.TaskQueryFilter{Tags: []string{"work/project"}},
 			expected: 3,
 		},
 		{
@@ -276,106 +277,11 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 	}
 }
 
-func TestFetchTimelineDays_GroupsByDateAndOrdersDesc(t *testing.T) {
-	dm := newTestDB(t)
-
-	// With the per-day file model removed, all blocks for a page are in one
-	// file but carry their own per-block file_date. Insert them in a single
-	// IndexFileBlocks call; FetchTimelineDays still groups by file_date.
-	day1a := sampleTaskBlock("11111111-1111-1111-1111-111111111111", 1)
-	day1a.FileDate = "2026-06-13"
-	day1b := sampleNoteBlock("22222222-2222-2222-2222-222222222222", 2)
-	day1b.FileDate = "2026-06-13"
-	day2 := sampleNoteBlock("33333333-3333-3333-3333-333333333333", 3)
-	day2.FileDate = "2026-06-12"
-
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", []parser.ParsedBlock{day1a, day1b, day2}, nil); err != nil {
-		t.Fatalf("index blocks: %v", err)
-	}
-	if err := dm.IndexFileBlocks("Work", "Other", "Daily", []parser.ParsedBlock{
-		sampleTaskBlock("44444444-4444-4444-4444-444444444444", 1),
-	}, nil); err != nil {
-		t.Fatalf("index other section: %v", err)
-	}
-
-	groups, err := dm.FetchTimelineDays("Work", "Journal", "Daily", 10, 0)
-	if err != nil {
-		t.Fatalf("FetchTimelineDays: %v", err)
-	}
-	if len(groups) != 2 {
-		t.Fatalf("expected 2 day groups, got %d", len(groups))
-	}
-	if groups[0].Date != "2026-06-13" {
-		t.Errorf("expected most recent date first, got %q", groups[0].Date)
-	}
-	if groups[1].Date != "2026-06-12" {
-		t.Errorf("expected second date 2026-06-12, got %q", groups[1].Date)
-	}
-	if len(groups[0].Blocks) != 2 {
-		t.Errorf("expected 2 blocks on 2026-06-13, got %d", len(groups[0].Blocks))
-	}
-	if len(groups[1].Blocks) != 1 {
-		t.Errorf("expected 1 block on 2026-06-12, got %d", len(groups[1].Blocks))
-	}
-	if groups[0].FormattedDate == "" {
-		t.Errorf("expected formatted date to be populated")
-	}
-}
-
-func TestFetchTimelineDays_PaginationAndEmpty(t *testing.T) {
-	dm := newTestDB(t)
-
-	// Empty case.
-	groups, err := dm.FetchTimelineDays("Work", "Journal", "Daily", 10, 0)
-	if err != nil {
-		t.Fatalf("empty FetchTimelineDays: %v", err)
-	}
-	if len(groups) != 0 {
-		t.Errorf("expected 0 groups for empty section, got %d", len(groups))
-	}
-
-	// Seed 3 blocks with distinct per-block file_dates in a single call
-	// (per-day file model removed; all blocks for a page share one file).
-	var seedBlocks []parser.ParsedBlock
-	for i, d := range []string{"2026-06-13", "2026-06-12", "2026-06-11"} {
-		block := sampleNoteBlock("00000000-0000-0000-0000-00000000000"+string(rune('1'+i)), i+1)
-		block.FileDate = d
-		seedBlocks = append(seedBlocks, block)
-	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", seedBlocks, nil); err != nil {
-		t.Fatalf("index seed blocks: %v", err)
-	}
-
-	// First page: limit 2, offset 0.
-	first, err := dm.FetchTimelineDays("Work", "Journal", "Daily", 2, 0)
-	if err != nil {
-		t.Fatalf("first page: %v", err)
-	}
-	if len(first) != 2 {
-		t.Fatalf("expected 2 groups on first page, got %d", len(first))
-	}
-	if first[0].Date != "2026-06-13" || first[1].Date != "2026-06-12" {
-		t.Errorf("unexpected date order on first page: %s, %s", first[0].Date, first[1].Date)
-	}
-
-	// Second page: limit 2, offset 2.
-	second, err := dm.FetchTimelineDays("Work", "Journal", "Daily", 2, 2)
-	if err != nil {
-		t.Fatalf("second page: %v", err)
-	}
-	if len(second) != 1 {
-		t.Fatalf("expected 1 group on second page, got %d", len(second))
-	}
-	if second[0].Date != "2026-06-11" {
-		t.Errorf("expected third page date 2026-06-11, got %q", second[0].Date)
-	}
-}
-
 func TestExtractTags_DeduplicatesAndIgnoresNumeric(t *testing.T) {
-	text := "Plan #work/sogav with #work/sogav and #1 priority"
+	text := "Plan #work/project with #work/project and #1 priority"
 	tags := ExtractTags(text)
-	if len(tags) != 1 || tags[0] != "work/sogav" {
-		t.Errorf("expected single deduped tag [work/sogav], got %v", tags)
+	if len(tags) != 1 || tags[0] != "work/project" {
+		t.Errorf("expected single deduped tag [work/project], got %v", tags)
 	}
 }
 
@@ -403,7 +309,7 @@ func TestIndexFileBlocks_AttachesFrontmatterTagsByLoopIndex(t *testing.T) {
 		{
 			ID:         "22222222-2222-2222-2222-222222222222",
 			Type:       parser.BlockTask,
-			RawText:    "- [ ] TODO TASK sample <!-- id: 22222222-2222-2222-2222-222222222222 -->",
+			RawText:    "- [ ] sample <!-- id: 22222222-2222-2222-2222-222222222222 -->",
 			CleanText:  "sample",
 			Status:     "TODO",
 			LineNumber: 7,
@@ -449,7 +355,7 @@ func TestIndexFileBlocks_ReindexAfterFrontmatterMetadataChange(t *testing.T) {
 		{
 			ID:         "11111111-1111-1111-1111-111111111111",
 			Type:       parser.BlockTask,
-			RawText:    "- [ ] TODO TASK ship <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			RawText:    "- [ ] ship <!-- id: 11111111-1111-1111-1111-111111111111 -->",
 			CleanText:  "ship",
 			Status:     "TODO",
 			LineNumber: 1,
@@ -464,7 +370,7 @@ func TestIndexFileBlocks_ReindexAfterFrontmatterMetadataChange(t *testing.T) {
 		{
 			ID:         "11111111-1111-1111-1111-111111111111",
 			Type:       parser.BlockTask,
-			RawText:    "- [/] DOING TASK ship <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			RawText:    "- [/] ship <!-- id: 11111111-1111-1111-1111-111111111111 -->",
 			CleanText:  "ship",
 			Status:     "DOING",
 			LineNumber: 1,
@@ -508,7 +414,7 @@ func TestQueryTasksWithFilters_PopulatesTags(t *testing.T) {
 		{
 			ID:        "11111111-1111-1111-1111-111111111111",
 			Type:      parser.BlockTask,
-			RawText:   "- [x] DONE TASK [Alice] ship #work/sogav #release <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			RawText:   "- [x] ship [owner:: Alice] #work/project #release <!-- id: 11111111-1111-1111-1111-111111111111 -->",
 			CleanText: "ship",
 			Status:    "DONE",
 			Owner:     "Alice",
@@ -518,7 +424,7 @@ func TestQueryTasksWithFilters_PopulatesTags(t *testing.T) {
 		{
 			ID:        "22222222-2222-2222-2222-222222222222",
 			Type:      parser.BlockTask,
-			RawText:   "- [ ] TODO TASK [Bob] research #work/sogav <!-- id: 22222222-2222-2222-2222-222222222222 -->",
+			RawText:   "- [ ] research [owner:: Bob] #work/project <!-- id: 22222222-2222-2222-2222-222222222222 -->",
 			CleanText: "research",
 			Status:    "TODO",
 			Owner:     "Bob",
@@ -543,12 +449,12 @@ func TestQueryTasksWithFilters_PopulatesTags(t *testing.T) {
 		tagsByID[r.ID] = r.Tags
 	}
 	if got := tagsByID["11111111-1111-1111-1111-111111111111"]; len(got) != 2 ||
-		!contains(got, "work/sogav") || !contains(got, "release") {
-		t.Errorf("expected ship task to have tags [work/sogav release], got %v", got)
+		!contains(got, "work/project") || !contains(got, "release") {
+		t.Errorf("expected ship task to have tags [work/project release], got %v", got)
 	}
 	if got := tagsByID["22222222-2222-2222-2222-222222222222"]; len(got) != 1 ||
-		!contains(got, "work/sogav") {
-		t.Errorf("expected research task to have tag [work/sogav], got %v", got)
+		!contains(got, "work/project") {
+		t.Errorf("expected research task to have tag [work/project], got %v", got)
 	}
 }
 
@@ -622,7 +528,7 @@ func TestQueryTagHierarchy_DistinctCountsAtOrBeneath(t *testing.T) {
 		{
 			ID:        "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
 			Type:      parser.BlockNote,
-			RawText:   "#work and #work/sogav beta <!-- id: bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->",
+			RawText:   "#work and #work/project beta <!-- id: bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->",
 			CleanText: "and beta",
 			Depth:     0,
 			LineNumber: 2,
@@ -630,7 +536,7 @@ func TestQueryTagHierarchy_DistinctCountsAtOrBeneath(t *testing.T) {
 		{
 			ID:        "cccccccc-cccc-cccc-cccc-cccccccccccc",
 			Type:      parser.BlockNote,
-			RawText:   "#work/sogav/milestone-one gamma <!-- id: cccccccc-cccc-cccc-cccc-cccccccccccc -->",
+			RawText:   "#work/project/milestone-one gamma <!-- id: cccccccc-cccc-cccc-cccc-cccccccccccc -->",
 			CleanText: "gamma",
 			Depth:     0,
 			LineNumber: 3,
@@ -666,8 +572,8 @@ func TestQueryTagHierarchy_DistinctCountsAtOrBeneath(t *testing.T) {
 		want int
 	}{
 		{"work", 3},                     // A, B, C all reachable at or beneath
-		{"work/sogav", 2},               // B, C
-		{"work/sogav/milestone-one", 1}, // C
+		{"work/project", 2},               // B, C
+		{"work/project/milestone-one", 1}, // C
 	}
 	for _, c := range cases {
 		got := find(c.path)
@@ -677,6 +583,91 @@ func TestQueryTagHierarchy_DistinctCountsAtOrBeneath(t *testing.T) {
 		}
 		if got.Count != c.want {
 			t.Errorf("path %q: got count %d, want %d", c.path, got.Count, c.want)
+		}
+	}
+}
+
+// TestIndexer_KanbanQueryPath is a regression guard for the Kanban plugin
+// (#19). It runs the EXACT SQL the Kanban component sends via
+// ctx.sqliteQuery — including the COALESCE(due_date, '9999-12-31') ORDER BY
+// — and asserts status bucketing, priority ordering, due-date ordering,
+// and section scoping (tasks in other sections are excluded).
+func TestIndexer_KanbanQueryPath(t *testing.T) {
+	dm := newTestDB(t)
+
+	// Seed tasks across all three statuses with varying priority + due dates
+	// in the target section.
+	tasks := []parser.ParsedBlock{
+		{ID: "k-aaa-1111", Type: parser.BlockTask, CleanText: "low-prio todo", Status: "TODO", Priority: 3, DueDate: "2026-09-01", LineNumber: 1},
+		{ID: "k-aaa-2222", Type: parser.BlockTask, CleanText: "high-prio todo", Status: "TODO", Priority: 1, DueDate: "2026-07-01", LineNumber: 2},
+		{ID: "k-aaa-3333", Type: parser.BlockTask, CleanText: "doing task", Status: "DOING", Priority: 2, DueDate: "", LineNumber: 3},
+		{ID: "k-aaa-4444", Type: parser.BlockTask, CleanText: "done task", Status: "DONE", Priority: 1, DueDate: "2026-06-01", LineNumber: 4},
+	}
+	if err := dm.IndexFileBlocks("Work", "Sprint", "Board", tasks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+	// A task in a DIFFERENT section — must be excluded by the section filter.
+	other := []parser.ParsedBlock{
+		{ID: "k-bbb-5555", Type: parser.BlockTask, CleanText: "other section", Status: "TODO", Priority: 1, LineNumber: 1},
+	}
+	if err := dm.IndexFileBlocks("Work", "Other", "Board", other, nil); err != nil {
+		t.Fatalf("IndexFileBlocks other: %v", err)
+	}
+
+	// Run the exact Kanban SQL scoped to the Work/Sprint section.
+	rows, err := dm.SQLDB().Query(
+		`SELECT b.id, b.clean_content, t.status, t.priority, COALESCE(t.due_date, '') as due_date
+		 FROM blocks b JOIN tasks t ON b.id = t.block_id
+		 WHERE b.notebook = ? AND b.section = ?
+		 ORDER BY t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC`,
+		"Work", "Sprint",
+	)
+	if err != nil {
+		t.Fatalf("Kanban query: %v", err)
+	}
+	defer rows.Close()
+
+	var results []struct {
+		id, content, status, due string
+		priority                 int
+	}
+	for rows.Next() {
+		var r struct {
+			id, content, status, due string
+			priority                 int
+		}
+		if err := rows.Scan(&r.id, &r.content, &r.status, &r.priority, &r.due); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		results = append(results, r)
+	}
+
+	// Section scoping: only 4 rows (the other section's task is excluded).
+	if len(results) != 4 {
+		t.Fatalf("expected 4 rows for Work/Sprint, got %d", len(results))
+	}
+
+	// Ordering: priority ASC (1=Critical first, 3=Low last) then due_date ASC.
+	// Priority 1 tasks: done task (due 2026-06-01) before high-todo (due 2026-07-01).
+	// Then priority 2: doing task (no due date → '9999-12-31' sorts last within p2).
+	// Then priority 3: low-prio todo.
+	if results[0].id != "k-aaa-4444" {
+		t.Errorf("expected done task (p1, due 06-01) first, got %s", results[0].id)
+	}
+	if results[1].id != "k-aaa-2222" {
+		t.Errorf("expected high-prio todo (p1, due 07-01) second, got %s", results[1].id)
+	}
+	if results[2].id != "k-aaa-3333" {
+		t.Errorf("expected doing task (p2) third, got %s", results[2].id)
+	}
+	if results[3].id != "k-aaa-1111" {
+		t.Errorf("expected low-prio todo (p3) last, got %s", results[3].id)
+	}
+
+	// Verify the other-section task was never returned.
+	for _, r := range results {
+		if r.id == "k-bbb-5555" {
+			t.Error("other-section task leaked into section-scoped query")
 		}
 	}
 }
@@ -902,6 +893,66 @@ func TestOnDiskWAL_DeleteIndexForcesCleanRebuild(t *testing.T) {
 	}
 	if len(known) != 0 {
 		t.Errorf("expected empty files table after rebuild, got %d rows", len(known))
+	}
+}
+
+// TestAtomicWrite_KillMidWriteRecoversViaWAL simulates a destructive exit
+// (SIGKILL / power loss): the DB handle is closed WITHOUT the checkpoint
+// that DatabaseManager.Close() performs, leaving the WAL un-checkpointed
+// on disk. A subsequent NewDatabaseManager (the "next launch") must
+// auto-replay the WAL, recovering every committed block. Also asserts no
+// stray temp files are left in the vault directory (#21).
+func TestAtomicWrite_KillMidWriteRecoversViaWAL(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "index.sqlite")
+
+	// Phase 1: open on-disk WAL DB, seed 100 blocks in a single page.
+	dm, err := NewDatabaseManager(dbPath)
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	var blocks []parser.ParsedBlock
+	for i := range 100 {
+		id := fmt.Sprintf("00000000-0000-0000-0000-%012d", i)
+		blocks = append(blocks, sampleNoteBlock(id, i+1))
+	}
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	// CRASH: close the raw *sql.DB WITHOUT checkpointing (simulates
+	// SIGKILL/power loss — WAL is abandoned, not checkpointed).
+	// DatabaseManager.Close() runs PRAGMA wal_checkpoint(TRUNCATE) first;
+	// we bypass that by closing the raw handle directly.
+	if err := dm.db.Close(); err != nil {
+		t.Fatalf("raw close: %v", err)
+	}
+
+	// Phase 2: assert no stray temp files in the vault dir.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("stray temp file after crash: %s", e.Name())
+		}
+	}
+
+	// Phase 3: reopen (the "next launch"). SQLite auto-replays the WAL
+	// on the first connection — all committed blocks must be visible.
+	dm2, err := NewDatabaseManager(dbPath)
+	if err != nil {
+		t.Fatalf("reopen NewDatabaseManager: %v", err)
+	}
+	defer dm2.Close()
+
+	var count int
+	if err := dm2.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks").Scan(&count); err != nil {
+		t.Fatalf("count after WAL replay: %v", err)
+	}
+	if count != 100 {
+		t.Errorf("expected 100 blocks after WAL replay, got %d", count)
 	}
 }
 
@@ -1182,7 +1233,7 @@ func TestSearch_TagHydrationSurvivesFTS(t *testing.T) {
 	b := parser.ParsedBlock{
 		ID: "dddddddd-1111-1111-1111-111111111111", Type: parser.BlockTask,
 		CleanText: "ship the release", Status: "TODO",
-		RawText: "- [ ] TODO TASK ship the release #dev/release <!-- id: dddddddd-1111-1111-1111-111111111111 -->",
+		RawText: "- [ ] ship the release #dev/release <!-- id: dddddddd-1111-1111-1111-111111111111 -->",
 		LineNumber: 1,
 	}
 	if err := dm.IndexFileBlocks("Work", "", "Daily", []parser.ParsedBlock{b}, []string{"dev/release"}); err != nil {

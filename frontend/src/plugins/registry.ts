@@ -1,6 +1,7 @@
 import type { RegisteredPlugin } from './sdk'
 import Agenda from './first-party/silt-agenda/Agenda.svelte'
 import Calendar from './first-party/silt-calendar/Calendar.svelte'
+import Kanban from './first-party/silt-kanban/Kanban.svelte'
 
 // First-party plugin registry: bundled Svelte components that ship with the
 // app. Third-party plugins live in .system/plugins/ and are loaded by the
@@ -31,6 +32,18 @@ registerPlugin({
     icon: 'calendar_month'
   },
   component: Calendar,
+  source: 'first-party'
+})
+registerPlugin({
+  manifest: {
+    id: 'silt-kanban',
+    name: 'Kanban',
+    version: '1.0.0',
+    author: 'Silt',
+    description: 'Drag-and-drop task board (TODO / DOING / DONE).',
+    icon: 'view_kanban'
+  },
+  component: Kanban,
   source: 'first-party'
 })
 

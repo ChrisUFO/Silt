@@ -36,7 +36,7 @@ func TestDirectoryWatcher_ReindexFileHoldsFileLock(t *testing.T) {
 	filePath := filepath.Join(vaultPath, "test.md")
 	if err := os.WriteFile(filePath, []byte(
 		"# Test <!-- id: aaaa1111-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n"+
-			"- [ ] TODO TASK x <!-- id: bbbb2222-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->\n",
+			"- [ ] x <!-- id: bbbb2222-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->\n",
 	), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestDirectoryWatcher_ReindexFileIndexesFile(t *testing.T) {
 	if err := os.WriteFile(filePath, []byte(
 		"# Today <!-- id: 11111111-1111-1111-1111-111111111111 -->\n"+
 			"\n"+
-			"- [ ] TODO TASK sample <!-- id: 22222222-2222-2222-2222-222222222222 -->\n",
+			"- [ ] sample <!-- id: 22222222-2222-2222-2222-222222222222 -->\n",
 	), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestDirectoryWatcher_FocusLockSuppressesReindex(t *testing.T) {
 
 	// Step 3: write new content while locked. The watcher must NOT reindex.
 	writeContent("# Updated <!-- id: aaaa0000-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n" +
-		"- [ ] TODO TASK locked content <!-- id: bbbb1111-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->\n")
+		"- [ ] locked content <!-- id: bbbb1111-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->\n")
 
 	// Give the watcher time to (incorrectly) process it.
 	time.Sleep(1 * time.Second)
@@ -211,7 +211,7 @@ func TestDirectoryWatcher_FocusLockSuppressesReindex(t *testing.T) {
 	// Step 4: unlock and write again. The watcher must now reindex.
 	dw.UnlockFocus(filePath)
 	writeContent("# Re-indexed <!-- id: aaaa0000-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n" +
-		"- [ ] TODO TASK unlocked content <!-- id: cccc2222-cccc-cccc-cccc-cccccccccccc -->\n")
+		"- [ ] unlocked content <!-- id: cccc2222-cccc-cccc-cccc-cccccccccccc -->\n")
 
 	waitForBlock("cccc2222-cccc-cccc-cccc-cccccccccccc", 1, 3*time.Second)
 }

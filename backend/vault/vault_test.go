@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -232,6 +233,12 @@ func TestScaffoldVault_ThemesIdempotent(t *testing.T) {
 func TestScaffoldVault_ThemeStatErrorPropagates(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("permission bits are bypassed for root; stat always succeeds")
+	}
+	// os.Chmod on Windows only flips the read-only bit; the POSIX mode bits
+	// the test relies on (0o000 = no perms) are not honoured, so the stat
+	// never fails and the regression we're guarding cannot be exercised.
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not enforced on Windows; chmod 0o000 does not revoke stat access")
 	}
 	vaultPath := t.TempDir()
 	// Pre-scaffold so .system/themes exists with real files, then

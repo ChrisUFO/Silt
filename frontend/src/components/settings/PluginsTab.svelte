@@ -13,7 +13,7 @@
   import { loadPlugins } from '../../plugins/loader'
   import { firstPartyPlugins } from '../../plugins/registry'
   import { loadedPlugins } from '../../plugins/store.svelte'
-  import { settings } from '../../settings/store.svelte'
+  import { settings, saveConfig } from '../../settings/store.svelte'
 
   interface Props {
     activeNotebook: string
@@ -57,7 +57,10 @@
 
       const merged: Card[] = []
 
-      // First-party plugins (always available, never disabled/uninstallable).
+      // First-party plugins (disableable via config, never uninstallable).
+      const fpDisabled = new Set<string>(
+        settings.config?.plugins?.disabled ?? []
+      )
       for (const fp of fps) {
         const m = fp.manifest as any
         merged.push({
@@ -68,7 +71,7 @@
           description: m.description || '',
           icon: m.icon || 'extension',
           source: 'first-party',
-          disabled: false,
+          disabled: fpDisabled.has(m.id),
           hasIndex: true,
           loadError: errs.find((e) => e.id === m.id)?.message
         })
@@ -141,12 +144,34 @@
   async function toggle(card: Card) {
     actionError = ''
     try {
-      if (card.disabled) {
-        await EnablePlugin(card.id)
+      if (card.source === 'first-party') {
+        // First-party plugins are disabled via the config disabled list
+        // (there's no on-disk folder for a .disabled sentinel).
+        const cfg = settings.config!
+        // Defensive: the Go backend always populates cfg.plugins, but the
+        // wails-generated SystemConfig class returns undefined for missing
+        // keys, and a hand-edited config.yaml could omit the section.
+        if (!cfg.plugins) {
+          cfg.plugins = { active: [], disabled: [], plugin_settings: {} }
+        }
+        const disabled = new Set(cfg.plugins.disabled ?? [])
+        if (card.disabled) {
+          disabled.delete(card.id)
+        } else {
+          disabled.add(card.id)
+        }
+        cfg.plugins.disabled = [...disabled]
+        await saveConfig(cfg)
+        await reloadAll()
       } else {
-        await DisablePlugin(card.id)
+        // Disk plugins use the .disabled sentinel file.
+        if (card.disabled) {
+          await EnablePlugin(card.id)
+        } else {
+          await DisablePlugin(card.id)
+        }
+        await reloadAll()
       }
-      await reloadAll()
     } catch (e) {
       actionError = e instanceof Error ? e.message : String(e)
     }
@@ -154,7 +179,11 @@
 
   async function uninstall(card: Card) {
     actionError = ''
-    if (!window.confirm(`Uninstall plugin "${card.name}"? This removes it from .system/plugins/.`)) {
+    if (
+      !window.confirm(
+        `Uninstall plugin "${card.name}"? This removes it from .system/plugins/.`
+      )
+    ) {
       return
     }
     try {
@@ -201,18 +230,30 @@
     {#if preview}
       <div class="mt-3 p-3 rounded-lg bg-bg-surface border border-border-muted">
         <div class="flex items-center gap-2 mb-1">
-          <span class="font-label-sm-bold text-text-primary">{preview.manifest.name}</span>
-          <span class="text-[10px] text-text-muted">v{preview.manifest.version || '0.0.0'}</span>
-          <span class="text-[10px] text-text-muted">· {preview.manifest.id}</span>
+          <span class="font-label-sm-bold text-text-primary"
+            >{preview.manifest.name}</span
+          >
+          <span class="text-[10px] text-text-muted"
+            >v{preview.manifest.version || '0.0.0'}</span
+          >
+          <span class="text-[10px] text-text-muted"
+            >· {preview.manifest.id}</span
+          >
         </div>
         {#if preview.manifest.description}
-          <p class="text-text-muted text-[12px] font-body-md mb-2">{preview.manifest.description}</p>
+          <p class="text-text-muted text-[12px] font-body-md mb-2">
+            {preview.manifest.description}
+          </p>
         {/if}
         {#if preview.warnings && preview.warnings.length > 0}
           <ul class="mb-2 space-y-0.5">
             {#each preview.warnings as w}
-              <li class="text-yellow-300/80 text-[11px] font-body-md flex items-start gap-1">
-                <span class="material-symbols-outlined text-[13px] mt-0.5">warning</span>
+              <li
+                class="text-yellow-300/80 text-[11px] font-body-md flex items-start gap-1"
+              >
+                <span class="material-symbols-outlined text-[13px] mt-0.5"
+                  >warning</span
+                >
                 {w}
               </li>
             {/each}
@@ -230,14 +271,18 @@
   </section>
 
   {#if actionError}
-    <div class="flex items-start gap-2 p-3 mb-4 rounded-lg bg-error/10 border border-error/30 text-error text-[12px] font-body-md">
+    <div
+      class="flex items-start gap-2 p-3 mb-4 rounded-lg bg-error/10 border border-error/30 text-error text-[12px] font-body-md"
+    >
       <span class="material-symbols-outlined text-[18px]">error</span>
       <span class="flex-1">{actionError}</span>
     </div>
   {/if}
 
   <!-- Plugin list -->
-  <h3 class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-2">
+  <h3
+    class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-2"
+  >
     Plugins
   </h3>
 
@@ -250,18 +295,26 @@
   {:else}
     <div class="space-y-2">
       {#each cards as card (card.id)}
-        <div class="rounded-lg border border-border-muted bg-bg-surface/50 overflow-hidden">
+        <div
+          class="rounded-lg border border-border-muted bg-bg-surface/50 overflow-hidden"
+        >
           <!-- Card row -->
           <div class="flex items-center gap-3 px-4 py-3">
-            <span class="material-symbols-outlined text-accent-primary-start/80 text-[24px]">
+            <span
+              class="material-symbols-outlined text-accent-primary-start/80 text-[24px]"
+            >
               {card.icon || 'extension'}
             </span>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-body-md text-text-primary truncate">{card.name}</span>
+                <span class="font-body-md text-text-primary truncate"
+                  >{card.name}</span
+                >
                 <span class="text-[10px] text-text-muted">v{card.version}</span>
                 {#if card.author}
-                  <span class="text-[10px] text-text-muted truncate">· {card.author}</span>
+                  <span class="text-[10px] text-text-muted truncate"
+                    >· {card.author}</span
+                  >
                 {/if}
                 <span
                   class={'text-[9px] rounded px-1.5 py-0.5 uppercase tracking-wider border ' +
@@ -271,14 +324,22 @@
                 >
                   {card.source === 'first-party' ? 'Bundled' : 'Installed'}
                 </span>
-                {#if card.source === 'disk' && card.disabled}
-                  <span class="text-[9px] text-text-muted bg-bg-panel border border-border-muted rounded px-1.5 py-0.5 uppercase tracking-wider">disabled</span>
+                {#if card.disabled}
+                  <span
+                    class="text-[9px] text-text-muted bg-bg-panel border border-border-muted rounded px-1.5 py-0.5 uppercase tracking-wider"
+                    >disabled</span
+                  >
                 {/if}
                 {#if card.loadError}
-                  <span class="text-[9px] text-error bg-error/10 border border-error/30 rounded px-1.5 py-0.5 uppercase tracking-wider">error</span>
+                  <span
+                    class="text-[9px] text-error bg-error/10 border border-error/30 rounded px-1.5 py-0.5 uppercase tracking-wider"
+                    >error</span
+                  >
                 {/if}
               </div>
-              <div class="text-[10px] text-text-muted truncate font-label-sm">{card.id}</div>
+              <div class="text-[10px] text-text-muted truncate font-label-sm">
+                {card.id}
+              </div>
             </div>
 
             <!-- Expand details -->
@@ -293,31 +354,34 @@
               </span>
             </button>
 
+            <button
+              onclick={() => toggle(card)}
+              title={card.disabled ? 'Enable' : 'Disable'}
+              aria-label={card.disabled ? 'Enable' : 'Disable'}
+              class="text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
+            >
+              <span class="material-symbols-outlined text-[20px]">
+                {card.disabled ? 'toggle_off' : 'toggle_on'}
+              </span>
+            </button>
             {#if card.source === 'disk'}
-              <button
-                onclick={() => toggle(card)}
-                title={card.disabled ? 'Enable' : 'Disable'}
-                aria-label={card.disabled ? 'Enable' : 'Disable'}
-                class="text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
-              >
-                <span class="material-symbols-outlined text-[20px]">
-                  {card.disabled ? 'toggle_off' : 'toggle_on'}
-                </span>
-              </button>
               <button
                 onclick={() => uninstall(card)}
                 title="Uninstall"
                 aria-label="Uninstall"
                 class="text-text-muted hover:text-error border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
               >
-                <span class="material-symbols-outlined text-[18px]">delete</span>
+                <span class="material-symbols-outlined text-[18px]">delete</span
+                >
               </button>
             {/if}
           </div>
 
           <!-- Inline load error -->
           {#if card.loadError}
-            <div class="px-4 pb-2 -mt-1 text-error text-[11px] font-body-md flex items-center gap-1.5">
+            <div
+              class="px-4 pb-2 -mt-1 text-error text-[11px] font-body-md flex items-center gap-1.5"
+            >
               <span class="material-symbols-outlined text-[14px]">error</span>
               {card.loadError}
             </div>
@@ -325,11 +389,18 @@
 
           <!-- Detail panel -->
           {#if expanded === card.id}
-            <div transition:fade={{ duration: 120 }} class="px-4 py-3 border-t border-border-muted bg-bg-panel/40 space-y-2">
+            <div
+              transition:fade={{ duration: 120 }}
+              class="px-4 py-3 border-t border-border-muted bg-bg-panel/40 space-y-2"
+            >
               {#if card.description}
-                <p class="text-text-muted text-[12px] font-body-md">{card.description}</p>
+                <p class="text-text-muted text-[12px] font-body-md">
+                  {card.description}
+                </p>
               {/if}
-              <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[11px] font-label-sm">
+              <dl
+                class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[11px] font-label-sm"
+              >
                 <dt class="text-text-muted">ID</dt>
                 <dd class="text-text-primary">{card.id}</dd>
                 <dt class="text-text-muted">Version</dt>
@@ -339,12 +410,16 @@
                   <dd class="text-text-primary">{card.author}</dd>
                 {/if}
                 <dt class="text-text-muted">Source</dt>
-                <dd class="text-text-primary capitalize">{card.source === 'first-party' ? 'First-party (bundled)' : 'Third-party (.silt-plugin)'}</dd>
+                <dd class="text-text-primary capitalize">
+                  {card.source === 'first-party'
+                    ? 'First-party (bundled)'
+                    : 'Third-party (.silt-plugin)'}
+                </dd>
                 <dt class="text-text-muted">Status</dt>
                 <dd class="text-text-primary">
                   {#if card.loadError}
                     Error
-                  {:else if card.source === 'disk' && card.disabled}
+                  {:else if card.disabled}
                     Disabled
                   {:else}
                     Active
@@ -354,10 +429,17 @@
 
               {#if pluginSettings(card.id)}
                 <div>
-                  <div class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1">
+                  <div
+                    class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
+                  >
                     Plugin settings
                   </div>
-                  <pre class="text-[10px] text-text-primary bg-bg-void/60 border border-border-muted rounded p-2 overflow-x-auto">{JSON.stringify(pluginSettings(card.id), null, 2)}</pre>
+                  <pre
+                    class="text-[10px] text-text-primary bg-bg-void/60 border border-border-muted rounded p-2 overflow-x-auto">{JSON.stringify(
+                      pluginSettings(card.id),
+                      null,
+                      2
+                    )}</pre>
                 </div>
               {/if}
 
@@ -367,7 +449,9 @@
                   class="mt-1 text-accent-primary-start text-[11px] font-label-sm-bold hover:brightness-110 bg-transparent border-none cursor-pointer flex items-center gap-1"
                 >
                   Open {card.name} view
-                  <span class="material-symbols-outlined text-[14px]">arrow_forward</span>
+                  <span class="material-symbols-outlined text-[14px]"
+                    >arrow_forward</span
+                  >
                 </button>
               {/if}
             </div>

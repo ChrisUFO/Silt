@@ -8,7 +8,7 @@ import (
 func TestFindLineByBlockID(t *testing.T) {
 	lines := []string{
 		"# Header <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->",
-		"- [ ] TODO TASK sample <!-- id: bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->",
+		"- [ ] sample <!-- id: bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->",
 		"    nested note <!-- id: cccccccc-cccc-cccc-cccc-cccccccccccc -->",
 		"unrelated line",
 	}

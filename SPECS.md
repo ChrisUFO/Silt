@@ -6,7 +6,7 @@ A Local-First, High-Performance Hybrid Note & Task Management Lifecycle Architec
 
 1.1 Problem Statement
 
-Modern personal knowledge management (PKM) and task-management tools are fundamentally split. Hierarchical tools (such as Microsoft OneNote) excel at spatial partitioning and structured organization but fail at temporal journaling, lightweight processing, and open formats. On the other hand, outline graph-based systems (such as Logseq or Obsidian) offer friction-free, daily logging but struggle to natively integrate rich task metadata directly into the block-stream. Relying on complex, third-party plugin ecosystems to connect notes and tasks introduces structural instability, speed degradation, and unpredictable data-serialization standards.
+Modern personal knowledge management (PKM) and task-management tools are fundamentally split. Hierarchical tools excel at spatial partitioning and structured organization but fail at temporal journaling, lightweight processing, and open formats. On the other hand, outline graph-based systems offer friction-free, daily logging but struggle to natively integrate rich task metadata directly into the block-stream. Relying on complex, third-party plugin ecosystems to connect notes and tasks introduces structural instability, speed degradation, and unpredictable data-serialization standards.
 
 1.2 The System Vision: Silt
 
@@ -78,19 +78,19 @@ Reactive Feedback Loop: The backend broadcasts a UI state event to ensure other 
 
 3. File Directory Structure & Storage Engine
 
-3.1 The Virtualized Infinite Scroll Stream
+3.1 The Single-File Page Model
 
-While the user experiences each Section as a single, endless, scrollable timeline, storing an entire section in one massive file is a technical anti-pattern. Parsing multiple megabytes of plaintext on every keystroke introduces severe performance drops and increases the scale of potential data loss during a write failure.
+While the user experiences each Page as a single, endless, scrollable document, storing an entire page in one file is practical because a page is a focused topic (not an unbounded daily journal). Each block within the page carries its own `file_date` in the trailing `<!-- id: uuid @ YYYY-MM-DD -->` comment, preserving the temporal dimension the agenda and calendar views rely on.
 
-Solution: Daily files are serialized discretely to disk inside the structured notebook folders. The Go engine reads these small daily files on demand, streaming them to a virtualized list container in Svelte. The files are dynamically stitched together at the viewport boundaries, creating the illusion of a single continuous document.
+The Go engine parses the single `.md` file on load and streams the blocks to the TipTap editor in Svelte. Writes are debounced and serialized atomically (temp file + fsync + rename) so a crash never corrupts the file. Blocks from different dates coexist in the same page file — the date is per-block, not per-file.
 
 3.2 Physical Directory Layout
 
-Silt uses a OneNote-style three-level hierarchy — **Notebook > Section > Page** — mapped directly onto folders on disk, where the **Section layer is optional**:
+Silt uses a three-level hierarchy — **Notebook > Section > Page** — mapped directly onto folders on disk, where the **Section layer is optional**:
 
 - A **Notebook** is a top-level folder directly under the vault root. Users open existing notebook folders or create new ones from the notebook selector. Multiple notebooks can be open at once.
 - A **Section** is an optional grouping folder within a Notebook. Sections are shown even when empty, so a freshly created section appears immediately.
-- A **Page** is a folder that directly contains `.md` files and is the **streaming unit**: the daily note files inside it are stitched into a single infinite-scroll timeline in the editor. A page may live directly under a Notebook (no section) or nested within a Section.
+- A **Page** is a single `.md` file and is the **streaming unit**: the editor renders one TipTap instance per page. Each block within the page carries its own `file_date` in the trailing comment, so blocks from different dates coexist in one file. A page may live directly under a Notebook (no section) or nested within a Section.
 
 ```
 VaultRoot/
@@ -110,18 +110,13 @@ VaultRoot/
 │       ├── my-meeting-template.md
 │       └── sprint-review.md
 ├── Work/                          ← Notebook
-│   ├── Inbox/                     ← Page directly under the Notebook (no section)
-│   │   └── 2026-06-13.md
+│   ├── Inbox.md                   ← Page directly under the Notebook (no section)
 │   └── Projects/                  ← Section
-│       ├── WebsiteRedesign/       ← Page (streams the .md files below)
-│       │   ├── 2026-06-11.md
-│       │   └── 2026-06-13.md
-│       └── MobileApp/
-│           └── 2026-06-13.md
+│       ├── WebsiteRedesign.md     ← Page (single file; blocks carry per-block dates)
+│       └── MobileApp.md
 └── Personal/                      ← another Notebook
     └── Journal/
-        └── Daily/
-            └── 2026-06-13.md
+        └── Daily.md
 ```
 
 Path resolution: the **notebook** is the top folder under the vault; the **page** is the folder directly containing the `.md` file; the **section** is the path between them (`""` when the page sits directly under the notebook). Frontmatter values override path-derived defaults. Files at shallower depths (e.g. a stray `.md` directly in a Notebook folder) are skipped with a warning at startup (fail-loudly).
@@ -131,7 +126,7 @@ Silt starts blank — no default notebook or section is created. The user create
 
 3.3 File Boundary Specification & Frontmatter Standard
 
-Every daily file contains a strict YAML metadata block bounded by triple dashes (---). This block allows indexers to map orphaned or moved files without reading the entire file directory tree:
+Every page file contains a strict YAML metadata block bounded by triple dashes (---). This block allows indexers to map orphaned or moved files without reading the entire file directory tree:
 
 ```
 ---
@@ -144,27 +139,26 @@ tags: [systems/specs, wails/go]
 # Saturday, June 13, 2026
 
 ## Daily Standup Logging
-- [ ] TODO TASK [Chris](2026-06-13, 2026-06-20)#1 Implement parser tests <!-- id: f1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d -->
+- [ ] Implement parser tests [owner:: Chris] [start:: 2026-06-13] [due:: 2026-06-20] [priority:: 1] <!-- id: f1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d -->
 ```
 
 
 4. Custom AST Parser & Task Shorthand Grammar
 
-The Go backend uses a custom tokenizer layered onto a Markdown syntax tree engine (such as yuin/goldmark) to parse, match, and modify inline task properties.
+The Go backend uses a custom tokenizer layered onto a Markdown syntax tree engine to parse, match, and modify inline task properties.
 
-4.1 Parser Shorthand Specification
+4.1 Task Syntax — Dataview Inline Metadata
 
-An active task block is declared anywhere within a bulleted list hierarchy via the explicit keyword TASK immediately following a checkbox token, followed by optional contextual tokens:
+Silt tasks are GFM checkbox items enriched with Dataview-style inline
+metadata tokens (`[key:: value]`). The `TASK` keyword is dropped — any
+GFM checkbox (`- [ ]`, `- [/]`, `- [x]`) is a task. Metadata is
+order-independent and extensible.
 
-^([ ]|[/]|[x])\s(TODO|DOING|DONE)\sTASK\s(?:\[([^\]]*)\])?(?:\(([^)]*)\))?(?:#(\d+))?\s(.*)$
+```
+- [/] Critical workstream [priority:: 1] [due:: 2026-08-03] [owner:: Bob] [pin:: true] [progress:: 50] #work/sprint-4
+```
 
-
-4.2 AST Syntax Mappings
-
-[/] DOING TASK [Chris](2026-06-13, 2026-06-20)#1 Implement parser tests <!-- id: f1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d -->
-
-
-Checkbox State Marker: Maps directly to standard markdown checkbox lists.
+Checkbox State Marker (GFM convention):
 
 [ ] = TODO
 
@@ -172,74 +166,81 @@ Checkbox State Marker: Maps directly to standard markdown checkbox lists.
 
 [x] = DONE
 
-Owner Token: Indicated by bracketed text immediately following TASK. E.g., [Chris].
+Metadata Tokens (Dataview `[key:: value]` format):
 
-Temporal Boundaries: Bounded by parentheses containing either a single date token (assigned as the Due Date), or a comma-separated date pair (representing Start Date, Due Date). Supported formats: M/D/YY, MM/DD/YYYY, or standard ISO-8601 YYYY-MM-DD.
+| Key | Shorthand | Format | Example |
+|---|---|---|---|
+| `due` | — | `[due:: YYYY-MM-DD]` | `[due:: 2026-08-03]` |
+| `start` | — | `[start:: YYYY-MM-DD]` | `[start:: 2026-06-13]` |
+| `owner` | `[o:: name]` | `[owner:: name]` | `[owner:: Bob]` |
+| `priority` | `[p:: N]` | `[priority:: N]` (1=critical, 2=normal, 3=low) | `[priority:: 1]` |
+| `pin` | `[pinned:: true]` | `[pin:: true]` (boolean) | `[pin:: true]` |
+| `progress` | `[prog:: N]` | `[progress:: N]` (0-100) | `[progress:: 50]` |
 
-Priority Token: Indicated by a trailing hashtag and digit (e.g., #1 representing highest priority, down to #3 representing lowest).
+Tags: Standard markdown hashtags (`#work/project/milestone-one`) —
+unaffected by the metadata token system.
 
-Persistent Identifier comment: A hidden HTML comment <!-- id: UUIDv4 --> automatically generated and appended to the block by the parser if one is missing.
+Persistent Identifier comment: A hidden HTML comment
+`<!-- id: UUIDv4 @ YYYY-MM-DD -->` automatically generated and appended
+to the block by the parser if one is missing.
+
+4.2 Editor Input Paths
+
+Three input paths produce the same Dataview `[key:: value]` storage
+format:
+
+1. **`%` prefix autocomplete**: User types `%` → instant popup showing
+   all available metadata keys (scoped to task metadata only, unlike
+   the general `/` command palette). Typing filters; selecting inserts
+   `[key:: ]` with cursor positioned for value entry.
+2. **`/` slash commands**: TipTap's command palette. Richer UI: date
+   pickers for `/due`, priority selector for `/priority`, toggle for
+   `/pin`.
+3. **Direct typing**: Power users type `[key:: value]` directly — what
+   you type is what's stored (WYSIWYG).
 
 4.3 Task Token State Matrix
 
-File Plaintext State
-
-UI Checkbox Representation
-
-Kanban Column
-
-Calendar/Agenda Placement
-
-[ ] TODO TASK ...
-
-Unchecked box [ ]
-
-"To Do" Column
-
-Assigned to Due Date
-
-[/] DOING TASK ...
-
-Half-filled box [/]
-
-"In Progress" Column
-
-Spans Start to Due Dates
-
-[x] DONE TASK ...
-
-Checked box [x]
-
-"Done" Column
-
-Stays on original timeline date
+| File Plaintext State | UI Checkbox | Kanban Column | Calendar/Agenda |
+|---|---|---|---|
+| `- [ ] ...` | Unchecked `[ ]` | "To Do" | Assigned to Due Date |
+| `- [/] ...` | Half-filled `[/]` | "In Progress" | Spans Start to Due |
+| `- [x] ...` | Checked `[x]` | "Done" | Stays on original date |
 
 4.4 Indentation and Nested Hierarchies
 
 Indentation depths are defined by hard tabs ($T_{level}$).
 If a block with nesting depth $T_{n}$ resides under a block at depth $T_{n-1}$, the parser evaluates the relationship and indexes a parent-child dependency map inside the SQLite database:
 
-- [ ] TODO TASK [Chris]#1 Implement AST backend core <!-- id: parent-uuid -->
-    - [ ] TODO TASK [Jenny]#2 Write lexer token rules <!-- id: child-uuid-1 -->
-    - [ ] TODO TASK [Jenny]#2 Write file synchronization loop <!-- id: child-uuid-2 -->
+- [ ] Implement AST backend core [priority:: 1] [owner:: Chris] <!-- id: parent-uuid -->
+    - [ ] Write lexer token rules [priority:: 2] [owner:: Jenny] <!-- id: child-uuid-1 -->
+    - [ ] Write file synchronization loop [priority:: 2] [owner:: Jenny] <!-- id: child-uuid-2 -->
 
 
 SQLite mapping schema:
-INSERT INTO tasks (id, parent_id, owner, start_date, due_date, priority, body) VALUES ('child-uuid-1', 'parent-uuid', 'Jenny', NULL, NULL, 2, 'Write lexer token rules');
+INSERT INTO tasks (block_id, status, owner, priority) VALUES ('child-uuid-1', 'TODO', 'Jenny', 2);
+
+4.5 Storage-of-Truth Tiers
+
+See ARCHITECTURE.md §0 for the full storage-of-truth contract. Summary:
+task metadata (`[key:: value]`) is **file-resident user intent** — the
+markdown file is the source of truth. SQLite caches derived values
+(comments count, links count) and the parsed projection for query speed,
+but every SQLite row is re-derivable from the markdown.
 
 5. Smart Graph Features: Namespaces & Block Links
 
 5.1 Hierarchical Smart Tag Namespaces
 
-Tags in Silt leverage a slash-delimited taxonomy (#work/sogav/milestone-one) to allow for structured, recursive querying without rigid metadata forms.
+Tags in Silt leverage a slash-delimited taxonomy (#work/project/milestone-one) to allow for structured, recursive querying without rigid metadata forms.
 
 When a tag is processed, the parser splits it by depth levels and indexes it into a hierarchical table:
 
 CREATE TABLE tags (
     block_id TEXT NOT NULL,
-    raw_tag TEXT NOT NULL,       -- "work/sogav/milestone-one"
+    raw_tag TEXT NOT NULL,       -- "work/project/milestone-one"
     root_node TEXT NOT NULL,     -- "work"
-    sub_node TEXT,               -- "sogav"
+    sub_node TEXT,               -- "project"
     leaf_node TEXT               -- "milestone-one"
 );
 
@@ -292,7 +293,7 @@ Action Result
 
 /todo
 
-Automatically appends - [ ] TODO TASK []()#3  and focuses the owner field.
+Automatically appends `- [ ] ` (empty GFM checkbox) and triggers the `%` metadata autocomplete so the user can add owner, due date, priority, etc.
 
 /today
 
@@ -445,7 +446,18 @@ The active `notebook/section/page` from the navigator is bound into the context;
 
 To enforce architectural parity, the user interface contains no custom code for the default Calendar, Kanban, or Agenda dashboards. They use the exact same SDK constraints as any third-party developer plugin:
 
-Kanban Plugin: Uses the sqliteQuery context hook to pull records: SELECT * FROM tasks INNER JOIN blocks ON tasks.block_id = blocks.id WHERE blocks.section = ? and utilizes updateBlockState to modify card indices.
+Kanban Plugin: Uses the sqliteQuery context hook to pull records scoped to the active navigation level (vault / notebook / section / page). The user selects the scope via a segmented control in the board header. The WHERE clause is built per scope:
+
+```sql
+-- vault scope (all notebooks)
+SELECT * FROM tasks INNER JOIN blocks ON tasks.block_id = blocks.id WHERE 1=1
+
+-- section scope
+SELECT * FROM tasks INNER JOIN blocks ON tasks.block_id = blocks.id
+WHERE blocks.notebook = ? AND blocks.section = ?
+```
+
+Status changes are committed via updateBlockState, which writes the new checkbox state to the source markdown file and re-indexes the block.
 
 Calendar Plugin: Pulls dates using range constraints and exposes interactive timeline components.
 
@@ -493,7 +505,8 @@ editor:
 # Task Parse Rules
 parsing:
   auto_inject_uuid: true
-  shorthand_regex: "^([ ]|[/]|[x])\\s(TODO|DOING|DONE)\\sTASK\\s(?:\\[([^\\]]*)\\])?(?:\\(([^)]*)\\))?(?:#(\\d+))?\\s(.*)$"
+  checkbox_regex: "^([\\s]*)-\\s\\[([ x/])\\]\\s+(.*)$"
+  metadata_token_regex: "\\[([\\w]+)::\\s*([^\\]]*)\\]"
   default_task_priority: 3
 
 # Key-Binding Map
@@ -503,6 +516,10 @@ hotkeys:
   cycle_view_layout: "Alt+Tab"
   indent_block: "Tab"
   unindent_block: "Shift+Tab"
+
+# UI Preferences (per-vault)
+ui:
+  sidebar_width: 256
 
 # Plugin Registry
 plugins:

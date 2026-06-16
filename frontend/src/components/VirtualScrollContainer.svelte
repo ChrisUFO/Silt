@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte'
-  import { FetchPageBlocks } from '../../wailsjs/go/main/App.js'
+  import { FetchPageBlocks, RenamePage } from '../../wailsjs/go/main/App.js'
+  import { EventsOn } from '../../wailsjs/runtime/runtime.js'
   import TipTapEditor from './TipTapEditor.svelte'
   import type { ParsedBlock } from '../lib/editor'
 
@@ -13,6 +14,7 @@
     onBlockFocus?: (blockId: string, ancestors: string[]) => void
     onBlockBlur?: () => void
     activeFocusedBlockAncestors?: string[]
+    onPageRenamed?: (newName: string) => void
   }
 
   let {
@@ -23,7 +25,8 @@
     targetKey = '',
     onBlockFocus,
     onBlockBlur,
-    activeFocusedBlockAncestors = []
+    activeFocusedBlockAncestors = [],
+    onPageRenamed
   }: Props = $props()
 
   let blocks = $state<ParsedBlock[]>([])
@@ -42,6 +45,23 @@
     if (targetBlockId && targetKey !== handledTargetKey) {
       scrollToBlock(targetKey)
     }
+  })
+
+  // Subscribe to block:changed events (#64). When an external mutation
+  // (embed edit, VS Code edit) changes a block on the current page, reload
+  // the block list so the editor sees the update. The editor's own $effect
+  // handles applying the update when the user is not actively editing.
+  $effect(() => {
+    // Read props at the top of the effect so it re-subscribes when the user
+    // navigates to a different page (#64). Without this, the EventsOn closure
+    // would filter against stale values after navigation.
+    const nb = notebook, sec = section, pg = page
+    const off = EventsOn('block:changed', (ev: { notebook: string; section: string; page: string }) => {
+      if (ev.notebook === nb && ev.section === sec && ev.page === pg) {
+        loadPage()
+      }
+    })
+    return () => off()
   })
 
   async function loadPage() {
@@ -88,6 +108,77 @@
     })
   }
 
+  // --- Inline title editing (#83) ---
+  let titleEl = $state<HTMLHeadingElement | null>(null)
+  let renameTimer: ReturnType<typeof setTimeout> | null = null
+  let lastRenamedFrom = ''
+
+  function handleFocusTitle() {
+    if (titleEl) {
+      titleEl.focus()
+      // Select all text so typing replaces "Untitled"
+      const range = document.createRange()
+      range.selectNodeContents(titleEl)
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      sel?.addRange(range)
+    }
+  }
+
+  // Listen for the focus-page-title event (from sidebar page creation/rename).
+  $effect(() => {
+    const handler = () => handleFocusTitle()
+    window.addEventListener('focus-page-title', handler)
+    return () => window.removeEventListener('focus-page-title', handler)
+  })
+
+  function handleTitleInput() {
+    if (!titleEl) return
+    const newName = titleEl.textContent?.trim() ?? ''
+    if (newName === '' || newName === page) return
+    // Debounce the rename (500ms after last keystroke).
+    if (renameTimer) clearTimeout(renameTimer)
+    renameTimer = setTimeout(() => doRename(newName), 500)
+  }
+
+  function handleTitleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      titleEl?.blur()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      if (titleEl) titleEl.textContent = page
+      titleEl?.blur()
+    }
+  }
+
+  function handleTitleBlur() {
+    if (renameTimer) {
+      clearTimeout(renameTimer)
+      renameTimer = null
+    }
+    const newName = titleEl?.textContent?.trim() ?? ''
+    if (newName === '' || newName === page) {
+      if (titleEl) titleEl.textContent = page
+      return
+    }
+    doRename(newName)
+  }
+
+  async function doRename(newName: string) {
+    if (newName === page || newName === lastRenamedFrom) return
+    lastRenamedFrom = newName
+    try {
+      await RenamePage(notebook, section, page, newName)
+      onPageRenamed?.(newName)
+      window.dispatchEvent(new CustomEvent('refresh-navigation'))
+    } catch (e) {
+      console.error('RenamePage failed:', e)
+      if (titleEl) titleEl.textContent = page
+      lastRenamedFrom = ''
+    }
+  }
+
   let pageDate = $derived.by(() => {
     const dates = blocks
       .map((b) => b.file_date)
@@ -116,10 +207,16 @@
 
   <header class="mb-8">
     <h1
-      class="font-headline-lg text-headline-lg text-text-primary tracking-tight mb-1"
-    >
-      {page}
-    </h1>
+      bind:this={titleEl}
+      contenteditable="true"
+      spellcheck="false"
+      oninput={handleTitleInput}
+      onkeydown={handleTitleKeydown}
+      onblur={handleTitleBlur}
+      class="font-headline-lg text-headline-lg text-text-primary tracking-tight mb-1 outline-none rounded-sm transition-colors"
+      style="border-bottom: 1px solid transparent; padding-bottom: 1px;"
+      aria-label="Page title"
+    >{page}</h1>
     <p class="text-text-muted/60 text-sm font-body-sm">
       {formatDate(pageDate)}
     </p>
@@ -160,3 +257,17 @@
     {/if}
   </div>
 </div>
+
+<style>
+  h1[contenteditable]:hover {
+    border-bottom-color: var(--border-muted) !important;
+  }
+  h1[contenteditable]:focus {
+    border-bottom-color: var(--accent-primary-start) !important;
+  }
+  h1[contenteditable]:empty::before {
+    content: 'Untitled';
+    color: var(--text-muted);
+    opacity: 0.4;
+  }
+</style>

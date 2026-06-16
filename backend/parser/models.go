@@ -20,8 +20,17 @@ type ParsedBlock struct {
 	StartDate  string    `json:"start_date,omitempty"`
 	DueDate    string    `json:"due_date,omitempty"`
 	Priority   int       `json:"priority,omitempty"`
-	LineNumber int       `json:"line_number"`
-	FileDate   string    `json:"file_date,omitempty"`
+	// Pinned is the user-set "sticky" flag surfaced in the Kanban card
+	// chrome (`!pin` in the markdown inline task syntax). It is user
+	// intent and lives only in the file; the SQLite index is allowed to
+	// cache it for query speed but the file is the source of truth.
+	Pinned bool `json:"pinned,omitempty"`
+	// Progress is a 0-100 user-set progress indicator (`[p:N]` in the
+	// markdown inline task syntax). 0 = not set (renderer omits the
+	// marker). Lives only in the file; SQLite caches for query speed.
+	Progress int `json:"progress,omitempty"`
+	LineNumber int `json:"line_number"`
+	FileDate   string `json:"file_date,omitempty"`
 }
 
 type FileMetadata struct {
@@ -44,12 +53,6 @@ type TaskQueryFilter struct {
 	Tags      []string `json:"tags"`
 	StartDate string   `json:"start_date"`
 	EndDate   string   `json:"end_date"`
-}
-
-type DayGroup struct {
-	Date          string        `json:"date"` // YYYY-MM-DD
-	FormattedDate string        `json:"formattedDate"`
-	Blocks        []ParsedBlock `json:"blocks"`
 }
 
 // NavigationTree describes the Notebook > Section > Page hierarchy for the
@@ -165,7 +168,23 @@ type TaskResult struct {
 	StartDate    string    `json:"start_date,omitempty"`
 	DueDate      string    `json:"due_date,omitempty"`
 	Priority     int       `json:"priority,omitempty"`
-	Tags         []string  `json:"tags,omitempty"`
+	// Pinned + Progress mirror the ParsedBlock fields (see ARCHITECTURE.md
+	// §0 "Storage-of-Truth Tiers" — these are file-resident user intent;
+	// the SQLite index is allowed to cache them, not to own them).
+	Pinned       bool      `json:"pinned,omitempty"`
+	Progress     int       `json:"progress,omitempty"`
+	// CommentsCount is the number of indented child NOTE blocks beneath
+	// this task (the "comments on a task" UX from the Stitch reference).
+	// It is computed at index time from `blocks.parent_id` and cached on
+	// the task row in SQLite so the Kanban query can serve it in O(1).
+	CommentsCount int `json:"comments_count,omitempty"`
+	// LinksCount is the number of `((uuid))` block references in this
+	// task's body. Computed at index time from `blocks.raw_content` and
+	// cached on the task row; re-derivable from the markdown on every
+	// re-index, so SQLite holding it is consistent with the
+	// "working-memory only" tier rule.
+	LinksCount    int `json:"links_count,omitempty"`
+	Tags          []string `json:"tags,omitempty"`
 	// Snippet is the FTS5 snippet (with <mark>...</mark> highlights) for
 	// search results; empty for non-search queries.
 	Snippet      string    `json:"snippet,omitempty"`

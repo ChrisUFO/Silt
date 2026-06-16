@@ -12,6 +12,20 @@ export { SiltBlockExtensionsWithNodeViews } from './nodeViews'
 export { blocksToDoc, docToBlocks } from './converters'
 export { UniqueBlockIds, freshId } from './uniqueIdPlugin'
 export { SiltBlockKeymaps } from './keymaps'
+export {
+  TaskMetaSuggest,
+  applyMetaSuggestion,
+  filterMetaKeys,
+  getSuggestContext,
+  getMetaSuggestState,
+  META_KEYS
+} from './taskMetaSuggest'
+export type {
+  MetaKey,
+  SuggestContext,
+  InsertPlan,
+  TaskMetaSuggestOptions
+} from './taskMetaSuggest'
 export type {
   ParsedBlock,
   BlockType,

@@ -190,6 +190,44 @@ func TestApplyTheme_RejectsUnknownID(t *testing.T) {
 	}
 }
 
+// TestApplyTheme_ResolvesFirstClassEmbeddedOffDisk (#92 review): the new
+// first-class themes (Terra Noir, Linen, Stark, Graphite) live in the
+// embedded roster. On a vault whose themes dir was scaffolded before the
+// theme shipped — or was wiped by the user — the on-disk file is missing,
+// so LoadByID returns found=false. ApplyTheme must still succeed by
+// falling back to the embedded copy, mirroring what GetActiveTheme's
+// ResolveActive does at startup. Regression guard for the bug where
+// picking a new first-class theme in the UI errored with
+// "theme silt-X is not available".
+func TestApplyTheme_ResolvesFirstClassEmbeddedOffDisk(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+	// Wipe the on-disk file so LoadByID returns not-found and the
+	// embedded-fallback branch is the only path that can succeed.
+	// (A fresh vault's ScaffoldVault writes every first-class id, so we
+	// have to remove it explicitly to simulate a pre-Sprint-8 dir.)
+	themesDir := filepath.Join(app.vaultPath, ".system", "themes")
+	if err := os.Remove(filepath.Join(themesDir, "silt-graphite.json")); err != nil {
+		t.Fatalf("remove silt-graphite.json: %v", err)
+	}
+	res, err := app.ApplyTheme("silt-graphite", "dark")
+	if err != nil {
+		t.Fatalf("ApplyTheme silt-graphite (embedded, off-disk): %v", err)
+	}
+	if res.ID != "silt-graphite" {
+		t.Errorf("resolved id = %q, want silt-graphite", res.ID)
+	}
+	// Persisted: a subsequent GetActiveTheme should serve the same id
+	// (now via the settings-backed path, not the picker shortcut).
+	settings, err := vault.LoadSettings()
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+	if settings.ActiveTheme != "silt-graphite" {
+		t.Errorf("settings.ActiveTheme = %q, want silt-graphite", settings.ActiveTheme)
+	}
+}
+
 func TestApplyTheme_SystemModeResolvesFirstPaintDark(t *testing.T) {
 	configDirOverride(t)
 	app := newTestApp(t)

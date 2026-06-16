@@ -1,7 +1,6 @@
 <script lang="ts">
   import { loadedPlugins } from '../plugins/store.svelte'
   import { makePluginContext } from '../plugins/context'
-  import type { PluginContext } from '../plugins/sdk'
 
   interface Props {
     pluginId: string
@@ -15,10 +14,10 @@
   let plugin = $derived(loadedPlugins.plugins.get(pluginId))
   let loadError = $derived(loadedPlugins.errors.find((e) => e.id === pluginId))
 
-  // Build a context bound to the current location for the plugin component.
-  let ctx = $derived(
-    makePluginContext(activeNotebook, activeSection, activePage)
-  ) as PluginContext
+  // The shared reactive context (#69). activeNotebook/Section/Page are live
+  // getters backed by location.svelte.ts $state, so plugins that read them in
+  // a reactive context re-render automatically on navigation.
+  const ctx = makePluginContext()
 </script>
 
 {#if loadError}

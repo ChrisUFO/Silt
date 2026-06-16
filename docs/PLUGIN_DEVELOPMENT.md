@@ -2,10 +2,10 @@
 
 Silt plugins extend the app with new views and capabilities. There are two kinds:
 
-- **First-party plugins** (Agenda, Calendar) are bundled with the app and ship as compiled Svelte components.
+- **First-party plugins** (Agenda, Calendar, Kanban) are bundled with the app and ship as compiled Svelte components.
 - **Third-party plugins** are authored by anyone, packaged as a **`.silt-plugin`** archive, and installed via the in-app **Plugin Manager**.
 
-Both kinds use the **exact same PluginContext SDK** — the built-in Agenda/Calendar plugins are reference implementations of the same contract a third-party plugin uses.
+Both kinds use the **exact same PluginContext SDK** — the built-in Agenda/Calendar/Kanban plugins are reference implementations of the same contract a third-party plugin uses.
 
 > The PluginContext contract lives in `frontend/src/plugins/sdk.ts`; the on-disk loader is `frontend/src/plugins/loader.ts`.
 
@@ -22,13 +22,19 @@ interface PluginContext {
   activePage: string
 
   // Read-only SQL against the in-memory index. Only SELECT / WITH are allowed.
-  sqliteQuery: (sql: string, params?: unknown[]) => Promise<Record<string, unknown>[]>
+  sqliteQuery: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[]; truncated: boolean }>
 
   // Rewrite a block's body text by UUID (preserves task syntax + the UUID comment).
   mutateBlock: (id: string, text: string) => Promise<boolean>
 
   // Transition a task block's status: 'TODO' | 'DOING' | 'DONE'.
   updateBlockState: (id: string, status: 'TODO' | 'DOING' | 'DONE') => Promise<boolean>
+
+  // Update per-task metadata (pin, progress). Both fields are optional;
+  // pass undefined to skip. Pin and progress are file-resident user
+  // intent — the call round-trips through the markdown file, writing
+  // [pin:: true] / [progress:: N] tokens via the parser + renderer.
+  updateTaskMeta: (id: string, meta: { pinned?: boolean; progress?: number }) => Promise<boolean>
 }
 ```
 
@@ -37,23 +43,25 @@ interface PluginContext {
 `sqliteQuery` runs **read-only** SQL against the in-memory SQLite index. Anything other than `SELECT`/`WITH` is rejected. The schema (see `ARCHITECTURE.md` §3):
 
 - `blocks(id, parent_id, notebook, section, page, file_date, depth, type, raw_content, clean_content, line_number)`
-- `tasks(block_id, status, owner, start_date, due_date, priority)`
+- `tasks(block_id, status, owner, start_date, due_date, priority, pinned, progress, comments_count, links_count)`
 - `tags(block_id, raw_path, level_0, level_1, level_2)`
 
 Example — all active tasks with a due date:
 
 ```ts
-const rows = await ctx.sqliteQuery(
+const { rows, truncated } = await ctx.sqliteQuery(
   `SELECT b.id, b.clean_content, t.due_date
    FROM blocks b JOIN tasks t ON b.id = t.block_id
    WHERE t.status != 'DONE' AND t.due_date != ''
    ORDER BY t.due_date ASC`
 )
+// truncated === true when the result hit the 5000-row cap;
+// surface a "narrow your scope" hint to the user when set.
 ```
 
 ### Mutating blocks
 
-`mutateBlock(id, text)` rewrites a block's text in its source file and re-indexes it. `updateBlockState(id, status)` cycles a task's checkbox. Both emit a `block:changed` event so live embeds/references update.
+`mutateBlock(id, text)` rewrites a block's text in its source file and re-indexes it. `updateBlockState(id, status)` cycles a task's checkbox. `updateTaskMeta(id, {pinned?, progress?})` updates per-task metadata (pin/progress) by round-tripping through the markdown file's `[key:: value]` inline tokens. All three emit a `block:changed` event so live embeds/references update.
 
 ### Navigating to a block
 
@@ -147,7 +155,7 @@ The resulting `my-plugin.silt-plugin` is what you distribute.
 3. The manager validates the archive (manifest schema, entry module present, no unsafe paths) and shows a preview (name, version, id, description).
 4. Confirm to install. The plugin is extracted to `.system/plugins/<id>/` and loaded immediately.
 
-Installed plugins can be **enabled/disabled** (toggle) or **uninstalled** from the same manager. Disabling uses a `.disabled` sentinel file; uninstalling removes the folder.
+Installed plugins can be **enabled/disabled** (toggle) or **uninstalled** from the same manager. First-party (bundled) plugins can also be enabled/disabled but cannot be uninstalled.
 
 ### Manual install (advanced)
 
@@ -157,19 +165,36 @@ You can also drop a plugin folder directly into `.system/plugins/<id>/` (with `p
 
 ## 5. Enabling/disabling plugins
 
-Plugin loading is **folder-based**: every plugin discovered under `.system/plugins/` is loaded at boot (first-party bundled plugins always load too). Install "just works" — no config editing required.
+Every plugin — first-party or third-party — can be **enabled or disabled** from the Plugin Manager (Settings → Plugins). A disabled plugin is not loaded at boot; its view slot shows a "not registered" empty state.
 
-To disable a plugin without uninstalling it, use the **Plugin Manager** (or drop a `.disabled` sentinel file into the plugin folder). The loader skips any folder containing `.disabled`. Re-enable by removing the sentinel.
+The mechanism differs by source:
 
-`.system/config.yaml` may still carry a `plugins.active`/`disabled` list for reference, but it is **not** a whitelist — discovery + the `.disabled` sentinel are the source of truth.
+| Source | Disable mechanism | Uninstall |
+|---|---|---|
+| **First-party** (bundled) | `config.yaml` → `plugins.disabled` list | Not available |
+| **Third-party** (installed) | `.disabled` sentinel file in `.system/plugins/<id>/` | Removes the folder |
+
+### First-party disable (config.yaml)
+
+When you toggle a bundled plugin off in the Plugin Manager, its id is added to the `disabled` list in `.system/config.yaml`. The loader reads this list at boot and skips any first-party plugin whose id appears in it:
 
 ```yaml
 plugins:
-  active:        # informational only; not a whitelist
+  active:          # informational only; not a whitelist
     - silt-agenda
     - silt-calendar
-  disabled: []
+    - silt-kanban
+  disabled:        # first-party plugins the user has toggled off
+    - silt-calendar
 ```
+
+Re-enabling from the Plugin Manager removes the id from the list. You can also edit `config.yaml` directly (the hot-reload watcher picks up the change without a restart).
+
+### Third-party disable (.disabled sentinel)
+
+Third-party plugins use a `.disabled` sentinel file inside the plugin folder. The loader skips any folder containing `.disabled`. Re-enable by removing the sentinel (or toggling in the Plugin Manager).
+
+> **Note:** `plugins.active` is informational only — it is **not** a whitelist. Plugin discovery is folder-based (third-party) + registry-based (first-party). The `disabled` list is the sole mechanism for disabling first-party plugins.
 
 ---
 
@@ -179,6 +204,7 @@ Read these to see the SDK used end-to-end:
 
 - `frontend/src/plugins/first-party/silt-agenda/Agenda.svelte` — queries tasks, groups Overdue/Today/Tomorrow/Upcoming, marks done via `updateBlockState`, jumps to source.
 - `frontend/src/plugins/first-party/silt-calendar/Calendar.svelte` — month/week grids over a windowed due-date query, with navigation.
+- `frontend/src/plugins/first-party/silt-kanban/Kanban.svelte` — multi-level scope (vault/notebook/section/page) drag-and-drop board with FLIP animations, filter bar (owner/priority/due/tags), custom columns (add/rename/remove/reorder), card detail panel (pin/progress/comments/links), `updateBlockState` on drop, `updateTaskMeta` for pin/progress, keyboard a11y, and a config-driven column list.
 
 These components receive `{ ctx, manifest }` as props — the same `PluginContext` documented above.
 
@@ -187,6 +213,6 @@ These components receive `{ ctx, manifest }` as props — the same `PluginContex
 ## 7. Security model
 
 - `sqliteQuery` is restricted to `SELECT`/`WITH` — plugins cannot mutate the index or schema through it.
-- All block mutations (`mutateBlock`, `updateBlockState`) route through the Go backend's atomic-write + concurrency-coordinator path; plugins never write files directly.
+- All block mutations (`mutateBlock`, `updateBlockState`, `updateTaskMeta`) route through the Go backend's atomic-write + concurrency-coordinator path; plugins never write files directly.
 - `.silt-plugin` archives are validated against zip-slip, absolute paths, and `..` traversal before extraction, and the install path is checked to stay within `.system/plugins/`.
 - Plugins run in the same webview as the app (no sandbox). Install only plugins you trust, as with any browser-extension-style model.

@@ -45,7 +45,7 @@
     loading = true
     errorMsg = ''
     try {
-      const rows = await ctx.sqliteQuery(
+      const { rows } = await ctx.sqliteQuery(
         `SELECT b.id, b.notebook, b.section, b.page, b.file_date, b.line_number,
                 b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority
          FROM blocks b JOIN tasks t ON b.id = t.block_id
@@ -162,6 +162,12 @@
                 <div
                   class="group flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-bg-hover transition-colors cursor-pointer"
                   onclick={() => openItem(item)}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      openItem(item)
+                    }
+                  }}
                   role="button"
                   tabindex="0"
                 >

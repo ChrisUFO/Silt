@@ -10,15 +10,50 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TaskRegex captures:
-// 1: Indentation
-// 2: Checkbox state marker
-// 3: Task status keyword (TODO|DOING|DONE)
-// 4: Owner (optional, inside [owner])
-// 5: Dates (optional, inside (start, due) or (due))
-// 6: Priority (optional, after #)
-// 7: Remainder description (which may contain the UUID comment at the end)
-var TaskRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s(TODO|DOING|DONE)\sTASK(?:\s\[([^\]]*)\])?(?:\(([^)]*)\))?(?:#(\d+))?\s(.*)$`)
+// TaskCheckboxRegex matches the GFM task list prefix: optional
+// indentation, a checkbox marker (`[ ]`, `[x]`, or `[/]`), and the
+// remainder of the line. This is the ONLY structural regex for tasks —
+// all metadata (owner, dates, priority, pin, progress) is extracted by
+// the [key:: value] token scanner (scanTaskTokens) from the remainder,
+// not by positional regex groups.
+//
+// This drops the legacy `TASK` keyword entirely — any GFM checkbox item
+// is a task, matching CommonMark/GFM convention. The token scanner
+// makes the metadata order-independent and extensible (new metadata
+// type = new key in the switch, no regex change). The token format
+// follows the Dataview inline metadata standard ([key:: value]) so
+// files are interoperable with the Obsidian/Dataview ecosystem.
+//
+// See ARCHITECTURE.md §0 "Storage-of-Truth Tiers" for the design
+// rationale: task metadata is file-resident user intent, and the
+// [key:: value] format is the de facto standard for per-block metadata
+// in markdown.
+var TaskCheckboxRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s+(.*)$`)
+
+// TaskTokenRegex captures a single Dataview [key:: value] inline metadata
+// token. The double-colon `::` is the signature that distinguishes a
+// metadata field from a markdown link `[text](url)` or regular bracketed
+// text — no other markdown syntax uses `::`.
+//
+// Supported keys (see scanTaskTokens for the dispatch table):
+//   [due:: DATE]       — due date (YYYY-MM-DD)
+//   [start:: DATE]     — start date (YYYY-MM-DD)
+//   [owner:: name]     — owner/assignee
+//   [priority:: N]     — priority (1=critical, 2=normal, 3=low)
+//   [p:: N]            — priority shorthand (alias for [priority:: N])
+//   [pin:: true]       — pinned (boolean; presence also implies true)
+//   [progress:: N]     — progress (0-100)
+//   [prog:: N]         — progress shorthand
+//
+// The scanner is the single source of truth for token → ParsedBlock
+// field mapping; adding a new metadata type is a one-line addition to
+// the switch in scanTaskTokens. Keys are case-insensitive.
+var TaskTokenRegex = regexp.MustCompile(`\[([\w]+)::\s*([^\]]*)\]`)
+
+// TaskRegex is an alias for TaskCheckboxRegex, kept for backward
+// compatibility with external callers that reference it. The actual
+// parsing now flows through TaskCheckboxRegex + TaskTokenRegex.
+var TaskRegex = TaskCheckboxRegex
 
 // IDRegex captures the trailing block-identity comment. The format is:
 //   <!-- id: uuid -->
@@ -35,6 +70,10 @@ var BlockRefRegex = regexp.MustCompile(`\(\(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}
 
 // EmbedRegex matches a live block embed {{embed:uuid}}.
 var EmbedRegex = regexp.MustCompile(`\{\{embed:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}\}`)
+
+// whitespaceRunRegex collapses consecutive whitespace into a single space.
+// Hoisted to package-level so scanTaskTokens doesn't recompile it per line.
+var whitespaceRunRegex = regexp.MustCompile(`\s+`)
 
 func generateUUIDv4() string {
 	return uuid.New().String()
@@ -122,6 +161,60 @@ func parseLeadingIndent(line string, spacesPerTab int) int {
 	return tabs + (spaces / spacesPerTab)
 }
 
+// scanTaskTokens extracts all Dataview [key:: value] inline metadata
+// tokens from a task line's remainder (the text after the checkbox).
+// Returns the parsed fields and the description with tokens stripped.
+//
+// The function is the single source of truth for token → field mapping.
+// Adding a new metadata type is a one-line addition to the switch below.
+// Unknown keys are silently ignored (forward-compatible: a future token
+// the parser doesn't know about is preserved in the description so the
+// file round-trips without data loss).
+func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned bool, progress int, description string) {
+	priority = 3 // default; 0 from the regex means "not set"
+	progress = 0
+	matches := TaskTokenRegex.FindAllStringSubmatch(remainder, -1)
+	// Strip all [key:: value] tokens from the remainder to get the
+	// description. Do this on the full remainder (not per-match) so the
+	// regex's global replace handles overlapping/nested brackets safely.
+	description = strings.TrimSpace(TaskTokenRegex.ReplaceAllString(remainder, ""))
+	// Collapse multiple spaces left by token removal (e.g. "text  more"
+	// after a token between them was stripped).
+	description = whitespaceRunRegex.ReplaceAllString(description, " ")
+
+	for _, m := range matches {
+		key := strings.ToLower(m[1])
+		val := strings.TrimSpace(m[2])
+		switch key {
+		case "due":
+			dueDate = normalizeDate(val)
+		case "start":
+			startDate = normalizeDate(val)
+		case "owner", "o":
+			owner = val
+		case "priority", "p":
+			if val != "" {
+				fmt.Sscanf(val, "%d", &priority)
+			}
+		case "pin", "pinned":
+			// Boolean: "true"/"yes"/"1"/non-empty → true; "false"/"no"/"0"/"" → false
+			v := strings.ToLower(val)
+			pinned = v == "true" || v == "yes" || v == "1" || (val != "" && v != "false" && v != "no" && v != "0")
+		case "progress", "prog":
+			if val != "" {
+				fmt.Sscanf(val, "%d", &progress)
+				if progress < 0 {
+					progress = 0
+				}
+				if progress > 100 {
+					progress = 100
+				}
+			}
+		}
+	}
+	return
+}
+
 func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, string, bool) {
 	blockID, blockFileDate, newLine, modified := EnsureBlockID(line)
 	if blockID == "" {
@@ -138,17 +231,15 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 	cleanLine := CleanLineID(newLine)
 	cleanLineTrimmed := strings.TrimSpace(cleanLine)
 
-	// Check if it matches TaskRegex
-	if matches := TaskRegex.FindStringSubmatch(newLine); matches != nil {
+	// Check if it matches the GFM task checkbox pattern: `- [ ]`, `- [/]`, `- [x]`.
+	// Apply to cleanLine (ID comment stripped) so the remainder fed to
+	// scanTaskTokens does not contain the trailing <!-- id: ... --> comment.
+	if matches := TaskCheckboxRegex.FindStringSubmatch(cleanLine); matches != nil {
 		indent := matches[1]
 		checkbox := matches[2]
-		// keyword := matches[3] // e.g. TODO, DOING, DONE
-		owner := matches[4]
-		dates := matches[5]
-		priorityStr := matches[6]
-		description := matches[7]
+		remainder := matches[3]
 
-		// Determine status from checkbox state
+		// Determine status from checkbox state (GFM convention + Silt's [/] for DOING)
 		status := "TODO"
 		if checkbox == "/" {
 			status = "DOING"
@@ -156,23 +247,8 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 			status = "DONE"
 		}
 
-		// Parse dates
-		var startDate, dueDate string
-		if dates != "" {
-			dateParts := strings.Split(dates, ",")
-			if len(dateParts) == 2 {
-				startDate = normalizeDate(dateParts[0])
-				dueDate = normalizeDate(dateParts[1])
-			} else if len(dateParts) == 1 {
-				dueDate = normalizeDate(dateParts[0])
-			}
-		}
-
-		// Parse priority
-		priority := 3 // default
-		if priorityStr != "" {
-			fmt.Sscanf(priorityStr, "%d", &priority)
-		}
+		// Scan for [key:: value] metadata tokens in the remainder.
+		owner, startDate, dueDate, priority, pinned, progress, description := scanTaskTokens(remainder)
 
 		depth := parseLeadingIndent(indent, spacesPerTab)
 
@@ -181,12 +257,14 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 			Type:       BlockTask,
 			Depth:      depth,
 			RawText:    newLine,
-			CleanText:  strings.TrimSpace(CleanLineID(description)),
+			CleanText:  description,
 			Status:     status,
-			Owner:      strings.TrimSpace(owner),
+			Owner:      owner,
 			StartDate:  startDate,
 			DueDate:    dueDate,
 			Priority:   priority,
+			Pinned:     pinned,
+			Progress:   progress,
 			LineNumber: lineNumber,
 			FileDate:   blockFileDate,
 		}, newLine, modified
@@ -513,27 +591,42 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 			checkbox = "x"
 		}
 
-		ownerStr := ""
-		if block.Owner != "" {
-			ownerStr = fmt.Sprintf(" [%s]", block.Owner)
-		}
-
-		dateStr := ""
-		if block.StartDate != "" && block.DueDate != "" {
-			dateStr = fmt.Sprintf("(%s, %s)", block.StartDate, block.DueDate)
-		} else if block.DueDate != "" {
-			dateStr = fmt.Sprintf("(%s)", block.DueDate)
-		}
-
-		priorityStr := ""
+		// Build [key:: value] metadata tokens (Dataview inline metadata
+		// format — see ARCHITECTURE.md §0 "Storage-of-Truth Tiers").
+		// Each metadata field that is set gets its own [key:: value] token
+		// appended after the description. The order is fixed: priority,
+		// start, due, owner, pin, progress — matching the canonical
+		// field order so a parse → render round trip is stable.
+		var tokens []string
 		if block.Priority > 0 && block.Priority != 3 {
-			priorityStr = fmt.Sprintf("#%d", block.Priority)
+			tokens = append(tokens, fmt.Sprintf("[priority:: %d]", block.Priority))
+		}
+		if block.StartDate != "" {
+			tokens = append(tokens, fmt.Sprintf("[start:: %s]", block.StartDate))
+		}
+		if block.DueDate != "" {
+			tokens = append(tokens, fmt.Sprintf("[due:: %s]", block.DueDate))
+		}
+		if block.Owner != "" {
+			tokens = append(tokens, fmt.Sprintf("[owner:: %s]", block.Owner))
+		}
+		if block.Pinned {
+			tokens = append(tokens, "[pin:: true]")
+		}
+		if block.Progress > 0 {
+			tokens = append(tokens, fmt.Sprintf("[progress:: %d]", block.Progress))
 		}
 
-		// - [checkbox] STATUS TASK [owner](dates)#priority description <!-- id: id -->
-		return fmt.Sprintf("%s- [%s] %s TASK%s%s%s %s%s",
-			indent, checkbox, block.Status, ownerStr, dateStr, priorityStr,
-			strings.ReplaceAll(block.CleanText, "\n", " "), idSuffix)
+		tokenStr := ""
+		if len(tokens) > 0 {
+			tokenStr = " " + strings.Join(tokens, " ")
+		}
+
+		// - [checkbox] description [key:: value]... <!-- id: id -->
+		return fmt.Sprintf("%s- [%s] %s%s%s",
+			indent, checkbox,
+			strings.ReplaceAll(block.CleanText, "\n", " "),
+			tokenStr, idSuffix)
 	} else if block.Type == BlockHeader {
 		hashes := strings.Repeat("#", block.Depth)
 		if hashes == "" {

@@ -88,7 +88,7 @@ Per Phase 6 of `PLAN.md`:
 
 ---
 
-# Sprint 3 — Smart Graph, Plugin SDK & OneNote-style Hierarchy
+# Sprint 3 — Smart Graph, Plugin SDK & 3-Level Hierarchy
 
 ## Automated Tests
 
@@ -98,9 +98,9 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` (frontend, sve
 
 | Package | Tests | What is covered |
 |---|---|---|
-| `silt` (main) | 3-level model migration of all existing tests + `ResolveBlockReference` (found/dangling), `MutateBlock` (preserves UUID + task syntax, unknown id), `PluginRawQuery` (SELECT allowed, non-SELECT rejected), `PluginUpdateBlockState`, `GetPluginRegistry`, `ReadPluginSource` (+ traversal), `QueryBlocksByTag` (prefix semantics), `CreatePage` scaffolding, `CreateNotebook`/`OpenNotebook`/`PickNotebookFolder`/`CreateSection`, `FetchPageTimeline` | Wails API surface for the 3-level model + smart graph + plugin SDK |
+| `silt` (main) | 3-level model migration of all existing tests + `ResolveBlockReference` (found/dangling), `MutateBlock` (preserves UUID + task syntax, unknown id), `PluginRawQuery` (SELECT allowed, non-SELECT rejected), `PluginUpdateBlockState`, `GetPluginRegistry`, `ReadPluginSource` (+ traversal), `QueryBlocksByTag` (prefix semantics), `CreatePage` scaffolding, `CreateNotebook`/`OpenNotebook`/`PickNotebookFolder`/`CreateSection`, `FetchPageBlocks` | Wails API surface for the 3-level model + smart graph + plugin SDK |
 | `backend/plugins` (new) | `Validate`/`Install` happy path, bad-archive rejections (missing manifest, bad id, missing main, zip-slip, absolute path), duplicate-install refusal, `Uninstall` (+ traversal rejection), `Enable`/`Disable` sentinel toggle, `sanitizeID` | `.silt-plugin` packaging/install lifecycle |
-| `backend/db` | `QueryTagHierarchy` (prefix-count aggregation), `QueryBlocksByTag`, 3-level `FetchTimelineDays`/`IndexFileBlocks`/`ClearFileBlocks`/`ListNavigation`, `ExtractTags` now supports hyphenated tags | DatabaseManager + hierarchical tags |
+| `backend/db` | `QueryTagHierarchy` (prefix-count aggregation), `QueryBlocksByTag`, 3-level `IndexFileBlocks`/`ClearFileBlocks`/`ListNavigation`, `ExtractTags` now supports hyphenated tags | DatabaseManager + hierarchical tags |
 | `backend/parser` | `BlockRefRegex`/`EmbedRegex` detectors, `page` dimension in `ParseFileContent` + scanner 3-level resolution + depth warn/skip | AST parser + scanner |
 | `backend/monitor` | watcher 3-level `resolveFileMetadata` + reindex/focus-lock updated to the page model | DirectoryWatcher |
 | `backend/vault` | blank-start scaffolding (no default Work/Journal), plugins README written | Settings durability |
@@ -110,10 +110,10 @@ Frontend: `npm run check` reports **0 errors** across the smart-graph components
 ## Manual Verification Matrix (`wails dev`)
 
 1. **Onboarding (blank start):** `wails dev` → Initialize Workspace → `.system/` only (no Work/Journal). Onboarding empty state prompts to create a notebook.
-2. **3-level navigation:** Create a Notebook → Section → Page via the sidebar tree; the page timeline loads; breadcrumb shows Notebook › Section › Page.
+2. **3-level navigation:** Create a Notebook → Section → Page via the sidebar tree; the page editor loads; breadcrumb shows Notebook › Section › Page.
 3. **Sidebar collapse:** Collapse button (sidebar) hides the navigator; floating reopen button + Ctrl+B restore it; content reflows.
 4. **Custom titlebar (#41):** frameless window; drag the empty header to move; min/max-restore/close work; double-click header toggles maximize.
-5. **Smart Graph:** add `#work/sogav/milestone-one` to a block (renders as a pill, appears in Tags view); type `((uuid))` (renders as a link with hover preview, click scrolls to source); use `/embed` → picker → `{{embed:uuid}}` renders a live portal; edit the source block elsewhere and watch the embed update.
+5. **Smart Graph:** add `#work/project/milestone-one` to a block (renders as a pill, appears in Tags view); type `((uuid))` (renders as a link with hover preview, click scrolls to source); use `/embed` → picker → `{{embed:uuid}}` renders a live portal; edit the source block elsewhere and watch the embed update.
 6. **Agenda (#17):** Agenda view shows overdue/today/tomorrow/upcoming; mark-done works; click jumps to source.
 7. **Calendar (#18):** month + week grids with due-date tasks; prev/next/today navigation; click a task jumps to source.
 8. **Plugin install:** Plugin Manager → install a sample `.silt-plugin` → it appears + loads; enable/disable + uninstall work.
@@ -332,7 +332,7 @@ for the engine + picker UX. Sprint 7 adds:
    parses with the canonical validator at each step.
 2. **Muted-text contrast (post-fix):** in dark mode, sidebar metadata
    and note tag labels (muted text) are visibly legible against panels;
-   a contrast-tool spot-check on any muted label reports ≥ 4.5:1.
+   a    contrast-tool spot-check on any muted label reports ≥ 4.5:1.
 3. **Default-theme snapshot stability:** the shipped default looks
    unchanged except the muted gray is one notch lighter (dark) / darker
    (light); no other token moved.
@@ -440,4 +440,95 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test`
 6. Drop a custom `.md` into `<vault>/.system/templates/` → it appears in the picker without a restart (watcher hot-reload).
 7. Smart-graph passthrough: author a template body containing `{{embed:abc-123}}` → insert → the embed token survives rendering intact.
 
+
+---
+# Sprint 4 — Kanban Board, Performance, Tests & Polish (#19, #21, #22, #23)
+
+## Automated Tests
+
+Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (frontend, Vitest).
+
+### Go coverage added this sprint
+
+| Package | Tests | What is covered |
+|---|---|---|
+| `backend/parser` | `TestParseLine_EdgeCases` (minimal task, DOING/DONE states, partial metadata, priority-without-owner), `TestScanWorkspace_BudgetRegression` (hard <450ms/1k files gate), `TestWriteFileAtomic_NoTruncatedFilesOnKill` (100 concurrent writes, zero truncated, zero stray temp) | AST edge cases + boot-scanner budget regression + atomic-write durability |
+| `backend/db` | `TestAtomicWrite_KillMidWriteRecoversViaWAL` (destructive-exit WAL replay + zero stray temp files), `TestIndexer_KanbanQueryPath` (exact Kanban SQL ordering + section scoping) | WAL crash recovery + Kanban query regression guard |
+
+### Frontend coverage added this sprint
+
+| File | Tests | What is covered |
+|---|---|---|
+| `frontend/src/plugins/first-party/silt-kanban/Kanban.test.ts` (20 tests) | 3-lane render, task bucketing, default page-scope, scope-change re-query, click → detail panel, "Open in editor" → navigate-to-block, ArrowRight/Enter/Space keyboard, error revert, empty state, scope-button enable/disable, truncation banner, race guard, owner/priority filter SQL clauses, Add/Remove column persistence | Kanban plugin IPC boundary |
+| `frontend/src/plugins/first-party/silt-agenda/Agenda.test.ts` (4 tests) | Date-bucket loading, mark-done → ctx.updateBlockState, click → navigate-to-block, empty state | Agenda plugin IPC boundary |
+| `frontend/src/plugins/first-party/silt-calendar/Calendar.test.ts` (3 tests) | Month-grid rendering, Today button, click → navigate-to-block | Calendar plugin IPC boundary |
+| `frontend/src/components/PluginView.test.ts` (3 tests) | Happy-path render, load-error path, not-registered empty state | Plugin host view |
+| `frontend/src/components/Sidebar.test.ts` (2 tests) | Collapse render, Change Vault handler | Sidebar interactions |
+
+`npm test` now runs **123 vitest tests** across 20 files (was 46 across 6). `npm run check` reports **0 errors**.
+
+### Dead-code cleanup
+
+- Removed the stale page-timeline surface (`FetchPageTimeline`, `FetchTimelineDays`, `DayGroup`, their tests, and the `maxTimelineLimit`/`defaultTimelineLimit` constants). The live editor uses `FetchPageBlocks`; the timeline API was dead code left over from the per-day file model removal.
+
+## Manual Verification Matrix (`wails dev`)
+
+1. **Kanban board (#19):** Navigate to a section with mixed TODO/DOING/DONE tasks → switch to the Kanban view → 3 columns render with correct counts.
+2. **Kanban scope selector:** Switch between Vault / Notebook / Section / Page → the board re-queries and the card set narrows/widens; the breadcrumb shows the active scope. Default scope follows the active navigation (navigate to a page → board defaults to page scope).
+3. **Kanban drag-and-drop:** Drag a card TODO → DOING → file on disk now reads `[/] description [key:: value]...`. Drag DOING → DONE → file reads `[x] description [key:: value]...`. Reload → persisted state reflects the markdown.
+4. **Kanban keyboard:** Focus a card → ArrowRight moves it to the next lane; ArrowLeft moves back. Enter/Space opens the card detail panel.
+5. **Kanban filter bar:** Click Owner chip → multi-select owners → board narrows. Stack Owner + Priority → both filter clauses active. "Clear all" restores the full set. Filters persist across reload (stored in config.yaml plugin_settings.silt-kanban.filters).
+6. **Kanban custom columns:** Click "+ Add Column" → type name → new column appears and persists across reload. Click more_horiz → Rename → inline edit → persists. Click more_horiz → Remove → confirm → column drops (cards keep their status). Drag column headers to reorder → persists.
+7. **Kanban card detail panel:** Click a card → right-side panel slides in. Toggle pin → file updates with `[pin:: true]`. Adjust progress slider → file updates with `[progress:: N]`. Comments/links counts display correctly. "Open in editor" jumps to the source block. Esc closes.
+8. **Kanban card visuals:** Pinned cards show push_pin icon. Cards with progress > 0 show a progress bar. Comment/link counts appear at the bottom. DOING cards have a left-edge indigo border.
+9. **Task metadata autocomplete (%):** In the editor, type a task line (`- [ ] some task`). Type `%` → popup shows all 6 metadata keys. Type `%d` → filters to "due". Select "due" → `[due:: ]` inserted with cursor positioned. Type a date → `[due:: 2026-08-03]` stored in file. Select "pin" → `[pin:: true]` auto-filled.
+10. **Plugin disable:** Settings → Plugins → toggle off Kanban → the Kanban view shows the "not registered" empty state. Toggle back on → it reappears. Works for both first-party and third-party plugins.
+11. **Frame-budget probe (#21):** Open `wails dev` with `?perf=1` appended to the URL. Perform Kanban drag-drop, editor typing, and theme switching → console logs each measurement with ✓ (<16ms) or ⚠️ (>16ms).
+12. **Production build (#23):** `./build.sh --no-bump` (Windows) or `./build-linux.sh --no-bump` (Linux) produces the platform artifacts. Launch the binary, open a vault with ≥10 pages, idle 60s → peak RSS < 65MB (Task Manager on Windows, `ps -o rss=` on Linux).
+
+## Known Gaps (deferred)
+
+- **System tray (#23):** Wails v2.12 has an internal `TrayMenu` struct but no public runtime API to register tray menus. The tray icon + minimize-to-tray feature is blocked by this API gap; deferred to Wails v3 adoption.
+- **Sidebar tree-render test:** The Sidebar's `loadNavigation` runs in `onMount`, which does not fire reliably under Svelte 5 + testing-library/jsdom (unlike `$effect`, which Kanban/Agenda/Calendar use). Tree rendering is covered by manual verification; the Sidebar test covers collapse + Change Vault.
+
+---
+
+# Sprint Follow-Ups — Issues #61, #62, #63, #64, #68, #69, #75, #79, #83
+
+## Automated Tests
+
+Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (frontend).
+
+### Go coverage added
+
+| File | Tests | What is covered |
+|---|---|---|
+| `app_nav_test.go` (new) | `TestGetSetSidebarWidth_RoundTrip`, `TestSetSidebarWidth_Clamps`, `TestGetSetNavOrder_RoundTrip`, `TestRenamePage_UpdatesFrontmatterAndFile`, `TestRenamePage_NameCollision`, `TestRenamePage_PathTraversal`, `TestRenameSection_UpdatesAllFiles`, `TestDeletePage_MovesToTrash`, `TestDeleteSection_DeletesAllPages`, `TestLockBlocksWrite_NoDeadlock` | Config ui: block persistence, rename frontmatter + index, delete trash path, per-block lock deadlock-safety (#63, #68, #62, #83, #64) |
+| `backend/db/db.go` (#79) | WAL mode assert in `initSchema` | Belt-and-suspenders: rejects mounts that silently downgrade from WAL |
+| `backend/db/netfs_*.go` (#79) | Platform-specific network filesystem detection | NFS/SMB/CIFS denylist on Linux, macOS, Windows |
+
+### Frontend
+
+`npm run check` reports **0 errors and 0 warnings** (the #75 a11y pass target — all `svelte-check` a11y warnings fixed). `npm test` runs **123 vitest tests** across 20 files.
+
+### Key a11y fixes (#75)
+
+| Component | Fix |
+|---|---|
+| SearchModal, BlockPickerModal | Scrim-as-button sibling + `role="dialog"` + `aria-modal` (SettingsShell pattern) |
+| Sidebar create/rename modal, context menu, delete dialog | Same pattern; `role="menu"` + `tabindex="-1"` on context menu |
+| Sidebar treeitems | `aria-selected` added on section + page items |
+| VirtualScrollContainer title | `role="textbox"` removed from contenteditable `<h1>` |
+| Agenda task row | `onkeydown` (Enter/Space) keyboard activation |
+
+## Manual Verification Matrix (`wails dev`)
+
+1. **Resizable sidebar (#63):** drag divider → width changes live → restart → persists. Double-click → 256. Arrow keys → ±8px. Ctrl+B → collapses → restores last width. Shrink window → auto-collapse.
+2. **Inline title (#83):** New Page → "Untitled" created + title auto-focused → type a name → renames file + sidebar updates.
+3. **Context menu (#62):** right-click a page/section → Rename/Delete. Delete → confirmation dialog → moves to `.system/trash/`.
+4. **macOS titlebar (#61):** on macOS, no duplicate window controls; ~80px left inset for traffic lights. Windows/Linux unchanged.
+5. **Drag-to-reorder (#68):** drag a section up/down → order persists across restart.
+6. **Plugin reactivity (#69):** navigate between pages → Agenda/Calendar/Kanban reflect the new active location without a plugin reload.
+7. **Embed/editor race (#64):** edit an embed → source block updates; type in the editor while embed auto-saves → no clobbering.
+8. **A11y (#75):** tab through every view → logical order, visible focus rings, all actions reachable via keyboard. `npm run check` = 0 warnings.
 

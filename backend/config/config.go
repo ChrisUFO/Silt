@@ -22,6 +22,7 @@ type SystemConfig struct {
 	Parsing   ParsingConfig     `yaml:"parsing" json:"parsing"`
 	Hotkeys   map[string]string `yaml:"hotkeys" json:"hotkeys"`
 	Plugins   PluginsConfig     `yaml:"plugins" json:"plugins"`
+	UI        UIConfig          `yaml:"ui" json:"ui"`
 }
 
 // NotebooksConfig holds spatial-mapping defaults.
@@ -54,6 +55,22 @@ type PluginsConfig struct {
 	Active         []string       `yaml:"active" json:"active"`
 	Disabled       []string       `yaml:"disabled" json:"disabled"`
 	PluginSettings map[string]any `yaml:"plugin_settings" json:"plugin_settings"`
+}
+
+// UIConfig holds per-vault UI preferences (sidebar width, custom navigation
+// ordering). Stored in the YAML tier (per-vault) per ARCHITECTURE §0 rule #2.
+type UIConfig struct {
+	SidebarWidth int      `yaml:"sidebar_width" json:"sidebar_width"`
+	NavOrder     NavOrder `yaml:"nav_order,omitempty" json:"nav_order,omitempty"`
+}
+
+// NavOrder stores explicit ordering for the sidebar navigator tree. Folders on
+// disk have no inherent custom order; this map overrides the default
+// alphabetical sort. Keys not present in the map fall back to alphabetical.
+type NavOrder struct {
+	Notebooks []string            `yaml:"notebooks,omitempty" json:"notebooks,omitempty"`
+	Sections  map[string][]string `yaml:"sections,omitempty" json:"sections,omitempty"`
+	Pages     map[string][]string `yaml:"pages,omitempty" json:"pages,omitempty"`
 }
 
 // hotkeyModifiers are the modifier tokens allowed in a hotkey binding
@@ -140,6 +157,13 @@ func Defaults() SystemConfig {
 				},
 			},
 		},
+		UI: UIConfig{
+			SidebarWidth: 256,
+			NavOrder: NavOrder{
+				Sections: map[string][]string{},
+				Pages:    map[string][]string{},
+			},
+		},
 	}
 }
 
@@ -204,6 +228,15 @@ func normalize(cfg SystemConfig) SystemConfig {
 	}
 	if cfg.Hotkeys == nil {
 		cfg.Hotkeys = map[string]string{}
+	}
+	if cfg.UI.NavOrder.Sections == nil {
+		cfg.UI.NavOrder.Sections = map[string][]string{}
+	}
+	if cfg.UI.NavOrder.Pages == nil {
+		cfg.UI.NavOrder.Pages = map[string][]string{}
+	}
+	if cfg.UI.SidebarWidth < 200 {
+		cfg.UI.SidebarWidth = 256
 	}
 	return cfg
 }

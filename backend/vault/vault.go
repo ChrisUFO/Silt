@@ -158,7 +158,8 @@ editor:
 # Task Parse Rules
 parsing:
   auto_inject_uuid: true
-  shorthand_regex: "^([ ]|[/]|[x])\\s(TODO|DOING|DONE)\\sTASK\\s(?:\\s*\\[([^\\]]*)\\])?(?:\\(([^)]*)\\))?(?:#(\\d+))?\\s(.*)$"
+  checkbox_regex: "^([\\s]*)-\\s\\[([ x/])\\]\\s+(.*)$"
+  metadata_token_regex: "\\[([\\w]+)::\\s*([^\\]]*)\\]"
   default_task_priority: 3
 
 # Key-Binding Map
@@ -181,6 +182,10 @@ plugins:
     silt-kanban:
       default_col: "TODO"
       columns: ["TODO", "DOING", "DONE"]
+
+# UI Preferences (per-vault)
+ui:
+  sidebar_width: 256
 `
 	configPath := filepath.Join(vaultPath, ".system", "config.yaml")
 	// Format config with absolute vault path (with forward slashes for cross platform consistency)

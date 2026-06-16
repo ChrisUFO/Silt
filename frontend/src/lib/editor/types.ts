@@ -1,6 +1,6 @@
 // Frontend mirror of parser.ParsedBlock (backend/parser/models.go).
 // This is the JSON shape that crosses the Wails IPC boundary in
-// SaveFileBlocks / FetchPageTimeline. The editor never touches raw markdown —
+// SaveFileBlocks / FetchPageBlocks. The editor never touches raw markdown —
 // it deals only in this structured representation. Go's RenderFileContent
 // remains the single on-disk serializer (#40 contract preserved).
 

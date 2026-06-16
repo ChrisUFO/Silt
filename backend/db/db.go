@@ -2,8 +2,10 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -14,6 +16,19 @@ import (
 
 	_ "modernc.org/sqlite"
 )
+
+// ErrNetworkFilesystem is returned when the vault index path is detected to be
+// on a network filesystem (NFS/SMB/CIFS/…). WAL mode requires shared memory
+// which network mounts cannot provide, so the index would fail with an opaque
+// SQLite error. This sentinel lets the UI surface a clear, actionable message
+// instead (#79).
+var ErrNetworkFilesystem = errors.New("network filesystem detected")
+
+// ErrWALRejected is returned when the database is on-disk but SQLite did not
+// accept WAL mode (the PRAGMA returned a different journal mode). This is a
+// belt-and-suspenders check: some mounts silently downgrade away from WAL
+// without erroring (#79).
+var ErrWALRejected = errors.New("WAL mode rejected by the filesystem")
 
 type DatabaseManager struct {
 	db   *sql.DB
@@ -41,6 +56,15 @@ type FileStat struct {
 // foreign_keys) are per-connection and are re-applied on every open. On an
 // in-memory DB, `journal_mode=WAL` is a safe no-op (SQLite keeps "memory").
 func NewDatabaseManager(dbPath string) (*DatabaseManager, error) {
+	// Pre-open guard (#79): detect network filesystems before sql.Open so the
+	// user gets a clear "move to a local folder" message instead of an opaque
+	// SQLite shared-memory error. Only check for on-disk paths.
+	if dbPath != "" {
+		if err := detectNetworkFilesystem(filepath.Dir(dbPath)); err != nil {
+			return nil, err
+		}
+	}
+
 	dsn := dbPath
 	if dsn == "" {
 		// cache=shared lets a second connection (pluginRawQuery's read-only
@@ -125,6 +149,20 @@ func (dm *DatabaseManager) initSchema() error {
 	if _, err := dm.db.Exec("PRAGMA journal_mode = WAL;"); err != nil {
 		return fmt.Errorf("failed to set journal mode: %w", err)
 	}
+
+	// Belt-and-suspenders (#79): assert the journal mode actually stuck. Some
+	// mounts silently downgrade away from WAL (returning "memory" or "delete"
+	// instead of erroring). On an in-memory DB the mode is "memory" which is
+	// expected — only assert for on-disk databases.
+	if dm.path != "" {
+		var mode string
+		if err := dm.db.QueryRow("PRAGMA journal_mode;").Scan(&mode); err != nil {
+			return fmt.Errorf("failed to read journal mode: %w", err)
+		}
+		if !strings.EqualFold(mode, "wal") {
+			return fmt.Errorf("%w: PRAGMA journal_mode returned %q instead of \"wal\" — the filesystem may not support shared memory", ErrWALRejected, mode)
+		}
+	}
 	// Per-connection pragmas. synchronous=NORMAL is safe under WAL (the WAL
 	// itself preserves durability across app crashes; only an OS crash can
 	// lose the last few transactions, an acceptable trade for local-first
@@ -174,19 +212,45 @@ func (dm *DatabaseManager) initSchema() error {
 		start_date TEXT,         -- YYYY-MM-DD or NULL
 		due_date TEXT,           -- YYYY-MM-DD or NULL
 		priority INTEGER,        -- 1, 2, 3
+		pinned INTEGER DEFAULT 0,           -- 0/1; file-resident user intent (cached for query speed)
+		progress INTEGER DEFAULT 0,         -- 0-100; file-resident user intent (cached for query speed)
+		comments_count INTEGER DEFAULT 0,   -- count of child NOTE blocks (derived cache)
+		links_count INTEGER DEFAULT 0,      -- count of ((uuid)) refs in raw_content (derived cache)
 		FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
 	);`
 	if _, err := dm.db.Exec(createTasksTable); err != nil {
 		return fmt.Errorf("failed to create tasks table: %w", err)
 	}
 
+	// Migration: add new columns to existing tasks tables (a vault that
+	// was created before the pinned/progress/comments_count/links_count
+	// columns shipped). SQLite's ALTER TABLE ADD COLUMN is idempotent-
+	// safe only via the try-ignore pattern below (it errors if the column
+	// already exists). Each column is nullable/defaulted so existing rows
+	// stay valid without a data backfill — a re-index populates them.
+	for _, col := range []struct{ name, defn string }{
+		{"pinned", "INTEGER DEFAULT 0"},
+		{"progress", "INTEGER DEFAULT 0"},
+		{"comments_count", "INTEGER DEFAULT 0"},
+		{"links_count", "INTEGER DEFAULT 0"},
+	} {
+		alter := fmt.Sprintf("ALTER TABLE tasks ADD COLUMN %s %s", col.name, col.defn)
+		if _, err := dm.db.Exec(alter); err != nil {
+			// "duplicate column name" → already migrated; ignore.
+			// Any other error is real.
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("failed to migrate tasks table (add %s): %w", col.name, err)
+			}
+		}
+	}
+
 	// Tags Table
 	createTagsTable := `
 	CREATE TABLE IF NOT EXISTS tags (
 		block_id TEXT NOT NULL,
-		raw_path TEXT NOT NULL,  -- 'work/sogav/milestone-one'
+		raw_path TEXT NOT NULL,  -- 'work/project/milestone-one'
 		level_0 TEXT NOT NULL,   -- 'work'
-		level_1 TEXT,            -- 'sogav'
+		level_1 TEXT,            -- 'project'
 		level_2 TEXT,            -- 'milestone-one'
 		PRIMARY KEY(block_id, raw_path),
 		FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
@@ -416,7 +480,7 @@ func (dm *DatabaseManager) KnownFiles() (map[string]FileStat, error) {
 
 // ExtractTags finds inline tags starting with # followed by a letter, ignoring numeric priorities.
 // Tag names may contain letters, digits, underscores, hyphens, and slashes
-// (so #work/sogav/milestone-one is captured in full).
+// (so #work/project/milestone-one is captured in full).
 func ExtractTags(text string) []string {
 	tagRegex := regexp.MustCompile(`\B#([a-zA-Z][a-zA-Z0-9_/-]*)`)
 	matches := tagRegex.FindAllStringSubmatch(text, -1)
@@ -497,7 +561,7 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, block
 	}
 	defer stmtBlock.Close()
 
-	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority) VALUES (?, ?, ?, ?, ?, ?)")
+	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, progress, comments_count, links_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
@@ -508,6 +572,17 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, block
 		return err
 	}
 	defer stmtTag.Close()
+
+	// Pre-compute comments_count per task: the number of child NOTE blocks
+	// (indented reply bullets in the Stitch "comments on a task" sense).
+	// A child is any block whose ParentID points at a TASK block AND whose
+	// Type is NOTE. We walk the blocks slice once and count.
+	childNotesByParent := make(map[string]int)
+	for _, b := range blocks {
+		if b.ParentID != "" && b.Type == parser.BlockNote {
+			childNotesByParent[b.ParentID]++
+		}
+	}
 
 	for blockIdx, block := range blocks {
 		// 1. Insert into blocks — each block carries its own file_date.
@@ -536,7 +611,12 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, block
 			if block.DueDate != "" {
 				dueDate = block.DueDate
 			}
-			_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority)
+			pinnedVal := 0
+			if block.Pinned {
+				pinnedVal = 1
+			}
+			linksCount := len(parser.BlockRefRegex.FindAllString(block.RawText, -1))
+			_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, block.Progress, childNotesByParent[block.ID], linksCount)
 			if err != nil {
 				return fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
 			}
@@ -609,7 +689,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	}
 	defer stmtBlock.Close()
 
-	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority) VALUES (?, ?, ?, ?, ?, ?)")
+	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, progress, comments_count, links_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return 0, nil, err
 	}
@@ -692,7 +772,21 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 				if block.DueDate != "" {
 					dueDate = block.DueDate
 				}
-				_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority)
+				pinnedVal := 0
+				if block.Pinned {
+					pinnedVal = 1
+				}
+				// Compute comments_count (child NOTE blocks) and links_count
+				// ((uuid) refs) for this task — same derived-cache approach
+				// as IndexFileBlocks (see childNotesByParent + BlockRefRegex).
+				commentsCount := 0
+				for _, b2 := range res.Blocks {
+					if b2.ParentID == block.ID && b2.Type == parser.BlockNote {
+						commentsCount++
+					}
+				}
+				linksCount := len(parser.BlockRefRegex.FindAllString(block.RawText, -1))
+				_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, block.Progress, commentsCount, linksCount)
 				if err != nil {
 					return 0, skipped, fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
 				}
@@ -748,121 +842,31 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	return indexedCount, skipped, nil
 }
 
-// FetchTimelineDays fetches day-grouped blocks for infinite virtualization.
-//
-// The implementation issues exactly two queries regardless of the number of
-// days requested: one to resolve the paginated date set, and one to load all
-// blocks for those dates in a single round-trip. The results are grouped by
-// file_date in Go and formatted for the timeline view.
-func (dm *DatabaseManager) FetchTimelineDays(notebook, section, page string, limit, offset int) ([]parser.DayGroup, error) {
-	// Query 1: resolve paginated distinct dates.
-	dateRows, err := dm.db.Query(
-		"SELECT DISTINCT file_date FROM blocks WHERE notebook = ? AND section = ? AND page = ? ORDER BY file_date DESC LIMIT ? OFFSET ?",
-		notebook, section, page, limit, offset,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query timeline dates: %w", err)
-	}
-	defer dateRows.Close()
-
-	var dates []string
-	for dateRows.Next() {
-		var d string
-		if err := dateRows.Scan(&d); err != nil {
-			return nil, err
-		}
-		dates = append(dates, d)
-	}
-	if err := dateRows.Close(); err != nil {
-		return nil, err
-	}
-
-	if len(dates) == 0 {
-		return []parser.DayGroup{}, nil
-	}
-
-	// Query 2: load all blocks for the resolved dates in a single round-trip.
-	placeholders := make([]string, len(dates))
-	args := make([]interface{}, 0, len(dates)+3)
-	args = append(args, notebook, section, page)
-	for i, d := range dates {
-		placeholders[i] = "?"
-		args = append(args, d)
-	}
-	query := fmt.Sprintf(`
-		SELECT b.id, b.parent_id, b.depth, b.type, b.raw_content, b.clean_content, b.line_number,
-		       b.file_date,
-		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0)
-		FROM blocks b
-		LEFT JOIN tasks t ON b.id = t.block_id
-		WHERE b.notebook = ? AND b.section = ? AND b.page = ? AND b.file_date IN (%s)
-		ORDER BY b.file_date DESC, b.line_number ASC
-	`, strings.Join(placeholders, ","))
-
-	rows, err := dm.db.Query(query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query timeline blocks: %w", err)
-	}
-	defer rows.Close()
-
-	// Group blocks by file_date preserving the date order from Query 1.
-	groupOrder := make([]string, 0, len(dates))
-	groupIndex := make(map[string]int, len(dates))
-	grouped := make(map[string][]parser.ParsedBlock, len(dates))
-
-	for rows.Next() {
-		var b parser.ParsedBlock
-		var bType, fileDate string
-		var parentID sql.NullString
-		var status, owner, start, due string
-		var priority int
-
-		if err := rows.Scan(&b.ID, &parentID, &b.Depth, &bType, &b.RawText, &b.CleanText, &b.LineNumber, &fileDate, &status, &owner, &start, &due, &priority); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		if parentID.Valid {
-			b.ParentID = parentID.String
-		}
-		b.Type = parser.BlockType(bType)
-		b.Status = status
-		b.Owner = owner
-		b.StartDate = start
-		b.DueDate = due
-		b.Priority = priority
-
-		if _, ok := groupIndex[fileDate]; !ok {
-			groupIndex[fileDate] = len(groupOrder)
-			groupOrder = append(groupOrder, fileDate)
-		}
-		grouped[fileDate] = append(grouped[fileDate], b)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-
-	// Build the result in the original date order (descending).
-	groups := make([]parser.DayGroup, 0, len(groupOrder))
-	for _, d := range groupOrder {
-		formatted := d
-		if parsedTime, err := time.Parse("2006-01-02", d); err == nil {
-			formatted = parsedTime.Format("Monday, January 2, 2006")
-		}
-		groups = append(groups, parser.DayGroup{
-			Date:          d,
-			FormattedDate: formatted,
-			Blocks:        grouped[d],
-		})
-	}
-
-	return groups, nil
+// BlockLocation holds the file-level coordinates of a block, used by write
+// paths (UpdateBlockState, MutateBlock, PluginUpdateTaskMeta) to resolve the
+// on-disk file path from a block UUID.
+type BlockLocation struct {
+	Notebook  string
+	Section   string
+	Page      string
+	BlockType string
 }
 
-// FetchPageBlocks returns a flat ordered list of all blocks for a page,
-// replacing the day-grouped FetchTimelineDays for the editor surface. With
-// the per-day file model removed, a page is a single file; all blocks share
-// the same (notebook, section, page) and are ordered by line_number. Each
-// block carries its own file_date.
+// GetBlockLocation looks up the (notebook, section, page, type) for a block
+// UUID. This is the typed API replacement for the raw SQLDB().QueryRow calls
+// that were scattered across app.go write paths.
+func (dm *DatabaseManager) GetBlockLocation(blockID string) (BlockLocation, error) {
+	var loc BlockLocation
+	err := dm.db.QueryRow(
+		"SELECT notebook, section, page, type FROM blocks WHERE id = ?",
+		blockID,
+	).Scan(&loc.Notebook, &loc.Section, &loc.Page, &loc.BlockType)
+	return loc, err
+}
+
+// FetchPageBlocks returns a flat ordered list of all blocks for a page.
+// A page is a single file; all blocks share the same (notebook, section,
+// page) and are ordered by line_number. Each block carries its own file_date.
 func (dm *DatabaseManager) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBlock, error) {
 	rows, err := dm.db.Query(`
 		SELECT b.id, b.parent_id, b.depth, b.type, b.raw_content, b.clean_content, b.line_number,
@@ -1044,7 +1048,7 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 // tagged at or beneath that path, so clicking #work surfaces every block
 // reachable via #work or any of its descendants — without double-counting a
 // block that happens to carry several nested tags (e.g. #work and
-// #work/sogav/milestone-one).
+// #work/project/milestone-one).
 func (dm *DatabaseManager) QueryTagHierarchy() ([]parser.TagNode, error) {
 	rows, err := dm.db.Query("SELECT raw_path, block_id FROM tags")
 	if err != nil {
@@ -1146,7 +1150,7 @@ func (dm *DatabaseManager) QueryTagHierarchy() ([]parser.TagNode, error) {
 }
 
 // QueryBlocksByTag returns blocks whose tag path equals tagPath or is nested
-// beneath it (prefix semantics, so #work matches #work/sogav/milestone-one).
+// beneath it (prefix semantics, so #work matches #work/project/milestone-one).
 func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult, error) {
 	tagPath = strings.TrimSpace(strings.TrimPrefix(tagPath, "#"))
 	if tagPath == "" {

@@ -133,7 +133,7 @@
     try {
       const s = ymd(windowStart)
       const e = ymd(windowEnd)
-      const rows = await ctx.sqliteQuery(
+      const { rows } = await ctx.sqliteQuery(
         `SELECT b.id, b.notebook, b.section, b.page, b.file_date,
                 b.clean_content, t.status, t.due_date
          FROM blocks b JOIN tasks t ON b.id = t.block_id

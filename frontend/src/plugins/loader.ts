@@ -1,7 +1,9 @@
 import { ReadPluginSource, ListPlugins } from '../../wailsjs/go/main/App.js'
 import { getFirstParty, firstPartyPlugins } from './registry'
 import { makePluginContext } from './context'
+import { setActiveLocation } from './location.svelte'
 import { loadedPlugins } from './store.svelte'
+import { settings } from '../settings/store.svelte'
 import type { LoadedPlugins, RegisteredPlugin, SiltPlugin } from './sdk'
 import DiskPluginNotice from './DiskPluginNotice.svelte'
 
@@ -22,7 +24,10 @@ export async function loadPlugins(
   activeSection: string,
   activePage: string
 ): Promise<LoadedPlugins> {
-  const ctx = makePluginContext(activeNotebook, activeSection, activePage)
+  // Keep the reactive location state in sync (#69). Plugins that read
+  // ctx.activeNotebook at query time see the live value.
+  setActiveLocation(activeNotebook, activeSection, activePage)
+  const ctx = makePluginContext()
   const plugins = new Map<string, RegisteredPlugin>()
   const errors: { id: string; message: string }[] = []
 
@@ -70,8 +75,12 @@ export async function loadPlugins(
     }
   }
 
-  // First-party plugins always available (bundled with the app).
+  // First-party plugins: always available but the user can disable them via
+  // Settings → Plugins (stored in config.yaml plugins.disabled). Uninstall is
+  // not available for bundled plugins.
+  const disabledIds = new Set(settings.config?.plugins?.disabled ?? [])
   for (const fp of firstPartyPlugins()) {
+    if (disabledIds.has(fp.manifest.id)) continue
     if (!plugins.has(fp.manifest.id)) {
       fp.init?.(ctx)
       plugins.set(fp.manifest.id, fp)

@@ -2,6 +2,7 @@ package core
 
 import (
 	"database/sql"
+	"sort"
 	"sync"
 	"sync/atomic"
 )
@@ -24,7 +25,11 @@ type ExecutionCoordinator struct {
 	// events) so the working set stays proportional to the active vault
 	// rather than to the cumulative history of distinct paths (#30).
 	ioMu sync.Map
-	db   *sql.DB
+	// blockMu maps block UUID -> *sync.Mutex for per-block write-intent
+	// locking (#64). Prevents a full-page SaveFileBlocks from clobbering a
+	// concurrent single-block MutateBlock when both target the same block.
+	blockMu sync.Map
+	db      *sql.DB
 }
 
 func NewExecutionCoordinator(db *sql.DB) *ExecutionCoordinator {
@@ -79,6 +84,47 @@ func (ec *ExecutionCoordinator) ReleaseFileMutex(path string) {
 	entry := iface.(*fileMutexEntry)
 	atomic.AddInt64(&entry.gen, 1)
 	ec.ioMu.Delete(path)
+}
+
+// getBlockMutex returns the per-block mutex for blockID (creating on first use).
+func (ec *ExecutionCoordinator) getBlockMutex(blockID string) *sync.Mutex {
+	mu, _ := ec.blockMu.LoadOrStore(blockID, &sync.Mutex{})
+	return mu.(*sync.Mutex)
+}
+
+// LockBlockWrite runs task while holding the per-block write-intent lock for
+// blockID (#64). This serializes MutateBlock (single-block) against
+// SaveFileBlocks (full-page) so the last writer never silently clobbers the
+// other when both target the same block. The block lock is acquired OUTSIDE
+// the per-file lock so they compose without deadlock.
+func (ec *ExecutionCoordinator) LockBlockWrite(blockID string, task func()) {
+	mu := ec.getBlockMutex(blockID)
+	mu.Lock()
+	defer mu.Unlock()
+	task()
+}
+
+// LockBlocksWrite acquires per-block locks for ALL given blockIDs (sorted +
+// deduped to prevent deadlock) before running task. Used by SaveFileBlocks so
+// a concurrent MutateBlock for any block in the page waits until the full-page
+// save completes.
+func (ec *ExecutionCoordinator) LockBlocksWrite(blockIDs []string, task func()) {
+	sorted := make([]string, 0, len(blockIDs))
+	seen := make(map[string]bool, len(blockIDs))
+	for _, id := range blockIDs {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		sorted = append(sorted, id)
+	}
+	sort.Strings(sorted)
+	for _, id := range sorted {
+		mu := ec.getBlockMutex(id)
+		mu.Lock()
+		defer mu.Unlock()
+	}
+	task()
 }
 
 func (ec *ExecutionCoordinator) WithDBRead(fn func()) {
