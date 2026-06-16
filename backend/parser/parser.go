@@ -159,14 +159,15 @@ func parseLeadingIndent(line string, spacesPerTab int) int {
 
 // scanTaskTokens extracts all Dataview [key:: value] inline metadata
 // tokens from a task line's remainder (the text after the checkbox).
-// Returns the parsed fields and the description with tokens stripped.
+// Returns the parsed fields, the description with known tokens stripped,
+// and any unrecognised tokens preserved verbatim for forward-compatible
+// round-tripping (Obsidian/Dataview interop — SPECS.md §4.1).
 //
 // The function is the single source of truth for token → field mapping.
 // Adding a new metadata type is a one-line addition to the switch below.
-// Unknown keys are silently ignored (forward-compatible: a future token
-// the parser doesn't know about is preserved in the description so the
-// file round-trips without data loss).
-func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned bool, progress int, description string) {
+// Unknown keys are preserved in extraTokens so the file round-trips
+// without data loss.
+func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned bool, progress int, description string, extraTokens []string) {
 	priority = 3 // default; 0 from the regex means "not set"
 	progress = 0
 	matches := TaskTokenRegex.FindAllStringSubmatch(remainder, -1)
@@ -206,6 +207,10 @@ func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priorit
 					progress = 100
 				}
 			}
+		default:
+			// Unrecognised key — preserve the full [key:: value] token
+			// verbatim so it survives the parse → render round-trip.
+			extraTokens = append(extraTokens, m[0])
 		}
 	}
 	return
@@ -244,7 +249,7 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 		}
 
 		// Scan for [key:: value] metadata tokens in the remainder.
-		owner, startDate, dueDate, priority, pinned, progress, description := scanTaskTokens(remainder)
+		owner, startDate, dueDate, priority, pinned, progress, description, extraTokens := scanTaskTokens(remainder)
 
 		depth := parseLeadingIndent(indent, spacesPerTab)
 
@@ -259,9 +264,10 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 			StartDate:  startDate,
 			DueDate:    dueDate,
 			Priority:   priority,
-			Pinned:     pinned,
-			Progress:   progress,
-			LineNumber: lineNumber,
+			Pinned:      pinned,
+			Progress:    progress,
+			ExtraTokens: extraTokens,
+			LineNumber:  lineNumber,
 			FileDate:   blockFileDate,
 		}, newLine, modified
 	}
@@ -612,6 +618,9 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		if block.Progress > 0 {
 			tokens = append(tokens, fmt.Sprintf("[progress:: %d]", block.Progress))
 		}
+		// Append unknown Dataview tokens verbatim so they survive the
+		// round-trip (Obsidian/Dataview interop — SPECS.md §4.1).
+		tokens = append(tokens, block.ExtraTokens...)
 
 		tokenStr := ""
 		if len(tokens) > 0 {

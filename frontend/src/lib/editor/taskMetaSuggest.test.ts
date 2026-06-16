@@ -134,6 +134,23 @@ describe('TaskMetaSuggest — context detection', () => {
     expect(getSuggestContext(editor.state)).toBeNull()
     editor.destroy()
   })
+
+  it('zero-match query: context active but no popup items (Enter falls through)', () => {
+    const editor = makeEditor()
+    editor.commands.setContent(blockDoc('taskBlock', 'task %xyz'))
+    // "task %xyz" -> 10 chars, caret at pos 11.
+    editor.commands.setTextSelection(11)
+    const ctx = getSuggestContext(editor.state)
+    // The suggest context IS active (cursor is after %xyz in a task line).
+    expect(ctx).not.toBeNull()
+    expect(ctx!.query).toBe('xyz')
+    // But the catalog has no matching keys → the popup is empty. The
+    // keymap gates Enter/Arrow handlers on popup items existing, so
+    // Enter falls through to the editor's default (split block) instead
+    // of being swallowed.
+    expect(filterMetaKeys(ctx!.query)).toHaveLength(0)
+    editor.destroy()
+  })
 })
 
 describe('TaskMetaSuggest — insertion', () => {

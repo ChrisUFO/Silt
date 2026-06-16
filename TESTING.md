@@ -465,7 +465,7 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 | `frontend/src/components/PluginView.test.ts` (3 tests) | Happy-path render, load-error path, not-registered empty state | Plugin host view |
 | `frontend/src/components/Sidebar.test.ts` (2 tests) | Collapse render, Change Vault handler | Sidebar interactions |
 
-`npm test` now runs **127 vitest tests** across 20 files (was 46 across 6). `npm run check` reports **0 errors**.
+`npm test` now runs **128 vitest tests** across 20 files (was 46 across 6). `npm run check` reports **0 errors**.
 
 ### Dead-code cleanup
 

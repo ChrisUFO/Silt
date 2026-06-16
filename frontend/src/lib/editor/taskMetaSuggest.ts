@@ -249,20 +249,31 @@ export const TaskMetaSuggest = Extension.create<TaskMetaSuggestOptions>({
     const opts = this.options
 
     const active = () => getSuggestContext(editor.state) !== null
+    // The popup is "actionable" only when the suggest context is active AND
+    // the filtered catalog has at least one item. When the query matches no
+    // key (e.g. `%xyz`), the host hides the popup — Enter/Arrow keys must
+    // fall through to the editor's default behavior instead of being
+    // swallowed. Escape can keep gating on active() alone because
+    // suppressing an empty popup is a harmless no-op.
+    const popupActionable = () => {
+      const ctx = getSuggestContext(editor.state)
+      if (!ctx) return false
+      return filterMetaKeys(ctx.query).length > 0
+    }
 
     return {
       ArrowUp: () => {
-        if (!active()) return false
+        if (!popupActionable()) return false
         opts.onNavigate(-1)
         return true
       },
       ArrowDown: () => {
-        if (!active()) return false
+        if (!popupActionable()) return false
         opts.onNavigate(1)
         return true
       },
       Enter: () => {
-        if (!active()) return false
+        if (!popupActionable()) return false
         opts.onSelectActive()
         return true
       },

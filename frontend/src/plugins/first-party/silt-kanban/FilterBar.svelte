@@ -86,6 +86,18 @@
   function dueLabel(): string {
     return DUE_OPTIONS.find((o) => o.value === filters.dueDate)?.label ?? 'All'
   }
+
+  // Escape closes the open chip popover. Bound to window while a chip is
+  // open so it works regardless of where focus lives inside the popover
+  // (the click-away backdrop is tabindex="-1" and rarely receives keydown).
+  $effect(() => {
+    if (!openChip) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 </script>
 
 <div
@@ -298,7 +310,6 @@
       class="fixed inset-0 z-40"
       role="presentation"
       onclick={close}
-      onkeydown={(e) => e.key === 'Escape' && close}
       tabindex="-1"
       aria-hidden="true"
     ></div>
