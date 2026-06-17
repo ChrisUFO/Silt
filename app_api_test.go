@@ -1820,3 +1820,35 @@ func TestLinkNotebook_RejectsCollisions(t *testing.T) {
 		t.Error("expected error linking a folder whose name collides with a vault notebook, got nil")
 	}
 }
+
+// TestListNavigation_LinkedDisconnectedWhenRootMissing verifies the offline
+// failure mode (#100): a linked notebook whose root can't be read (mount drop)
+// stays in the tree marked Disconnected so its last-synced rows remain visible
+// and the UI can badge it. LinkNotebook validates existence at link time, so
+// the missing-root case is simulated by registering the link directly.
+func TestListNavigation_LinkedDisconnectedWhenRootMissing(t *testing.T) {
+	app := newTestApp(t)
+	app.configMu.Lock()
+	app.cfg.LinkedNotebooks = []config.LinkedNotebook{{
+		ID: "ghost", RootPath: filepath.Join(t.TempDir(), "does-not-exist"), DisplayName: "Ghost",
+	}}
+	app.configMu.Unlock()
+
+	tree, err := app.ListNavigation()
+	if err != nil {
+		t.Fatalf("ListNavigation: %v", err)
+	}
+	var found *parser.NavigationNotebook
+	for i := range tree.Notebooks {
+		if tree.Notebooks[i].Source == "linked:ghost" {
+			found = &tree.Notebooks[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("expected the linked notebook in the tree even when its root is offline")
+	}
+	if !found.Disconnected {
+		t.Error("expected Disconnected=true when the linked root is missing/offline")
+	}
+}

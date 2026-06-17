@@ -296,6 +296,7 @@ Caveat: WAL relies on shared memory and therefore does **not** work on network f
 CREATE TABLE blocks (
     id TEXT PRIMARY KEY,
     parent_id TEXT,
+    source TEXT NOT NULL DEFAULT 'vault',  -- 'vault' | 'linked:<id>' (#100)
     notebook TEXT NOT NULL,
     section TEXT NOT NULL,
     page TEXT NOT NULL,       -- Page (streaming unit) inside the Section
@@ -346,9 +347,75 @@ CREATE TABLE files (
 );
 
 -- Create covered indexes for dynamic query performance
-CREATE INDEX idx_blocks_file ON blocks(notebook, section, page, file_date);
+-- idx_blocks_src_file is source-aware (#100): source leads so same-named
+-- notebooks across roots don't collide; replaces the pre-source idx_blocks_file.
+CREATE INDEX idx_blocks_src_file ON blocks(source, notebook, section, page, file_date);
 CREATE INDEX idx_tasks_dates ON tasks(start_date, due_date) WHERE start_date IS NOT NULL OR due_date IS NOT NULL;
 CREATE INDEX idx_tags_lookup ON tags(level_0, level_1, level_2);
+
+
+3.1 External / Linked Notebooks (#100)
+
+A vault is the default home for notebooks, but it is not the only one. A user
+can LINK an external folder (e.g. a synced SharePoint/OneDrive/Dropbox mount)
+as a notebook and edit it IN PLACE — it is never copied into the vault, so its
+existing source of truth and sync/conflict semantics are preserved. The
+local-first contract is unchanged: markdown is the product; the SQLite index is
+reproducible working memory.
+
+Identity model. `blocks.source` discriminates the root a block belongs to:
+`'vault'` for an in-vault notebook, or `'linked:<id>'` for a linked notebook.
+This disambiguates same-named notebooks across roots (a vault "Work" and a
+linked "Work" never collide on `(notebook, section, page)`). Notebook DISPLAY
+NAMES are globally unique — `LinkNotebook` rejects a name that collides with a
+vault notebook or an existing link — so the frontend resolves a notebook's
+source from its name alone via a name→source map kept in sync on each nav load.
+The index stays LOCAL (`<vault>/.system/index.sqlite*`); only the markdown
+content (and any co-located `<root>/.system/`) lives on the remote mount.
+
+Link registry. The vault-scoped `config.yaml` carries a `linked_notebooks:`
+list (`{id, root_path, display_name}`), persisted atomically by the existing
+`config.Save` (self-write suppressed). The registry is vault state (same bucket
+as the active plugin list), NOT user-global.
+
+Path resolution. `App.resolveNotebookDir(notebook, source)` returns a
+notebook's content directory: `<vault>/<notebook>` for `'vault'`, or the linked
+root itself for `'linked:<id>'` (sections/pages live directly under it). The
+blockID write paths (UpdateBlockState / MutateBlock / PluginUpdateTaskMeta)
+resolve the root from `GetBlockLocation().Source`; FetchPageBlocks /
+SaveFileBlocks take `source` so the editor routes linked pages correctly. The
+traversal guard generalizes to `isPathWithinRoot(target, root)`.
+
+Multi-root watcher. `DirectoryWatcher` observes the vault root PLUS any number
+of linked roots on one process-wide fsnotify watcher, sharing the coordinator,
+WriteTracker, and focus-lease maps (all path-keyed, root-agnostic). `AddWatchRoot`
+/ `RemoveWatchRoot` register/deregister; `resolveFileMetadata` does a longest-
+prefix root lookup and attributes each event: for the vault root the notebook
+is the first path component (a vault holds many notebooks); for a linked root
+the notebook is the registered display name (the root IS one notebook).
+
+Lifecycle bindings. `LinkNotebook(folderPath)` validates, assigns a stable id,
+rejects collisions and folders already inside the vault, persists the registry,
+watches + indexes the tree. `UnlinkNotebook(id)` stops watching, drops the
+source's index rows (`ClearSourceBlocks`), and leaves the external files
+COMPLETELY UNTOUCHED (safe default). `PickLinkedNotebook()` drives the native
+folder picker. Deleting a linked notebook from the sidebar UNLINKS it (vs.
+trashing a vault notebook).
+
+Failure modes. An offline mount degrades gracefully: `ListNavigation` marks the
+notebook `Disconnected` (the badge flips to cloud_off) but its last-synced index
+rows remain queryable; writes to a disconnected root return a clear error (no
+crash). Reconnect re-indexes on the next fsnotify event (the watch survives a
+temporary mount drop). Linking a folder that is offline at link time registers
+the link and indexes best-effort (logged); the user can re-link once it's back.
+
+Sync-conflict caveat. Silt's atomic write is temp-file + `os.Rename`. On a
+network filesystem (SMB/WebDAV) `os.Rename` may not be atomic the way it is on a
+local FS, but the `WriteTracker` self-write suppression and the editor focus
+lock still hold, so external (non-Silt) edits to the same file are reconciled
+by the existing diff/lease machinery once both sides land. A vault index must
+stay on a local disk regardless (WAL does not work on NFS/SMB — §3), so only
+the markdown crosses the mount.
 
 
 4. Wails Bridge & IPC API Contract
