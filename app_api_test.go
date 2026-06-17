@@ -1930,3 +1930,92 @@ func TestRenameNotebook_RefusesLinked(t *testing.T) {
 		t.Error("expected RenameNotebook to refuse a linked notebook, got nil")
 	}
 }
+
+// TestVaultNotebookOps_RejectLinkedNameCollision locks the global name-uniqueness
+// invariant from the VAULT side (#100): CreateNotebook / OpenNotebook /
+// RenameNotebook refuse a name that collides with a registered linked notebook,
+// so resolveSourceByName can never misroute a vault op to an external root
+// (which would silently write to / delete files on the external mount).
+func TestVaultNotebookOps_RejectLinkedNameCollision(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+
+	// CreateNotebook with the linked display name → rejected.
+	if err := app.CreateNotebook(ln.DisplayName); err == nil {
+		t.Error("CreateNotebook: expected a linked-name collision error, got nil")
+	}
+	// RenameNotebook of a vault notebook TO the linked display name → rejected.
+	if err := os.MkdirAll(filepath.Join(app.vaultPath, "VaultNB"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RenameNotebook("VaultNB", ln.DisplayName); err == nil {
+		t.Error("RenameNotebook: expected a linked-name collision error, got nil")
+	}
+	// OpenNotebook of a vault folder whose name collides with the link → rejected.
+	col := filepath.Join(app.vaultPath, ln.DisplayName)
+	if err := os.MkdirAll(col, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.OpenNotebook(col); err == nil {
+		t.Error("OpenNotebook: expected a linked-name collision error, got nil")
+	}
+}
+
+// TestResolveSourceByName locks resolveSourceByName: a pure-vault name returns
+// 'vault', a registered link's name returns 'linked:<id>', and an unrelated
+// name returns 'vault'. resolveSourceByName is the linchpin of the whole
+// notebook routing layer.
+func TestResolveSourceByName(t *testing.T) {
+	app := newTestApp(t)
+
+	if got := app.resolveSourceByName("Work"); got != config.LinkedNotebooksVaultSource {
+		t.Errorf("pure-vault name: got %q, want %q", got, config.LinkedNotebooksVaultSource)
+	}
+
+	app.configMu.Lock()
+	app.cfg.LinkedNotebooks = []config.LinkedNotebook{{ID: "abc", RootPath: "/tmp/x", DisplayName: "Ext"}}
+	app.configMu.Unlock()
+
+	if got := app.resolveSourceByName("Ext"); got != "linked:abc" {
+		t.Errorf("linked name: got %q, want linked:abc", got)
+	}
+	if got := app.resolveSourceByName("Other"); got != config.LinkedNotebooksVaultSource {
+		t.Errorf("unrelated name: got %q, want vault", got)
+	}
+}
+
+// TestSaveFileBlocks_LinkedRootUnusable_ReturnsClearError locks the documented
+// offline/unusable-root contract (#100): a write to a linked notebook whose
+// root can't be used must return a clear error (no panic, no crash). We proxy
+// an offline mount with a root path that IS a file (so page ops go
+// "through-the-file" and fail at the OS level rather than being recreatable).
+func TestSaveFileBlocks_LinkedRootUnusable_ReturnsClearError(t *testing.T) {
+	app := newTestApp(t)
+	notADir := filepath.Join(t.TempDir(), "notadir")
+	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app.configMu.Lock()
+	app.cfg.LinkedNotebooks = []config.LinkedNotebook{{ID: "dead", RootPath: notADir, DisplayName: "Dead"}}
+	app.configMu.Unlock()
+
+	blocks := []parser.ParsedBlock{{
+		ID:         "11111111-1111-1111-1111-111111111111",
+		Type:       parser.BlockTask,
+		RawText:    "- [ ] task <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+		CleanText:  "task",
+		Status:     "TODO",
+		LineNumber: 1,
+	}}
+	err := app.SaveFileBlocks("Dead", "", "Plan", blocks)
+	if err == nil {
+		t.Fatal("expected a clear error saving to an unusable linked root, got nil")
+	}
+	if err.Error() == "" {
+		t.Error("expected a non-empty error message for an unusable linked root")
+	}
+}

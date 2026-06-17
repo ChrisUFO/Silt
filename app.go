@@ -1813,6 +1813,9 @@ func (a *App) CreateNotebook(name string) error {
 	if _, err := os.Stat(nbPath); err == nil {
 		return fmt.Errorf("notebook %q already exists", safeName)
 	}
+	if a.nameCollidesWithLink(safeName, "") {
+		return fmt.Errorf("a linked notebook named %q already exists; unlink or rename it first", safeName)
+	}
 	if err := os.MkdirAll(nbPath, 0755); err != nil {
 		return fmt.Errorf("failed to create notebook: %w", err)
 	}
@@ -1848,7 +1851,11 @@ func (a *App) OpenNotebook(folderPath string) (string, error) {
 	if len(parts) != 1 {
 		return "", fmt.Errorf("a notebook must be a top-level folder in the vault (got %q)", relClean)
 	}
-	return parts[0], nil
+	name := parts[0]
+	if a.nameCollidesWithLink(name, "") {
+		return "", fmt.Errorf("a linked notebook named %q already exists; unlink or rename it first", name)
+	}
+	return name, nil
 }
 
 // PickNotebookFolder opens the native folder picker and registers the chosen
@@ -1930,6 +1937,14 @@ func (a *App) LinkNotebook(folderPath string) (config.LinkedNotebook, error) {
 	// array with a.cfg, so a concurrent Link/Unlink mutating the slice during
 	// the YAML marshal would be a data race. Mirrors UpdatePluginSetting (#120).
 	a.configMu.Lock()
+	// Re-validate the uniqueness invariant under the WRITE lock: rejectLink
+	// Collision ran with only an RLock and then released, so two concurrent
+	// LinkNotebook calls for same-basename folders could both pass it and
+	// double-register. nameCollidesWithLink is the authority under the lock.
+	if existing, dup := a.linkByRecordLocked(ln); dup {
+		a.configMu.Unlock()
+		return config.LinkedNotebook{}, fmt.Errorf("a linked notebook with %q already exists", existing.DisplayName)
+	}
 	a.cfg.LinkedNotebooks = append(a.cfg.LinkedNotebooks, ln)
 	if a.configWatcher != nil {
 		a.configWatcher.RegisterSelfWrite()
@@ -2046,6 +2061,39 @@ func (a *App) rejectLinkCollision(ln config.LinkedNotebook) error {
 		}
 	}
 	return nil
+}
+
+// nameCollidesWithLink reports whether a display name is taken by a registered
+// linked notebook other than excludeID (used when renaming a link in place).
+// This enforces the GLOBAL name-uniqueness invariant from the VAULT side
+// (CreateNotebook / OpenNotebook / RenameNotebook) that resolveSourceByName
+// depends on: names must be unique across vault + linked so the name alone maps
+// to one source. Without it, a vault notebook sharing a linked name makes
+// resolveSourceByName route every notebook-scoped op (incl. DeletePage →
+// os.Remove in place) to the external root — silent misrouting + data loss.
+func (a *App) nameCollidesWithLink(name, excludeID string) bool {
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	for _, ln := range a.cfg.LinkedNotebooks {
+		if ln.ID != excludeID && ln.DisplayName == name {
+			return true
+		}
+	}
+	return false
+}
+
+// linkByRecordLocked reports whether a LinkedNotebook with the same ID,
+// RootPath, or DisplayName is already registered. The caller MUST hold
+// configMu (read or write). Used to re-validate under the LinkNotebook write
+// lock (rejectLinkCollision ran RLock-then-release, so a concurrent link could
+// race it).
+func (a *App) linkByRecordLocked(ln config.LinkedNotebook) (config.LinkedNotebook, bool) {
+	for _, existing := range a.cfg.LinkedNotebooks {
+		if existing.ID == ln.ID || existing.RootPath == ln.RootPath || existing.DisplayName == ln.DisplayName {
+			return existing, true
+		}
+	}
+	return config.LinkedNotebook{}, false
 }
 
 // indexLinkedTree walks a linked root's markdown and indexes it under the
@@ -2639,6 +2687,9 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 	}
 	if _, err := os.Stat(newDir); err == nil {
 		return fmt.Errorf("a notebook named %q already exists", safeNewNotebook)
+	}
+	if a.nameCollidesWithLink(safeNewNotebook, "") {
+		return fmt.Errorf("a linked notebook named %q already exists; unlink or rename it first", safeNewNotebook)
 	}
 
 	a.wg.Add(1)
