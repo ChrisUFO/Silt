@@ -317,3 +317,236 @@ func TestReleaseFileMutex_ConcurrentCallersSerialize(t *testing.T) {
 		t.Errorf("expected all %d critical sections to run, got %d (some were lost)", n, got)
 	}
 }
+
+// --- Phase 2: per-block mutex eviction (#122) ---
+
+// TestReleaseBlockMutex_EntryDeleted verifies that after ReleaseBlockMutex the
+// blockMu map no longer holds an entry for the block (the eviction ran).
+func TestReleaseBlockMutex_EntryDeleted(t *testing.T) {
+	ec := newTestCoordinator(t)
+	id := "block-aaa"
+
+	done := make(chan struct{})
+	ec.LockBlockWrite(id, func() { close(done) })
+	<-done
+
+	if _, ok := ec.blockMu.Load(id); !ok {
+		t.Fatal("expected blockMu entry to exist after a LockBlockWrite")
+	}
+
+	ec.ReleaseBlockMutex(id)
+
+	if _, ok := ec.blockMu.Load(id); ok {
+		t.Fatal("expected blockMu entry to be deleted after ReleaseBlockMutex")
+	}
+}
+
+// TestReleaseBlockMutex_IdempotentOnUnknown proves releasing a never-locked
+// block is a safe no-op (no panic).
+func TestReleaseBlockMutex_IdempotentOnUnknown(t *testing.T) {
+	ec := newTestCoordinator(t)
+	ec.ReleaseBlockMutex("never-locked") // must not panic
+	ec.ReleaseBlockMutexes([]string{"a", "b", ""}) // must not panic
+}
+
+// TestReleaseBlockMutex_NextAcquireGetsFreshEntry proves a post-release caller
+// lands on a brand-new entry (a fresh mutex generation), not the stale one.
+func TestReleaseBlockMutex_NextAcquireGetsFreshEntry(t *testing.T) {
+	ec := newTestCoordinator(t)
+	id := "block-bbb"
+
+	ec.LockBlockWrite(id, func() {})
+	first, _ := ec.blockMu.Load(id)
+	ec.ReleaseBlockMutex(id)
+
+	ec.LockBlockWrite(id, func() {})
+	second, _ := ec.blockMu.Load(id)
+
+	if first.(*blockMutexEntry).mu == second.(*blockMutexEntry).mu {
+		t.Error("post-release LockBlockWrite reused the evicted mutex instead of creating a fresh one")
+	}
+}
+
+// TestReleaseBlockMutex_NoDeadlockWithInFlightHolder runs a LockBlockWrite that
+// holds the lock while another goroutine calls ReleaseBlockMutex, then a third
+// goroutine calls LockBlockWrite. The third must complete (no deadlock) and
+// serialize correctly against the released-then-recreated entry. Repeated
+// under -race to catch any data race in the generation handoff.
+func TestReleaseBlockMutex_NoDeadlockWithInFlightHolder(t *testing.T) {
+	ec := newTestCoordinator(t)
+	id := "block-ccc"
+
+	holderReleased := make(chan struct{})
+	holderDone := make(chan struct{})
+	// 1. Acquire and hold.
+	go func() {
+		ec.LockBlockWrite(id, func() {
+			// 2. While held, an eviction-style release fires (block deleted).
+			ec.ReleaseBlockMutex(id)
+			close(holderReleased)
+			// Hold a bit longer so the third caller has to wait on the
+			// released (orphaned) entry first, then retry.
+			time.Sleep(40 * time.Millisecond)
+		})
+		close(holderDone)
+	}()
+
+	<-holderReleased
+
+	// 3. A new caller arrives while the holder is still in its critical
+	//    section. It should block on the orphaned lock, detect the stale
+	//    generation after the holder unlocks, retry against the fresh entry,
+	//    and complete.
+	ran := make(chan struct{})
+	go func() {
+		ec.LockBlockWrite(id, func() { close(ran) })
+	}()
+
+	select {
+	case <-ran:
+		// success
+	case <-time.After(2 * time.Second):
+		t.Fatal("LockBlockWrite deadlocked after a concurrent ReleaseBlockMutex")
+	}
+	<-holderDone
+}
+
+// TestReleaseBlockMutex_ConcurrentCallersSerialize runs many concurrent
+// LockBlockWrite callers against a block that is repeatedly released
+// mid-flight, confirming none are lost (every task runs) and the race detector
+// stays clean.
+func TestReleaseBlockMutex_ConcurrentCallersSerialize(t *testing.T) {
+	ec := newTestCoordinator(t)
+	id := "block-ddd"
+
+	var ran int64
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	// An "evictor" goroutine repeatedly releases the block mutex.
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				ec.ReleaseBlockMutex(id)
+				time.Sleep(time.Millisecond)
+			}
+		}
+	}()
+
+	const n = 100
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ec.LockBlockWrite(id, func() {
+				atomic.AddInt64(&ran, 1)
+			})
+		}()
+	}
+	wg.Wait()
+	close(stop)
+
+	if got := atomic.LoadInt64(&ran); got != n {
+		t.Errorf("expected all %d critical sections to run, got %d (some were lost)", n, got)
+	}
+}
+
+// TestReleaseBlockMutexes_BatchEvictsAll confirms the batch helper evicts every
+// supplied ID and tolerates interspersed unknown IDs.
+func TestReleaseBlockMutexes_BatchEvictsAll(t *testing.T) {
+	ec := newTestCoordinator(t)
+	ids := []string{"b1", "b2", "b3"}
+	for _, id := range ids {
+		ec.LockBlockWrite(id, func() {})
+	}
+	// Intersperse an unknown id; it must not cause a panic and the known
+	// entries must still be evicted.
+	ec.ReleaseBlockMutexes([]string{"b1", "b2", "ghost", "b3", ""})
+
+	for _, id := range ids {
+		if _, ok := ec.blockMu.Load(id); ok {
+			t.Errorf("expected blockMu entry for %q to be evicted", id)
+		}
+	}
+}
+
+// TestLockBlocksWrite_NoDeadlockWithMidAcquireRelease acquires several blocks
+// via LockBlocksWrite while a concurrent goroutine repeatedly releases one of
+// them mid-acquisition. LockBlocksWrite must detect the stale generation,
+// release its partial set, retry, and eventually complete (no deadlock, no lost
+// task). Run under -race.
+func TestLockBlocksWrite_NoDeadlockWithMidAcquireRelease(t *testing.T) {
+	ec := newTestCoordinator(t)
+	ids := []string{"m1", "m2", "m3"}
+
+	// Prime entries so the evictor has something to release.
+	ec.LockBlocksWrite(ids, func() {})
+
+	stop := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				ec.ReleaseBlockMutex("m2")
+				time.Sleep(time.Millisecond)
+			}
+		}
+	}()
+
+	ran := make(chan struct{})
+	go func() {
+		ec.LockBlocksWrite(ids, func() {
+			close(ran)
+		})
+	}()
+
+	select {
+	case <-ran:
+		// success
+	case <-time.After(3 * time.Second):
+		t.Fatal("LockBlocksWrite deadlocked when a target block was released mid-acquisition")
+	}
+	close(stop)
+}
+
+// TestReleaseBlockMutex_ReleasedEntryNotLive locks in the invariant the
+// map-lookup staleness check relies on: once ReleaseBlockMutex evicts a block's
+// entry, the previous *blockMutexEntry pointer is no longer the value held in
+// blockMu. The old generation-based check read the gen BEFORE acquiring the
+// mutex, so a concurrently-released entry could hand a caller the already-bumped
+// gen and let it proceed on an orphaned entry (a TOCTOU mutual-exclusion bug);
+// the map-lookup check instead verifies identity after locking, so it MUST be
+// able to distinguish a released entry from the live one.
+func TestReleaseBlockMutex_ReleasedEntryNotLive(t *testing.T) {
+	ec := newTestCoordinator(t)
+	id := "block-stale"
+
+	ec.LockBlockWrite(id, func() {})
+	stale := ec.getBlockEntry(id)
+
+	// Evict the live entry (concurrent ReleaseBlockMutex), then prime a fresh
+	// one so the map value differs from `stale`.
+	ec.ReleaseBlockMutex(id)
+	ec.LockBlockWrite(id, func() {})
+
+	current, ok := ec.blockMu.Load(id)
+	if !ok {
+		t.Fatal("expected a live blockMu entry after re-locking")
+	}
+	if current == stale {
+		t.Fatal("released entry is still the live map value; map-lookup check could not detect staleness")
+	}
+	// A caller that locked the stale mutex must detect non-liveness via the
+	// post-lock map lookup and retry, never proceed on the orphaned entry.
+	stale.mu.Lock()
+	live, liveOK := ec.blockMu.Load(id)
+	stale.mu.Unlock()
+	if liveOK && live == stale {
+		t.Fatal("map-lookup staleness check failed to reject a released entry")
+	}
+}

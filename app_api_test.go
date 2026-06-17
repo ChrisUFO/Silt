@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"silt/backend/config"
@@ -81,7 +82,7 @@ func TestUpdateBlockState_TransitionsTaskStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
-	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -132,7 +133,7 @@ func TestUpdateBlockState_RejectsTraversalMetadata(t *testing.T) {
 			LineNumber: 1,
 		},
 	}
-	if err := app.db.IndexFileBlocks("../../..", "etc", "passwd", blocks, nil); err != nil {
+	if err := app.db.IndexFileBlocks("vault", "../../..", "etc", "passwd", blocks, nil); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -159,7 +160,7 @@ func TestUpdateBlockState_RejectsNonTaskBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
-	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -215,7 +216,7 @@ func TestQueryTasks_FiltersByOwnerAndPriority(t *testing.T) {
 			LineNumber: 3,
 		},
 	}
-	if err := app.db.IndexFileBlocks("Work", "Journal", "Daily", blocks, nil); err != nil {
+	if err := app.db.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -351,7 +352,7 @@ func TestSearchBlocks_FuzzySearch(t *testing.T) {
 			LineNumber: 2,
 		},
 	}
-	if err := app.db.IndexFileBlocks("Work", "Journal", "Daily", blocks, nil); err != nil {
+	if err := app.db.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -555,7 +556,7 @@ func writeSamplePage(t *testing.T, app *App, notebook, section, page, fileDate, 
 	if err != nil {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
-	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 }
@@ -722,7 +723,7 @@ func TestPluginRawQuery_TruncationCapHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
-	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -946,7 +947,7 @@ func TestQueryBlocksByTag_PrefixSemantics(t *testing.T) {
 		sampleTaskBlockWithText("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 2, "mid #work/project"),
 		sampleTaskBlockWithText("cccccccc-cccc-cccc-cccc-cccccccccccc", 3, "root #work"),
 	}
-	if err := app.db.IndexFileBlocks("Work", "Journal", "Daily", blocks, nil); err != nil {
+	if err := app.db.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -1418,7 +1419,7 @@ func seedTaskFile(t *testing.T, app *App) (filePath, taskID, noteID string) {
 	if err != nil {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
-	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 	return filePath, taskID, noteID
@@ -1438,14 +1439,29 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 			t.Errorf("expected [pin:: true] in file after pin, got:\n%s", string(got))
 		}
 
-		// Unpin clears the token (renderer omits [pin:: false]).
+		// Unpin writes an explicit [pin:: false] (tri-state #123): the token
+		// is preserved so a user-typed [pin:: false] survives round-trips and
+		// toggling cannot silently revert.
 		ok, err = app.PluginUpdateTaskMeta(taskID, 0, -1)
 		if err != nil || !ok {
 			t.Fatalf("PluginUpdateTaskMeta pin=0: ok=%v err=%v", ok, err)
 		}
 		got, _ = os.ReadFile(filePath)
+		if !strings.Contains(string(got), "[pin:: false]") {
+			t.Errorf("expected [pin:: false] in file after unpin, got:\n%s", string(got))
+		}
+		if strings.Count(string(got), "[pin::") != 1 {
+			t.Errorf("expected exactly one [pin:: token after unpin, got:\n%s", string(got))
+		}
+
+		// pin=-2 clears the token entirely (nil → renderer omits it).
+		ok, err = app.PluginUpdateTaskMeta(taskID, -2, -1)
+		if err != nil || !ok {
+			t.Fatalf("PluginUpdateTaskMeta pin=-2: ok=%v err=%v", ok, err)
+		}
+		got, _ = os.ReadFile(filePath)
 		if strings.Contains(string(got), "[pin::") {
-			t.Errorf("expected [pin::] token removed after unpin, got:\n%s", string(got))
+			t.Errorf("expected [pin::] token removed after clear (pin=-2), got:\n%s", string(got))
 		}
 	})
 
@@ -1517,4 +1533,489 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 			t.Errorf("missing block should error, got ok=%v err=%v", ok, err)
 		}
 	})
+}
+
+// TestUpdatePluginSetting_PreservesOtherFields confirms the atomic per-plugin
+// setter (#120) writes ONLY the targeted plugins.plugin_settings[id][key] and
+// leaves every other config field intact — the property the read-mutate-
+// saveConfig dance could violate when an external edit landed mid-call.
+func TestUpdatePluginSetting_PreservesOtherFields(t *testing.T) {
+	app := newTestApp(t)
+
+	// Seed an in-memory + on-disk config with unrelated fields that must
+	// survive a targeted plugin-setting update.
+	app.configMu.Lock()
+	cfg := app.cfg
+	cfg.Editor.FontFamily = "MyFont"
+	cfg.Plugins.PluginSettings = map[string]any{
+		"silt-agenda": map[string]any{"interval": 30},
+		"silt-kanban": map[string]any{"columns": []string{"Old"}},
+	}
+	app.cfg = cfg
+	app.configMu.Unlock()
+	if err := config.Save(app.vaultPath, cfg); err != nil {
+		t.Fatalf("seed config.Save: %v", err)
+	}
+
+	if err := app.UpdatePluginSetting("silt-kanban", "columns", []string{"TODO", "DOING"}); err != nil {
+		t.Fatalf("UpdatePluginSetting: %v", err)
+	}
+
+	// In-memory: targeted key updated to the new value. The value retains its
+	// concrete Go type here ([]string); it only generalises to []any after a
+	// YAML round-trip (checked below on the reload).
+	app.configMu.RLock()
+	kanban, _ := app.cfg.Plugins.PluginSettings["silt-kanban"].(map[string]any)
+	app.configMu.RUnlock()
+	if kanban == nil {
+		t.Fatal("in-memory silt-kanban settings missing")
+	}
+	colsStr, _ := kanban["columns"].([]string)
+	if len(colsStr) != 2 || colsStr[0] != "TODO" || colsStr[1] != "DOING" {
+		t.Errorf("in-memory columns = %v, want [TODO DOING]", kanban["columns"])
+	}
+
+	// On-disk reload: unrelated fields preserved verbatim.
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload config.Load: %v", err)
+	}
+	if loaded.Editor.FontFamily != "MyFont" {
+		t.Errorf("Editor.FontFamily not preserved: got %q", loaded.Editor.FontFamily)
+	}
+	agenda, _ := loaded.Plugins.PluginSettings["silt-agenda"].(map[string]any)
+	if fmt.Sprint(agenda["interval"]) != "30" {
+		t.Errorf("silt-agenda.interval not preserved: got %v", agenda["interval"])
+	}
+	kanban2, _ := loaded.Plugins.PluginSettings["silt-kanban"].(map[string]any)
+	cols2, _ := kanban2["columns"].([]any)
+	if len(cols2) != 2 || fmt.Sprint(cols2[0]) != "TODO" {
+		t.Errorf("on-disk columns = %v, want [TODO DOING]", kanban2["columns"])
+	}
+}
+
+// TestUpdatePluginSetting_ConcurrentWithExternalReload runs targeted updates
+// concurrently with a watcher-style wholesale config replacement (applyConfig),
+// confirming the configMu serialization keeps both paths race-clean and the
+// on-disk config never corrupts (#120). Run under -race.
+func TestUpdatePluginSetting_ConcurrentWithExternalReload(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.UpdatePluginSetting("silt-kanban", "columns", []string{"TODO"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	snapshot := func() config.SystemConfig {
+		app.configMu.RLock()
+		defer app.configMu.RUnlock()
+		return app.cfg
+	}
+
+	stop := make(chan struct{})
+	var extWg sync.WaitGroup
+	extWg.Add(1)
+	go func() {
+		defer extWg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				// Watcher-driven external reload: config replaced wholesale
+				// under configMu (applyConfig locks). a.ctx is nil in tests,
+				// so no event emission / nil-ctx panic.
+				app.applyConfig(snapshot())
+			}
+		}
+	}()
+
+	const n = 60
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			key := "filters"
+			if i%2 == 0 {
+				key = "columns"
+			}
+			if err := app.UpdatePluginSetting("silt-kanban", key, map[string]any{"i": i}); err != nil {
+				t.Errorf("UpdatePluginSetting: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(stop)
+	extWg.Wait()
+
+	// After the storm the on-disk config must still parse (no corruption) and
+	// the targeted plugin's settings map must be intact.
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("final config.Load: %v", err)
+	}
+	if _, ok := loaded.Plugins.PluginSettings["silt-kanban"].(map[string]any); !ok {
+		t.Errorf("silt-kanban settings lost after concurrent updates: %#v", loaded.Plugins.PluginSettings)
+	}
+}
+
+// TestUpdatePluginSetting_RequiresIDs rejects empty pluginID / key (fail-loud
+// guard against a no-op targeted write that silently writes nothing).
+func TestUpdatePluginSetting_RequiresIDs(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.UpdatePluginSetting("", "columns", []string{"TODO"}); err == nil {
+		t.Error("expected error for empty pluginID, got nil")
+	}
+	if err := app.UpdatePluginSetting("silt-kanban", "", []string{"TODO"}); err == nil {
+		t.Error("expected error for empty key, got nil")
+	}
+}
+
+// TestResolveNotebookDir covers the #100 notebook content-root resolver: the
+// vault path is byte-identical to the legacy join (zero regression), a linked
+// source resolves to its registered root, and unknown/missing ids fail loud.
+func TestResolveNotebookDir(t *testing.T) {
+	app := newTestApp(t)
+
+	// Vault source → <vault>/<notebook> (identical to the old filepath.Join).
+	got, err := app.resolveNotebookDir("Work", config.LinkedNotebooksVaultSource)
+	if err != nil {
+		t.Fatalf("vault resolve: %v", err)
+	}
+	want := filepath.Join(app.vaultPath, "Work")
+	if got != want {
+		t.Errorf("vault resolve = %q, want %q", got, want)
+	}
+	// Empty source is treated as vault (back-compat for callers without a source).
+	if got2, _ := app.resolveNotebookDir("Work", ""); got2 != want {
+		t.Errorf("empty-source resolve = %q, want %q", got2, want)
+	}
+
+	// Linked source → registered root path.
+	root := t.TempDir()
+	app.configMu.Lock()
+	app.cfg.LinkedNotebooks = append(app.cfg.LinkedNotebooks, config.LinkedNotebook{
+		ID: "abc", RootPath: root, DisplayName: "Ext",
+	})
+	app.configMu.Unlock()
+	got3, err := app.resolveNotebookDir("Ext", "linked:abc")
+	if err != nil {
+		t.Fatalf("linked resolve: %v", err)
+	}
+	if got3 != root {
+		t.Errorf("linked resolve = %q, want %q", got3, root)
+	}
+
+	// Unregistered linked id and unknown source prefix fail loud.
+	if _, err := app.resolveNotebookDir("X", "linked:ghost"); err == nil {
+		t.Error("expected error for unregistered linked id, got nil")
+	}
+	if _, err := app.resolveNotebookDir("X", "bogus:1"); err == nil {
+		t.Error("expected error for unknown source prefix, got nil")
+	}
+}
+
+// --- #100 linked / external notebooks ---------------------------------------
+
+// TestLinkNotebook_IndexesAndUnlinkLeavesFiles covers the link → index → nav →
+// unlink lifecycle: a linked notebook is indexed under source='linked:<id>',
+// appears in ListNavigation with Source/RootPath, the registry persists, and
+// unlink drops the index rows while leaving the external file untouched.
+func TestLinkNotebook_IndexesAndUnlinkLeavesFiles(t *testing.T) {
+	app := newTestApp(t)
+
+	ext := t.TempDir()
+	pageFile := filepath.Join(ext, "Plan.md")
+	writeFile(t, pageFile, "---\nnotebook: Ext\nsection: \"\"\npage: Plan\ndate: 2026-06-16\ntags: []\n---\n# Plan\n- [ ] do a thing <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n")
+
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	if ln.ID == "" || !strings.HasPrefix(ln.Source(), "linked:") {
+		t.Fatalf("unexpected linked notebook: %+v", ln)
+	}
+	if ln.RootPath != filepath.Clean(ext) {
+		t.Errorf("RootPath = %q, want %q", ln.RootPath, filepath.Clean(ext))
+	}
+	src := ln.Source()
+
+	// Indexed under the linked source.
+	var n int
+	app.coordinator.WithDBRead(func() {
+		_ = app.db.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks WHERE source = ?", src).Scan(&n)
+	})
+	if n == 0 {
+		t.Errorf("expected linked blocks indexed under source=%q, got 0", src)
+	}
+
+	// Appears in navigation as a linked notebook with the right metadata.
+	tree, err := app.ListNavigation()
+	if err != nil {
+		t.Fatalf("ListNavigation: %v", err)
+	}
+	var found *parser.NavigationNotebook
+	for i := range tree.Notebooks {
+		if tree.Notebooks[i].Source == src {
+			found = &tree.Notebooks[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("linked notebook not in nav tree")
+	}
+	if found.Name != ln.DisplayName || found.RootPath != ln.RootPath {
+		t.Errorf("nav entry mismatch: %+v", found)
+	}
+
+	// Registry persisted to config.yaml.
+	loaded, _ := config.Load(app.vaultPath)
+	if len(loaded.LinkedNotebooks) != 1 || loaded.LinkedNotebooks[0].ID != ln.ID {
+		t.Errorf("registry not persisted: %+v", loaded.LinkedNotebooks)
+	}
+
+	// Unlink drops index rows and leaves the external file untouched.
+	if err := app.UnlinkNotebook(ln.ID); err != nil {
+		t.Fatalf("UnlinkNotebook: %v", err)
+	}
+	app.coordinator.WithDBRead(func() {
+		_ = app.db.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks WHERE source = ?", src).Scan(&n)
+	})
+	if n != 0 {
+		t.Errorf("expected linked index rows dropped after unlink, got %d", n)
+	}
+	if _, err := os.Stat(pageFile); err != nil {
+		t.Errorf("external file was touched by unlink: %v", err)
+	}
+	loaded2, _ := config.Load(app.vaultPath)
+	if len(loaded2.LinkedNotebooks) != 0 {
+		t.Errorf("registry not cleared after unlink: %+v", loaded2.LinkedNotebooks)
+	}
+}
+
+// TestLinkNotebook_RejectsCollisions verifies the fail-loud guards: a folder
+// inside the vault must use OpenNotebook (not link), and a name collision with
+// a vault notebook is rejected so the sidebar stays unambiguous.
+func TestLinkNotebook_RejectsCollisions(t *testing.T) {
+	app := newTestApp(t)
+	if err := os.MkdirAll(filepath.Join(app.vaultPath, "Work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Inside the vault → rejected (use OpenNotebook instead).
+	inside := filepath.Join(app.vaultPath, "Inside")
+	if err := os.MkdirAll(inside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.LinkNotebook(inside); err == nil {
+		t.Error("expected error linking a folder inside the vault, got nil")
+	}
+
+	// Name collision with a vault notebook → rejected.
+	parent := t.TempDir()
+	collision := filepath.Join(parent, "Work")
+	if err := os.MkdirAll(collision, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.LinkNotebook(collision); err == nil {
+		t.Error("expected error linking a folder whose name collides with a vault notebook, got nil")
+	}
+}
+
+// TestListNavigation_LinkedDisconnectedWhenRootMissing verifies the offline
+// failure mode (#100): a linked notebook whose root can't be read (mount drop)
+// stays in the tree marked Disconnected so its last-synced rows remain visible
+// and the UI can badge it. LinkNotebook validates existence at link time, so
+// the missing-root case is simulated by registering the link directly.
+func TestListNavigation_LinkedDisconnectedWhenRootMissing(t *testing.T) {
+	app := newTestApp(t)
+	app.configMu.Lock()
+	app.cfg.LinkedNotebooks = []config.LinkedNotebook{{
+		ID: "ghost", RootPath: filepath.Join(t.TempDir(), "does-not-exist"), DisplayName: "Ghost",
+	}}
+	app.configMu.Unlock()
+
+	tree, err := app.ListNavigation()
+	if err != nil {
+		t.Fatalf("ListNavigation: %v", err)
+	}
+	var found *parser.NavigationNotebook
+	for i := range tree.Notebooks {
+		if tree.Notebooks[i].Source == "linked:ghost" {
+			found = &tree.Notebooks[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("expected the linked notebook in the tree even when its root is offline")
+	}
+	if !found.Disconnected {
+		t.Error("expected Disconnected=true when the linked root is missing/offline")
+	}
+}
+
+// TestLinkedNotebook_PageCRUD_RoutesToLinkedRoot verifies the #100 lifecycle
+// fix: page create/rename/delete inside a linked notebook route to the linked
+// root (not the vault), index under the linked source, and linked deletes
+// happen IN PLACE (never trash into the vault).
+func TestLinkedNotebook_PageCRUD_RoutesToLinkedRoot(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+
+	// CreatePage in the linked notebook → file lands in the linked root.
+	if _, err := app.CreatePage(ln.DisplayName, "", "Plan", ""); err != nil {
+		t.Fatalf("CreatePage: %v", err)
+	}
+	linkedFile := filepath.Join(ext, "Plan.md")
+	if _, err := os.Stat(linkedFile); err != nil {
+		t.Errorf("expected linked page at %s, got %v", linkedFile, err)
+	}
+	// Vault must be untouched by the linked create.
+	if _, err := os.Stat(filepath.Join(app.vaultPath, ln.DisplayName, "Plan.md")); err == nil {
+		t.Error("linked CreatePage leaked a file into the vault")
+	}
+
+	// CreatePage on an empty page produces no blocks, but nothing should be
+	// indexed under the VAULT source for this notebook name (no misroute).
+	var vaultRows int
+	app.coordinator.WithDBRead(func() {
+		_ = app.db.SQLDB().QueryRow(
+			"SELECT COUNT(*) FROM blocks WHERE source = 'vault' AND notebook = ?",
+			ln.DisplayName,
+		).Scan(&vaultRows)
+	})
+	if vaultRows != 0 {
+		t.Errorf("linked CreatePage leaked %d row(s) into the vault index", vaultRows)
+	}
+
+	// Rename the page within the linked root.
+	if err := app.RenamePage(ln.DisplayName, "", "Plan", "Renamed"); err != nil {
+		t.Fatalf("RenamePage: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(ext, "Renamed.md")); err != nil {
+		t.Errorf("rename: expected Renamed.md in the linked root: %v", err)
+	}
+	if _, err := os.Stat(linkedFile); err == nil {
+		t.Error("old linked page file should no longer exist after rename")
+	}
+
+	// Delete the page → removed in place from the linked root, NOT trashed
+	// into the vault.
+	if err := app.DeletePage(ln.DisplayName, "", "Renamed"); err != nil {
+		t.Fatalf("DeletePage: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(ext, "Renamed.md")); err == nil {
+		t.Error("expected the linked page deleted in place")
+	}
+	trash := filepath.Join(app.vaultPath, ".system", "trash")
+	if entries, _ := os.ReadDir(trash); len(entries) > 0 {
+		t.Errorf("linked delete should not trash into the vault; trash contained: %v", entries)
+	}
+}
+
+// TestRenameNotebook_RefusesLinked confirms RenameNotebook fails loud for a
+// linked notebook (renaming the external source-of-truth folder is out of
+// scope; rename = unlink + re-link).
+func TestRenameNotebook_RefusesLinked(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	if err := app.RenameNotebook(ln.DisplayName, "NewName"); err == nil {
+		t.Error("expected RenameNotebook to refuse a linked notebook, got nil")
+	}
+}
+
+// TestVaultNotebookOps_RejectLinkedNameCollision locks the global name-uniqueness
+// invariant from the VAULT side (#100): CreateNotebook / OpenNotebook /
+// RenameNotebook refuse a name that collides with a registered linked notebook,
+// so resolveSourceByName can never misroute a vault op to an external root
+// (which would silently write to / delete files on the external mount).
+func TestVaultNotebookOps_RejectLinkedNameCollision(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+
+	// CreateNotebook with the linked display name → rejected.
+	if err := app.CreateNotebook(ln.DisplayName); err == nil {
+		t.Error("CreateNotebook: expected a linked-name collision error, got nil")
+	}
+	// RenameNotebook of a vault notebook TO the linked display name → rejected.
+	if err := os.MkdirAll(filepath.Join(app.vaultPath, "VaultNB"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RenameNotebook("VaultNB", ln.DisplayName); err == nil {
+		t.Error("RenameNotebook: expected a linked-name collision error, got nil")
+	}
+	// OpenNotebook of a vault folder whose name collides with the link → rejected.
+	col := filepath.Join(app.vaultPath, ln.DisplayName)
+	if err := os.MkdirAll(col, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.OpenNotebook(col); err == nil {
+		t.Error("OpenNotebook: expected a linked-name collision error, got nil")
+	}
+}
+
+// TestResolveSourceByName locks resolveSourceByName: a pure-vault name returns
+// 'vault', a registered link's name returns 'linked:<id>', and an unrelated
+// name returns 'vault'. resolveSourceByName is the linchpin of the whole
+// notebook routing layer.
+func TestResolveSourceByName(t *testing.T) {
+	app := newTestApp(t)
+
+	if got := app.resolveSourceByName("Work"); got != config.LinkedNotebooksVaultSource {
+		t.Errorf("pure-vault name: got %q, want %q", got, config.LinkedNotebooksVaultSource)
+	}
+
+	app.configMu.Lock()
+	app.cfg.LinkedNotebooks = []config.LinkedNotebook{{ID: "abc", RootPath: "/tmp/x", DisplayName: "Ext"}}
+	app.configMu.Unlock()
+
+	if got := app.resolveSourceByName("Ext"); got != "linked:abc" {
+		t.Errorf("linked name: got %q, want linked:abc", got)
+	}
+	if got := app.resolveSourceByName("Other"); got != config.LinkedNotebooksVaultSource {
+		t.Errorf("unrelated name: got %q, want vault", got)
+	}
+}
+
+// TestSaveFileBlocks_LinkedRootUnusable_ReturnsClearError locks the documented
+// offline/unusable-root contract (#100): a write to a linked notebook whose
+// root can't be used must return a clear error (no panic, no crash). We proxy
+// an offline mount with a root path that IS a file (so page ops go
+// "through-the-file" and fail at the OS level rather than being recreatable).
+func TestSaveFileBlocks_LinkedRootUnusable_ReturnsClearError(t *testing.T) {
+	app := newTestApp(t)
+	notADir := filepath.Join(t.TempDir(), "notadir")
+	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app.configMu.Lock()
+	app.cfg.LinkedNotebooks = []config.LinkedNotebook{{ID: "dead", RootPath: notADir, DisplayName: "Dead"}}
+	app.configMu.Unlock()
+
+	blocks := []parser.ParsedBlock{{
+		ID:         "11111111-1111-1111-1111-111111111111",
+		Type:       parser.BlockTask,
+		RawText:    "- [ ] task <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+		CleanText:  "task",
+		Status:     "TODO",
+		LineNumber: 1,
+	}}
+	err := app.SaveFileBlocks("Dead", "", "Plan", blocks)
+	if err == nil {
+		t.Fatal("expected a clear error saving to an unusable linked root, got nil")
+	}
+	if err.Error() == "" {
+		t.Error("expected a non-empty error message for an unusable linked root")
+	}
 }

@@ -1,8 +1,10 @@
 <script lang="ts">
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
+  import { untrack } from 'svelte'
   import type { PluginContext, PluginManifest, TaskStatus } from '../../sdk'
-  import { settings, saveConfig } from '../../../settings/store.svelte'
+  import { plusDaysISO } from '../../sdk'
+  import { settings, updatePluginSetting } from '../../../settings/store.svelte'
   import { measureFrameBudget } from '../../../lib/perf/frame-budget'
   import FilterBar, { type KanbanFilters } from './FilterBar.svelte'
   import CardDetailPanel, { type KanbanCard } from './CardDetailPanel.svelte'
@@ -51,7 +53,7 @@
       const next =
         (((start + i * dir) % SCOPES.length) + SCOPES.length) % SCOPES.length
       if (!isScopeDisabled(SCOPES[next])) {
-        scope = SCOPES[next]
+        setScope(SCOPES[next])
         ;(e.currentTarget as HTMLElement)
           .querySelector<HTMLElement>(`[data-scope="${SCOPES[next]}"]`)
           ?.focus()
@@ -61,6 +63,26 @@
   }
 
   let scope = $state<Scope>(defaultScope())
+  // #124: the board auto-narrows its scope to follow the active nav level
+  // (vault -> notebook -> section -> page) UNTIL the user manually picks a
+  // scope, after which it sticks (respects intent). The reset-to-context
+  // affordance clears this flag so the board follows navigation again.
+  let scopeUserOverride = $state(false)
+
+  // setScope is the single entry point for a USER-initiated scope change
+  // (click or keyboard) — it records the override so subsequent navigation
+  // no longer re-narrows the board.
+  function setScope(s: Scope) {
+    scopeUserOverride = true
+    scope = s
+  }
+
+  function resetScopeToContext() {
+    scopeUserOverride = false
+    untrack(() => {
+      scope = defaultScope()
+    })
+  }
   let lanes = $state<Record<string, KanbanCard[]>>({})
   let loading = $state(true)
   let errorMsg = $state('')
@@ -83,7 +105,7 @@
   // Columns come from config.yaml (plugins.plugin_settings.silt-kanban.columns),
   // falling back to the canonical TODO/DOING/DONE triple. Now mutable: the
   // user can add / rename / remove / reorder lanes, and changes persist back
-  // to config via saveConfig. Custom (non-status) lanes render as empty —
+  // to config via updatePluginSetting (atomic). Custom (non-status) lanes render as empty —
   // cards are bucketed by status, so only TODO/DOING/DONE lanes fill.
   function initialColumns(): string[] {
     const cfgCols = settings.config?.plugins?.plugin_settings?.['silt-kanban']
@@ -185,18 +207,25 @@
       where.push(`t.priority IN (${f.priorities.map(() => '?').join(', ')})`)
       params.push(...f.priorities)
     }
-    // Due-date filter clauses. NOTE: date('now') is UTC, not local time.
-    // Users near timezone boundaries may see off-by-one results for the
-    // "today" / "overdue" / "this week" quick-picks near midnight UTC.
-    // Tracked as #118 — fix requires threading the local timezone into
-    // the plugin SQL layer.
+    // Due-date quick-pick clauses. Compare against the LOCAL day (ctx.today)
+    // via bound params, NOT SQLite's date('now') which is UTC and produced
+    // off-by-one results near local midnight (#118). due_date is stored as
+    // YYYY-MM-DD text, so lexicographic comparison against the param matches
+    // the old date('now') semantics exactly — only the date source changed.
     if (f.dueDate) {
-      if (f.dueDate === 'overdue') where.push("t.due_date < date('now')")
-      else if (f.dueDate === 'today') where.push("t.due_date = date('now')")
-      else if (f.dueDate === 'week')
-        where.push("t.due_date BETWEEN date('now') AND date('now', '+7 days')")
-      else if (f.dueDate === 'none')
+      const today = ctx.today
+      if (f.dueDate === 'overdue') {
+        where.push('t.due_date < ?')
+        params.push(today)
+      } else if (f.dueDate === 'today') {
+        where.push('t.due_date = ?')
+        params.push(today)
+      } else if (f.dueDate === 'week') {
+        where.push('t.due_date BETWEEN ? AND ?')
+        params.push(today, plusDaysISO(today, 7))
+      } else if (f.dueDate === 'none') {
         where.push("(t.due_date IS NULL OR t.due_date = '')")
+      }
     }
     if (f.tags.length) {
       where.push(
@@ -263,9 +292,31 @@
     reload()
   })
 
+  // #124: auto-narrow the scope to follow the active nav level until the
+  // user manually overrides it. Reads of scope happen under untrack so this
+  // effect depends only on the nav level + the override flag (writing scope
+  // here must not re-trigger it). When the override is set but the chosen
+  // scope's nav level goes inactive (e.g. navigating off the page), re-narrow
+  // to the new default so the board never shows an empty, invalid scope.
+  $effect(() => {
+    void ctx.activeNotebook
+    void ctx.activeSection
+    void ctx.activePage
+    void scopeUserOverride
+    untrack(() => {
+      if (!scopeUserOverride) {
+        scope = defaultScope()
+        return
+      }
+      if (isScopeDisabled(scope)) {
+        scope = defaultScope()
+      }
+    })
+  })
+
   // --- Filter persistence (debounced) ---
   // Apply immediately to the board, but defer the config write so rapid
-  // checkbox toggles don't hammer saveConfig. 500ms of quiet commits.
+  // checkbox toggles don't hammer the plugin-setting write. 500ms of quiet commits.
   let saveFiltersTimer: ReturnType<typeof setTimeout> | null = null
   function handleFiltersChange(f: KanbanFilters) {
     filters = f
@@ -275,20 +326,12 @@
     }, 500)
   }
   async function persistFilters(f: KanbanFilters) {
-    const cfg = settings.config
-    if (!cfg) return
-    if (!cfg.plugins) {
-      cfg.plugins = { active: [], disabled: [], plugin_settings: {} }
-    }
-    const ps = cfg.plugins.plugin_settings ?? {}
-    ps['silt-kanban'] = { ...(ps['silt-kanban'] ?? {}), filters: f }
-    cfg.plugins.plugin_settings = ps
+    if (!settings.config) return
     configError = ''
-    try {
-      await saveConfig(cfg)
-    } catch (e) {
-      configError = e instanceof Error ? e.message : String(e)
-    }
+    // Atomic Go-side read-modify-write of just this plugin's setting: cannot
+    // clobber a concurrent external config.yaml edit (#120).
+    const ok = await updatePluginSetting('silt-kanban', 'filters', f)
+    if (!ok) configError = settings.error || 'Failed to save filters'
   }
 
   // --- Column management ---
@@ -334,20 +377,11 @@
     await persistColumns()
   }
   async function persistColumns() {
-    const cfg = settings.config
-    if (!cfg) return
-    if (!cfg.plugins) {
-      cfg.plugins = { active: [], disabled: [], plugin_settings: {} }
-    }
-    const ps = cfg.plugins.plugin_settings ?? {}
-    ps['silt-kanban'] = { ...(ps['silt-kanban'] ?? {}), columns: [...columns] }
-    cfg.plugins.plugin_settings = ps
+    if (!settings.config) return
     configError = ''
-    try {
-      await saveConfig(cfg)
-    } catch (e) {
-      configError = e instanceof Error ? e.message : String(e)
-    }
+    // Atomic Go-side read-modify-write of just this plugin's setting (#120).
+    const ok = await updatePluginSetting('silt-kanban', 'columns', [...columns])
+    if (!ok) configError = settings.error || 'Failed to save columns'
   }
 
   // Column drag-reorder: a dedicated handle on each header sets the source
@@ -569,7 +603,7 @@
       {#each SCOPES as s}
         <button
           data-scope={s}
-          onclick={() => (scope = s)}
+          onclick={() => setScope(s)}
           role="radio"
           aria-checked={scope === s}
           tabindex={scope === s ? 0 : -1}
@@ -594,8 +628,22 @@
       <span class="material-symbols-outlined text-[16px]">add</span>
       <span>Column</span>
     </button>
-    <span class="text-text-muted text-[12px] font-body-md ml-auto">
-      {scopeCrumb} · {totalCards} task{totalCards === 1 ? '' : 's'}
+    <span
+      class="text-text-muted text-[12px] font-body-md ml-auto flex items-center gap-2"
+    >
+      <span>{scopeCrumb} · {totalCards} task{totalCards === 1 ? '' : 's'}</span>
+      {#if scopeUserOverride}
+        <button
+          type="button"
+          onclick={resetScopeToContext}
+          aria-label="Reset board scope to follow navigation"
+          title="Follow navigation"
+          class="flex items-center gap-1 px-1.5 py-0.5 rounded border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 transition-colors"
+        >
+          <span class="material-symbols-outlined text-[14px]">my_location</span>
+          <span class="font-label-sm">Follow</span>
+        </button>
+      {/if}
     </span>
   </header>
 

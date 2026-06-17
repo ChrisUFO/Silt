@@ -363,3 +363,147 @@ func itoa(i int) string {
 	}
 	return string(buf[pos:])
 }
+
+// TestDirectoryWatcher_GoverningRoot_LongestPrefix verifies the longest-prefix
+// root resolution used by resolveFileMetadata (#100): a direct child of a
+// registered root resolves to that root, a descendant shared by a nested root
+// resolves to the longest (innermost) prefix, and a path under no root is
+// rejected. Also guards the separator handling in the prefix match (a root must
+// not get a doubled separator appended when matching its descendants).
+func TestDirectoryWatcher_GoverningRoot_LongestPrefix(t *testing.T) {
+	vaultPath := t.TempDir()
+
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+
+	outer := t.TempDir()
+	inner := filepath.Join(outer, "sub")
+	dw.registerRoot(outer, watchRoot{source: "linked:outer", notebook: "Outer"})
+	dw.registerRoot(inner, watchRoot{source: "linked:inner", notebook: "Inner"})
+
+	// A direct child of outer (not under inner) resolves to outer.
+	got, info, ok := dw.governingRoot(filepath.Join(outer, "page.md"))
+	if !ok {
+		t.Fatal("expected outer to govern its direct child")
+	}
+	if got != outer {
+		t.Errorf("governing root = %q, want %q", got, outer)
+	}
+	if info.notebook != "Outer" {
+		t.Errorf("notebook = %q, want Outer", info.notebook)
+	}
+
+	// A descendant of inner resolves to the longest prefix (inner), not outer.
+	got2, info2, ok2 := dw.governingRoot(filepath.Join(inner, "deep", "page.md"))
+	if !ok2 {
+		t.Fatal("expected inner to govern its descendant")
+	}
+	if got2 != inner {
+		t.Errorf("governing root = %q, want %q", got2, inner)
+	}
+	if info2.notebook != "Inner" {
+		t.Errorf("notebook = %q, want Inner", info2.notebook)
+	}
+
+	// An exact match on a root resolves to that root.
+	got3, _, ok3 := dw.governingRoot(inner)
+	if !ok3 || got3 != inner {
+		t.Errorf("governing root for root itself = %q (%v), want %q", got3, ok3, inner)
+	}
+
+	// A path under no registered root is rejected.
+	if _, _, ok := dw.governingRoot(filepath.Join(t.TempDir(), "stranger.md")); ok {
+		t.Error("expected governingRoot to reject a path under no root")
+	}
+}
+
+// TestDirectoryWatcher_ResolveFileMetadata_LinkedRoot verifies per-root
+// attribution (#100): a file under a linked root resolves to the linked
+// source + registered display name + section/page relative to that root,
+// while a vault file resolves with notebook = its first path component.
+func TestDirectoryWatcher_ResolveFileMetadata_LinkedRoot(t *testing.T) {
+	vaultPath := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(vaultPath, "Work", "Journal"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+
+	// Register a linked root "Ext" with a nested section page.
+	linked := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(linked, "Projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := dw.AddWatchRoot(linked, "linked:ext", "Ext"); err != nil {
+		t.Fatalf("AddWatchRoot: %v", err)
+	}
+
+	// Linked file: <linkedRoot>/Projects/Alpha.md → source linked, notebook
+	// Ext (the registered name), section Projects, page Alpha.
+	src, nb, sec, pg, _ := dw.resolveFileMetadata(filepath.Join(linked, "Projects", "Alpha.md"))
+	if src != "linked:ext" || nb != "Ext" || sec != "Projects" || pg != "Alpha" {
+		t.Errorf("linked resolve = src=%q nb=%q sec=%q pg=%q, want linked:ext/Ext/Projects/Alpha", src, nb, sec, pg)
+	}
+
+	// Vault file: <vault>/Work/Journal/Daily.md → source vault, notebook Work
+	// (first component), section Journal, page Daily.
+	vsrc, vnb, vsec, vpg, _ := dw.resolveFileMetadata(filepath.Join(vaultPath, "Work", "Journal", "Daily.md"))
+	if vsrc != "vault" || vnb != "Work" || vsec != "Journal" || vpg != "Daily" {
+		t.Errorf("vault resolve = src=%q nb=%q sec=%q pg=%q, want vault/Work/Journal/Daily", vsrc, vnb, vsec, vpg)
+	}
+}
+
+// TestDirectoryWatcher_AddRemoveWatchRoot confirms the multi-root registry
+// tracks linked roots across add/remove (#100): after AddWatchRoot the root
+// governs its files; after RemoveWatchRoot it no longer does (so its events
+// would be attributed to no root and dropped).
+func TestDirectoryWatcher_AddRemoveWatchRoot(t *testing.T) {
+	vaultPath := t.TempDir()
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+
+	linked := t.TempDir()
+	if err := dw.AddWatchRoot(linked, "linked:x", "Ext"); err != nil {
+		t.Fatalf("AddWatchRoot: %v", err)
+	}
+	if _, _, ok := dw.governingRoot(filepath.Join(linked, "page.md")); !ok {
+		t.Error("expected governingRoot to find the linked root after AddWatchRoot")
+	}
+
+	dw.RemoveWatchRoot(linked)
+	if _, _, ok := dw.governingRoot(filepath.Join(linked, "page.md")); ok {
+		t.Error("expected governingRoot to drop the linked root after RemoveWatchRoot")
+	}
+}

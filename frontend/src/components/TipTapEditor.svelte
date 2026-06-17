@@ -111,7 +111,9 @@
   // Capture the initial blocks under untrack to signal that the one-shot
   // capture is intentional — the $effect below handles live reactivity (#64).
   const initialDoc = untrack(() => blocksToDoc(blocks))
-  const initialKey = untrack(() => `${blocks.map((b) => b.id).join(',')}:${blocks.length}`)
+  const initialKey = untrack(
+    () => `${blocks.map((b) => b.id).join(',')}:${blocks.length}`
+  )
   let lastSyncedBlocksKey = $state(initialKey)
   const editorStore = createEditor({
     extensions: [
@@ -411,10 +413,14 @@
       aria-live={lastSaveError ? 'assertive' : 'polite'}
     >
       {#if lastSaveError}
-        <span class="material-symbols-outlined text-[14px]" aria-hidden="true">error</span>
+        <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
+          >error</span
+        >
         <span>Save failed — edits not persisted</span>
       {:else}
-        <span class="material-symbols-outlined text-[14px]" aria-hidden="true">schedule</span>
+        <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
+          >schedule</span
+        >
         <span>Unsaved changes</span>
       {/if}
     </div>
@@ -477,7 +483,11 @@
     backdrop-filter: blur(4px);
   }
   .unsaved-indicator.error {
-    border-color: color-mix(in srgb, var(--status-danger, #e5484d) 60%, transparent);
+    border-color: color-mix(
+      in srgb,
+      var(--status-danger, #e5484d) 60%,
+      transparent
+    );
     color: var(--status-danger, #e5484d);
   }
 

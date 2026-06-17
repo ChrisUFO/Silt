@@ -130,11 +130,21 @@ func TestParseLine(t *testing.T) {
 //   - [x] description [priority:: N] [start:: DATE] [due:: DATE] [owner:: name] [pin:: true] [progress:: N]
 // Metadata tokens follow the description in Dataview [key:: value] format.
 func TestParseLine_PinAndProgress(t *testing.T) {
+	// pinState collapses a *bool into a comparable label for assertions.
+	pinState := func(p *bool) string {
+		if p == nil {
+			return "nil"
+		}
+		if *p {
+			return "true"
+		}
+		return "false"
+	}
 	t.Run("pin flag parsed from [pin:: true] token", func(t *testing.T) {
 		line := "- [ ] Draft release notes [pin:: true] <!-- id: 11111111-1111-1111-1111-111111111111 -->"
 		block, _, _ := ParseLine(line, 1, 4)
-		if !block.Pinned {
-			t.Errorf("expected Pinned=true for [pin:: true] token, got false")
+		if got := pinState(block.Pinned); got != "true" {
+			t.Errorf("expected Pinned=true for [pin:: true] token, got %s", got)
 		}
 		if block.Progress != 0 {
 			t.Errorf("expected Progress=0 when no [progress:: N] present, got %d", block.Progress)
@@ -146,15 +156,15 @@ func TestParseLine_PinAndProgress(t *testing.T) {
 		if block.Progress != 50 {
 			t.Errorf("expected Progress=50 from [progress:: 50], got %d", block.Progress)
 		}
-		if block.Pinned {
-			t.Errorf("expected Pinned=false when no [pin:: true] present, got true")
+		if block.Pinned != nil {
+			t.Errorf("expected Pinned=nil when no [pin:: ...] token present, got %s", pinState(block.Pinned))
 		}
 	})
 	t.Run("pin + progress coexist with full metadata", func(t *testing.T) {
 		line := "- [/] Critical workstream [priority:: 1] [start:: 2026-06-13] [due:: 2026-08-03] [owner:: Bob] [pin:: true] [progress:: 75] <!-- id: 33333333-3333-3333-3333-333333333333 -->"
 		block, _, _ := ParseLine(line, 1, 4)
-		if !block.Pinned {
-			t.Errorf("expected Pinned=true with [pin:: true] present")
+		if got := pinState(block.Pinned); got != "true" {
+			t.Errorf("expected Pinned=true with [pin:: true] present, got %s", got)
 		}
 		if block.Progress != 75 {
 			t.Errorf("expected Progress=75, got %d", block.Progress)
@@ -171,29 +181,47 @@ func TestParseLine_PinAndProgress(t *testing.T) {
 	})
 	t.Run("bare word `pin` in description does not count as pinned", func(t *testing.T) {
 		// Defensive: a copy-paste of "pin this" or a sentence containing
-		// the word should never flip Pinned=true. Only the [pin:: ...]
-		// Dataview token sets the flag.
+		// the word should never flip Pinned. Only the [pin:: ...]
+		// Dataview token sets the pointer (to &true or &false).
 		line := "- [ ] pin this later <!-- id: 44444444-4444-4444-4444-444444444444 -->"
 		block, _, _ := ParseLine(line, 1, 4)
-		if block.Pinned {
-			t.Errorf("bare word `pin` must not set Pinned=true")
+		if block.Pinned != nil {
+			t.Errorf("bare word `pin` must not set Pinned, got %s", pinState(block.Pinned))
 		}
 	})
-	t.Run("non-truthy [pin::] value does not parse as pinned", func(t *testing.T) {
-		cases := map[string]bool{
-			// truthy
+	t.Run("truthy [pin::] -> &true, falsy/garbage [pin::] -> &false, absent -> nil", func(t *testing.T) {
+		// Tri-state (#123): the token's PRESENCE sets a non-nil pointer.
+		// Only explicit truthy values are &true; everything else with a
+		// present token is &false. No token at all is nil.
+		truthy := map[string]bool{
 			"[pin:: true]": true, "[pin:: yes]": true, "[pin:: 1]": true,
-			// falsy
-			"[pin:: false]": false, "[pin:: no]": false, "[pin:: 0]": false, "[pin:: ]": false,
-			// typos / garbage — must NOT silently parse as true
-			"[pin:: maybe]": false, "[pin:: foo]": false, "[pin:: 2]": false,
 		}
-		for token, want := range cases {
+		falsy := []string{
+			"[pin:: false]", "[pin:: no]", "[pin:: 0]", "[pin:: ]",
+			"[pin:: maybe]", "[pin:: foo]", "[pin:: 2]", // typos/garbage
+		}
+		for token, want := range truthy {
 			line := "- [ ] test " + token + " <!-- id: 12345678-1234-1234-1234-123456789012 -->"
 			block, _, _ := ParseLine(line, 1, 4)
-			if block.Pinned != want {
-				t.Errorf("%s: expected Pinned=%v, got %v", token, want, block.Pinned)
+			if block.Pinned == nil {
+				t.Errorf("%s: expected non-nil &true, got nil", token)
+			} else if *block.Pinned != want {
+				t.Errorf("%s: expected *Pinned=%v, got %v", token, want, *block.Pinned)
 			}
+		}
+		for _, token := range falsy {
+			line := "- [ ] test " + token + " <!-- id: 12345678-1234-1234-1234-123456789012 -->"
+			block, _, _ := ParseLine(line, 1, 4)
+			if block.Pinned == nil {
+				t.Errorf("%s: expected non-nil &false (token present), got nil", token)
+			} else if *block.Pinned {
+				t.Errorf("%s: expected *Pinned=false, got true", token)
+			}
+		}
+		// Absent token -> nil.
+		block, _, _ := ParseLine("- [ ] no token here <!-- id: 12345678-1234-1234-1234-123456789012 -->", 1, 4)
+		if block.Pinned != nil {
+			t.Errorf("expected Pinned=nil when token absent, got %s", pinState(block.Pinned))
 		}
 	})
 	t.Run("progress > 100 clamps to 100", func(t *testing.T) {
@@ -209,14 +237,91 @@ func TestParseLine_PinAndProgress(t *testing.T) {
 		rendered := renderBlock(parsed, 4)
 		// Re-parse the rendered line to confirm stability.
 		parsed2, _, _ := ParseLine(rendered, 1, 4)
-		if parsed2.Pinned != parsed.Pinned {
-			t.Errorf("round-trip Pinned drift: %v → %v", parsed.Pinned, parsed2.Pinned)
+		if pinState(parsed2.Pinned) != pinState(parsed.Pinned) {
+			t.Errorf("round-trip Pinned drift: %s → %s", pinState(parsed.Pinned), pinState(parsed2.Pinned))
 		}
 		if parsed2.Progress != parsed.Progress {
 			t.Errorf("round-trip Progress drift: %d → %d", parsed.Progress, parsed2.Progress)
 		}
 		if parsed2.CleanText != parsed.CleanText {
 			t.Errorf("round-trip CleanText drift: %q → %q", parsed.CleanText, parsed2.CleanText)
+		}
+	})
+
+	// --- #123 tri-state round-trip + toggle-safety regression tests ---
+
+	t.Run("[pin:: false] round-trips (not silently dropped)", func(t *testing.T) {
+		line := "- [ ] Task [pin:: false] <!-- id: 77777777-7777-7777-7777-777777777777 -->"
+		parsed, _, _ := ParseLine(line, 1, 4)
+		if got := pinState(parsed.Pinned); got != "false" {
+			t.Fatalf("expected &false, got %s", got)
+		}
+		rendered := renderBlock(parsed, 4)
+		if !strings.Contains(rendered, "[pin:: false]") {
+			t.Errorf("expected rendered line to keep [pin:: false], got: %s", rendered)
+		}
+		// Re-parse: still &false, no drift to nil.
+		parsed2, _, _ := ParseLine(rendered, 1, 4)
+		if got := pinState(parsed2.Pinned); got != "false" {
+			t.Errorf("re-parse drift: expected false, got %s", got)
+		}
+	})
+
+	t.Run("no pin token renders nothing (nil omits the token)", func(t *testing.T) {
+		line := "- [ ] Task <!-- id: 88888888-8888-8888-8888-888888888888 -->"
+		parsed, _, _ := ParseLine(line, 1, 4)
+		if parsed.Pinned != nil {
+			t.Fatalf("expected nil, got %s", pinState(parsed.Pinned))
+		}
+		rendered := renderBlock(parsed, 4)
+		if strings.Contains(rendered, "[pin::") {
+			t.Errorf("expected no [pin:: token when Pinned is nil, got: %s", rendered)
+		}
+	})
+
+	t.Run("toggle pin on→off→on never produces two tokens or drifts (#123)", func(t *testing.T) {
+		// Start with an explicit [pin:: false] plus an unknown token, which
+		// is the issue's ExtraTokens-conflict regression scenario.
+		line := "- [ ] Task [pin:: false] [project:: alpha] <!-- id: 99999999-9999-9999-9999-999999999999 -->"
+		parsed, _, _ := ParseLine(line, 1, 4)
+		if got := pinState(parsed.Pinned); got != "false" {
+			t.Fatalf("initial parse: expected false, got %s", got)
+		}
+
+		// Toggle ON (UI sets &true).
+		on := true
+		parsed.Pinned = &on
+		renderedOn := renderBlock(parsed, 4)
+		if cnt := strings.Count(renderedOn, "[pin::"); cnt != 1 {
+			t.Errorf("after pin ON: expected exactly 1 [pin:: token, got %d in %q", cnt, renderedOn)
+		}
+		if !strings.Contains(renderedOn, "[pin:: true]") {
+			t.Errorf("after pin ON: expected [pin:: true], got: %s", renderedOn)
+		}
+		// Unknown token must survive the toggle.
+		if !strings.Contains(renderedOn, "[project:: alpha]") {
+			t.Errorf("after pin ON: unknown token dropped, got: %s", renderedOn)
+		}
+		// Re-parse: should be &true (no reversion to false).
+		reparsed, _, _ := ParseLine(renderedOn, 1, 4)
+		if got := pinState(reparsed.Pinned); got != "true" {
+			t.Errorf("after pin ON re-parse: expected true, got %s (silent revert bug)", got)
+		}
+
+		// Toggle OFF (UI sets &false).
+		off := false
+		reparsed.Pinned = &off
+		renderedOff := renderBlock(reparsed, 4)
+		if cnt := strings.Count(renderedOff, "[pin::"); cnt != 1 {
+			t.Errorf("after pin OFF: expected exactly 1 [pin:: token, got %d in %q", cnt, renderedOff)
+		}
+		if !strings.Contains(renderedOff, "[pin:: false]") {
+			t.Errorf("after pin OFF: expected [pin:: false], got: %s", renderedOff)
+		}
+		// Final re-parse: still &false.
+		final, _, _ := ParseLine(renderedOff, 1, 4)
+		if got := pinState(final.Pinned); got != "false" {
+			t.Errorf("after pin OFF re-parse: expected false, got %s", got)
 		}
 	})
 }

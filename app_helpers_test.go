@@ -67,19 +67,19 @@ func TestSanitizePathSegment(t *testing.T) {
 func TestIsPathWithinVault(t *testing.T) {
 	vault := t.TempDir()
 
-	if !isPathWithinVault(filepath.Join(vault, "Work", "Journal", "2026-06-13.md"), vault) {
+	if !isPathWithinRoot(filepath.Join(vault, "Work", "Journal", "2026-06-13.md"), vault) {
 		t.Errorf("nested path inside vault should be allowed")
 	}
-	if !isPathWithinVault(vault, vault) {
+	if !isPathWithinRoot(vault, vault) {
 		t.Errorf("vault root itself should be allowed")
 	}
 	// A traversal that escapes must be rejected.
-	if isPathWithinVault(filepath.Join(vault, "..", "..", "etc", "passwd"), vault) {
+	if isPathWithinRoot(filepath.Join(vault, "..", "..", "etc", "passwd"), vault) {
 		t.Errorf("path escaping vault should be rejected")
 	}
 	// A sibling directory must not be allowed.
 	sibling := t.TempDir()
-	if isPathWithinVault(filepath.Join(sibling, "secret.md"), vault) {
+	if isPathWithinRoot(filepath.Join(sibling, "secret.md"), vault) {
 		t.Errorf("sibling path should be rejected")
 	}
 }

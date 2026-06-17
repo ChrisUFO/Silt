@@ -561,3 +561,37 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 7. **Embed/editor race (#64):** edit an embed → source block updates; type in the editor while embed auto-saves → no clobbering.
 8. **A11y (#75):** tab through every view → logical order, visible focus rings, all actions reachable via keyboard. `npm run check` = 0 warnings.
 
+
+## Multi-Issue Hardening + External Notebooks — Coverage Added (#100 #118 #120 #122 #123 #124)
+
+### Go coverage added/updated
+
+| Package | New / updated tests | What is covered |
+|---|---|---|
+| `silt` (main) | `TestReleaseBlockMutex_*`, `TestPluginUpdateTaskMeta` (tri-state), `TestUpdatePluginSetting_*`, `TestResolveNotebookDir`, `TestLinkNotebook_IndexesAndUnlinkLeavesFiles`, `TestLinkNotebook_RejectsCollisions`, `TestListNavigation_LinkedDisconnectedWhenRootMissing`, `TestLinkedNotebook_PageCRUD_RoutesToLinkedRoot`, `TestRenameNotebook_RefusesLinked` | #122 per-block mutex eviction; #123 pin tri-state + clear sentinel; #120 atomic per-plugin setting (RMW under configMu, preserves other fields); #100 resolveNotebookDir, link/unlink lifecycle, collision + ancestor rejection, offline `Disconnected`, **linked page CRUD routes to the linked root (delete-in-place, no vault trash)**, RenameNotebook refuses linked |
+| `backend/core` | `TestReleaseBlockMutex_*` (entry-deleted, fresh-entry, no-deadlock, serialize, batch), `TestLockBlocksWrite_*` | #122 generation-based block-mutex eviction (-race) |
+| `backend/db` | `TestBlocksSource_DefaultsVault`, `TestIndexFileBlocks_PinnedProjection` | #100 `source` column default + source-aware index; #123 `tasks.pinned` projection |
+| `backend/monitor` | `TestDirectoryWatcher_GoverningRoot_LongestPrefix`, `TestDirectoryWatcher_ResolveFileMetadata_LinkedRoot`, `TestDirectoryWatcher_AddRemoveWatchRoot` | #100 multi-root watcher: longest-prefix resolution, per-root (vault vs linked) metadata attribution, AddWatchRoot/RemoveWatchRoot registry |
+| `backend/parser` | `TestParseLine_PinAndProgress` (tri-state + toggle-safety), `TestBlocksSource_*` callers | #123 Pinned `*bool` round-trip + on→off→on no-drift |
+
+### Frontend coverage added/updated
+
+| File | Tests | What is covered |
+|---|---|---|
+| `plugins/sdk.test.ts` | `localToday`, `plusDaysISO` | #118 local-day anchor (local-midnight behavior, month/year/leap bounds) |
+| `plugins/context.test.ts` | `updateTaskMeta` sentinel translation | #123 pin `boolean|null` → `-2/-1/0/1` |
+| `plugins/first-party/silt-kanban/Kanban.test.ts` | due-date `today`/`this week` SQL param tests; scope auto-narrow (follows nav / sticky / reset) | #118 (bound `?` not `date('now')`); #124 scope auto-narrow |
+
+### Manual Verification Matrix (`wails dev`)
+
+1. **#122 (mutex eviction):** create + delete many pages in a long session → memory stays flat (no per-block-mutex leak).
+2. **#123 (pin tri-state):** type `[pin:: false]` → round-trips; pin on→off→on via the Kanban card → never silently reverts.
+3. **#118 (local dates):** near local midnight, the Kanban Today/Overdue chips match the local day (not UTC).
+4. **#124 (scope):** open Kanban, navigate to a page → scope narrows to page; pick Vault → sticks; click Follow → tracks nav again.
+5. **#120 (atomic setting):** edit Kanban columns while externally editing `config.yaml` in VS Code → no clobber.
+6. **#100 (linked notebooks):** "Link External Folder…" → a synced folder appears as a notebook (badge + root tooltip); edit/create/rename/delete pages in place (vault untouched); delete a linked notebook → UNLINKS (files untouched); take the linked root offline → badge flips to cloud_off, last-sync rows still show.
+
+## Known Gaps (deferred)
+
+- Co-located per-notebook config (`<linkedRoot>/.system/config.yaml` read-through) — deferred (follow-up issue).
+- Frontend sidebar badge render test — blocked by the documented jsdom `onMount` limitation in `Sidebar.test.ts` (tree does not populate); covered by manual verification.

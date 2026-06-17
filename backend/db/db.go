@@ -184,10 +184,19 @@ func (dm *DatabaseManager) initSchema() error {
 	}
 
 	// Blocks Table
+	//
+	// `source` discriminates the notebook root a block belongs to: 'vault' for
+	// the classic in-vault notebook, or 'linked:<id>' for an external/linked
+	// notebook (#100). It disambiguates same-named notebooks across roots (two
+	// "Work" notebooks — one in the vault, one on a synced mount — must not
+	// collide on (notebook, section, page)). The index idx_blocks_src_file
+	// carries source as its leading column. Markdown is still the source of
+	// truth; this column is reproducible from the file tree + the link registry.
 	createBlocksTable := `
 	CREATE TABLE IF NOT EXISTS blocks (
 		id TEXT PRIMARY KEY,
 		parent_id TEXT,
+		source TEXT NOT NULL DEFAULT 'vault',
 		notebook TEXT NOT NULL,
 		section TEXT NOT NULL,
 		page TEXT NOT NULL,
@@ -201,6 +210,20 @@ func (dm *DatabaseManager) initSchema() error {
 	);`
 	if _, err := dm.db.Exec(createBlocksTable); err != nil {
 		return fmt.Errorf("failed to create blocks table: %w", err)
+	}
+
+	// Migration: add the `source` discriminator to pre-existing blocks tables
+	// (a vault created before #100). Idempotent via the try-ignore pattern used
+	// for the tasks columns above; existing rows inherit the 'vault' default.
+	for _, col := range []struct{ name, defn string }{
+		{"source", "TEXT NOT NULL DEFAULT 'vault'"},
+	} {
+		alter := fmt.Sprintf("ALTER TABLE blocks ADD COLUMN %s %s", col.name, col.defn)
+		if _, err := dm.db.Exec(alter); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("failed to migrate blocks table (add %s): %w", col.name, err)
+			}
+		}
 	}
 
 	// Tasks Metadata Table
@@ -278,7 +301,12 @@ func (dm *DatabaseManager) initSchema() error {
 
 	// Create covered indexes
 	indexes := []string{
-		"CREATE INDEX IF NOT EXISTS idx_blocks_file ON blocks(notebook, section, page, file_date);",
+		// #100: replace the pre-source idx_blocks_file (keyed on notebook..)
+		// with a source-aware index. DROP IF EXISTS is a one-time cleanup of a
+		// pre-migration vault; CREATE IF NOT EXISTS is a no-op afterwards, so
+		// this does not rebuild on every launch.
+		"DROP INDEX IF EXISTS idx_blocks_file;",
+		"CREATE INDEX IF NOT EXISTS idx_blocks_src_file ON blocks(source, notebook, section, page, file_date);",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_dates ON tasks(start_date, due_date) WHERE start_date IS NOT NULL OR due_date IS NOT NULL;",
 		"CREATE INDEX IF NOT EXISTS idx_tags_lookup ON tags(level_0, level_1, level_2);",
 		// Functional indexes for case-insensitive search (SearchBlocks).
@@ -500,16 +528,50 @@ func ExtractTags(text string) []string {
 	return tags
 }
 
-// ClearFileBlocks deletes all blocks, tasks, and tags associated with a specific page on a given day.
-func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, notebook, section, page string) error {
-	query := "DELETE FROM blocks WHERE notebook = ? AND section = ? AND page = ?"
+// ClearFileBlocks deletes all blocks, tasks, and tags associated with a
+// specific page on a given day, scoped to the notebook's source so a linked
+// notebook sharing a display name with a vault notebook cannot clear the
+// vault's rows (#100).
+func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, source, notebook, section, page string) error {
+	if source == "" {
+		source = "vault"
+	}
+	query := "DELETE FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?"
 	var err error
 	if tx != nil {
-		_, err = tx.Exec(query, notebook, section, page)
+		_, err = tx.Exec(query, source, notebook, section, page)
 	} else {
-		_, err = dm.db.Exec(query, notebook, section, page)
+		_, err = dm.db.Exec(query, source, notebook, section, page)
 	}
 	return err
+}
+
+// BlockIDsForPage returns the IDs of every block currently indexed for a page,
+// without materializing the full ParsedBlock rows. Used by the eviction paths
+// (DeletePage, watcher Remove/Rename, SaveFileBlocks replacement) to release the
+// per-block mutex entries (#122) for blocks that no longer exist. Scoped by
+// source (#100).
+func (dm *DatabaseManager) BlockIDsForPage(source, notebook, section, page string) ([]string, error) {
+	if source == "" {
+		source = "vault"
+	}
+	rows, err := dm.db.Query(
+		"SELECT id FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+		source, notebook, section, page,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // IndexFileBlocks updates the index with a set of blocks in a single transaction.
@@ -518,9 +580,12 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, notebook, section, page s
 // (e.g. malformed YAML frontmatter). They are logged at warn level so a
 // maintainer can grep the output without changing the call signature or
 // the public API.
-func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, fileWarnings ...string) error {
+func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, fileWarnings ...string) error {
+	if source == "" {
+		source = "vault"
+	}
 	for _, w := range fileWarnings {
-		log.Printf("db.IndexFileBlocks(%s/%s/%s): %s", notebook, section, page, w)
+		log.Printf("db.IndexFileBlocks(%s/%s/%s/%s): %s", source, notebook, section, page, w)
 	}
 
 	tx, err := dm.db.Begin()
@@ -546,8 +611,10 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, block
 	}
 
 	// Also clear by metadata to catch blocks that the user removed from the
-	// file (their IDs are no longer in the new parse output).
-	if err := dm.ClearFileBlocks(tx, notebook, section, page); err != nil {
+	// file (their IDs are no longer in the new parse output). Scope by source
+	// so a linked notebook sharing a display name with a vault notebook cannot
+	// clear the vault's rows (#100).
+	if err := dm.ClearFileBlocks(tx, source, notebook, section, page); err != nil {
 		return fmt.Errorf("failed to clear old blocks: %w", err)
 	}
 
@@ -555,7 +622,7 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, block
 		return tx.Commit()
 	}
 
-	stmtBlock, err := tx.Prepare("INSERT INTO blocks (id, parent_id, notebook, section, page, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	stmtBlock, err := tx.Prepare("INSERT INTO blocks (id, parent_id, source, notebook, section, page, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
@@ -594,7 +661,7 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, block
 		if fileDate == "" {
 			fileDate = time.Now().Format("2006-01-02")
 		}
-		_, err = stmtBlock.Exec(block.ID, parentID, notebook, section, page, fileDate, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
+		_, err = stmtBlock.Exec(block.ID, parentID, source, notebook, section, page, fileDate, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
 		if err != nil {
 			return fmt.Errorf("failed to insert block %s: %w", block.ID, err)
 		}
@@ -612,7 +679,7 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, block
 				dueDate = block.DueDate
 			}
 			pinnedVal := 0
-			if block.Pinned {
+			if block.Pinned != nil && *block.Pinned {
 				pinnedVal = 1
 			}
 			linksCount := len(parser.BlockRefRegex.FindAllString(block.RawText, -1))
@@ -740,7 +807,8 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 		}
 
 		// Also clear by metadata to catch blocks the user removed from the file.
-		if err := dm.ClearFileBlocks(tx, res.Notebook, res.Section, res.Page); err != nil {
+		// IndexScanResults is the vault startup scan, so source is always 'vault'.
+		if err := dm.ClearFileBlocks(tx, "vault", res.Notebook, res.Section, res.Page); err != nil {
 			return 0, skipped, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
 		}
 
@@ -773,7 +841,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 					dueDate = block.DueDate
 				}
 				pinnedVal := 0
-				if block.Pinned {
+				if block.Pinned != nil && *block.Pinned {
 					pinnedVal = 1
 				}
 				// Compute comments_count (child NOTE blocks) and links_count
@@ -824,11 +892,11 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 				if len(parts) > 2 {
 					level2 = parts[2]
 				}
-			_, err = stmtTag.Exec(block.ID, tagPath, level0, level1, level2)
-			if err != nil {
-				log.Printf("db.IndexScanResults: tag insert error for block %s tag %q: %v", block.ID, tagPath, err)
-				continue
-			}
+				_, err = stmtTag.Exec(block.ID, tagPath, level0, level1, level2)
+				if err != nil {
+					log.Printf("db.IndexScanResults: tag insert error for block %s tag %q: %v", block.ID, tagPath, err)
+					continue
+				}
 			}
 		}
 
@@ -842,41 +910,60 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	return indexedCount, skipped, nil
 }
 
+// ClearSourceBlocks deletes every block (and, via CASCADE, its tasks/tags)
+// for a given source. Used by UnlinkNotebook to drop a linked notebook's
+// local index rows without touching the external files (#100).
+func (dm *DatabaseManager) ClearSourceBlocks(source string) error {
+	if source == "" {
+		return nil
+	}
+	_, err := dm.db.Exec("DELETE FROM blocks WHERE source = ?", source)
+	return err
+}
+
 // BlockLocation holds the file-level coordinates of a block, used by write
 // paths (UpdateBlockState, MutateBlock, PluginUpdateTaskMeta) to resolve the
-// on-disk file path from a block UUID.
+// on-disk file path from a block UUID. Source ('vault' | 'linked:<id>') tells
+// the path-resolution layer which root the file lives under (#100).
 type BlockLocation struct {
+	Source    string
 	Notebook  string
 	Section   string
 	Page      string
 	BlockType string
 }
 
-// GetBlockLocation looks up the (notebook, section, page, type) for a block
-// UUID. This is the typed API replacement for the raw SQLDB().QueryRow calls
-// that were scattered across app.go write paths.
+// GetBlockLocation looks up the (source, notebook, section, page, type) for a
+// block UUID. This is the typed API replacement for the raw SQLDB().QueryRow
+// calls that were scattered across app.go write paths.
 func (dm *DatabaseManager) GetBlockLocation(blockID string) (BlockLocation, error) {
 	var loc BlockLocation
 	err := dm.db.QueryRow(
-		"SELECT notebook, section, page, type FROM blocks WHERE id = ?",
+		"SELECT COALESCE(source, 'vault'), notebook, section, page, type FROM blocks WHERE id = ?",
 		blockID,
-	).Scan(&loc.Notebook, &loc.Section, &loc.Page, &loc.BlockType)
+	).Scan(&loc.Source, &loc.Notebook, &loc.Section, &loc.Page, &loc.BlockType)
+	if loc.Source == "" {
+		loc.Source = "vault"
+	}
 	return loc, err
 }
 
 // FetchPageBlocks returns a flat ordered list of all blocks for a page.
 // A page is a single file; all blocks share the same (notebook, section,
 // page) and are ordered by line_number. Each block carries its own file_date.
-func (dm *DatabaseManager) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBlock, error) {
+func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page string) ([]parser.ParsedBlock, error) {
+	if source == "" {
+		source = "vault"
+	}
 	rows, err := dm.db.Query(`
 		SELECT b.id, b.parent_id, b.depth, b.type, b.raw_content, b.clean_content, b.line_number,
 		       b.file_date,
 		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0)
 		FROM blocks b
 		LEFT JOIN tasks t ON b.id = t.block_id
-		WHERE b.notebook = ? AND b.section = ? AND b.page = ?
+		WHERE b.source = ? AND b.notebook = ? AND b.section = ? AND b.page = ?
 		ORDER BY b.line_number ASC
-	`, notebook, section, page)
+	`, source, notebook, section, page)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query page blocks: %w", err)
 	}
@@ -1385,4 +1472,3 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int) (p
 		HasMore: end < total,
 	}, nil
 }
-

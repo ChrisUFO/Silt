@@ -7,6 +7,8 @@
     CreateSection,
     CreatePage,
     PickNotebookFolder,
+    PickLinkedNotebook,
+    UnlinkNotebook,
     RenamePage,
     RenameSection,
     RenameNotebook,
@@ -29,6 +31,9 @@
   interface NavNotebook {
     name: string
     sections: NavSection[]
+    source?: string
+    root_path?: string
+    disconnected?: boolean
   }
   interface NavigationTree {
     notebooks: NavNotebook[]
@@ -70,7 +75,11 @@
   // Creation/rename modal state
   let createMode = $state<'' | 'notebook' | 'section'>('')
   let editingMode = $state<'create' | 'rename'>('create')
-  let renameCtx = $state<{ level: 'notebook' | 'section'; notebook: string; section?: string } | null>(null)
+  let renameCtx = $state<{
+    level: 'notebook' | 'section'
+    notebook: string
+    section?: string
+  } | null>(null)
   let newName = $state('')
   let createError = $state('')
   let creating = $state(false)
@@ -95,17 +104,43 @@
     label: string
   } | null>(null)
 
+  // True when the delete target is a LINKED notebook. Deleting a linked
+  // notebook UNLINKS it (files untouched) — the confirm copy must say so
+  // rather than the vault-trash message (#100).
+  let deleteTargetLinked = $derived(
+    !!deleteTarget &&
+      deleteTarget.level === 'notebook' &&
+      tree.notebooks.find((n) => n.name === deleteTarget!.notebook)?.source !==
+        'vault' &&
+      !!tree.notebooks.find((n) => n.name === deleteTarget!.notebook)?.source
+  )
+
   // Nav order for drag-to-reorder (#68). Explicit ordering from config.yaml;
   // items not in the map fall back to alphabetical.
-  let navOrder = $state<{ notebooks: string[]; sections: Record<string, string[]>; pages: Record<string, string[]> }>({
+  let navOrder = $state<{
+    notebooks: string[]
+    sections: Record<string, string[]>
+    pages: Record<string, string[]>
+  }>({
     notebooks: [],
     sections: {},
     pages: {}
   })
-  let dragItem = $state<{ level: string; name: string; section?: string } | null>(null)
-  let dropTarget = $state<{ level: string; name: string; before: boolean } | null>(null)
+  let dragItem = $state<{
+    level: string
+    name: string
+    section?: string
+  } | null>(null)
+  let dropTarget = $state<{
+    level: string
+    name: string
+    before: boolean
+  } | null>(null)
 
-  function sortByName<T extends { name: string }>(items: T[], order: string[] | undefined): T[] {
+  function sortByName<T extends { name: string }>(
+    items: T[],
+    order: string[] | undefined
+  ): T[] {
     if (!order || order.length === 0) return items
     const orderMap = new Map(order.map((n, i) => [n, i]))
     return [...items].sort((a, b) => {
@@ -132,7 +167,11 @@
   async function persistSectionOrder(notebook: string, sections: string[]) {
     navOrder.sections[notebook] = sections
     try {
-      await SetNavOrder({ notebooks: navOrder.notebooks, sections: navOrder.sections, pages: navOrder.pages })
+      await SetNavOrder({
+        notebooks: navOrder.notebooks,
+        sections: navOrder.sections,
+        pages: navOrder.pages
+      })
     } catch (e) {
       console.error('SetNavOrder failed:', e)
     }
@@ -141,14 +180,23 @@
   async function persistPageOrder(sectionKey: string, pages: string[]) {
     navOrder.pages[sectionKey] = pages
     try {
-      await SetNavOrder({ notebooks: navOrder.notebooks, sections: navOrder.sections, pages: navOrder.pages })
+      await SetNavOrder({
+        notebooks: navOrder.notebooks,
+        sections: navOrder.sections,
+        pages: navOrder.pages
+      })
     } catch (e) {
       console.error('SetNavOrder failed:', e)
     }
   }
 
   // Drag-and-drop handlers (#68)
-  function handleDragStart(e: DragEvent, level: string, name: string, section?: string) {
+  function handleDragStart(
+    e: DragEvent,
+    level: string,
+    name: string,
+    section?: string
+  ) {
     dragItem = { level, name, section }
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move'
@@ -170,7 +218,13 @@
     dropTarget = null
   }
 
-  function handleDrop(e: DragEvent, level: string, targetName: string, notebook?: string, section?: string) {
+  function handleDrop(
+    e: DragEvent,
+    level: string,
+    targetName: string,
+    notebook?: string,
+    section?: string
+  ) {
     e.preventDefault()
     e.stopPropagation()
     if (!dragItem || dragItem.level !== level || dragItem.name === targetName) {
@@ -180,13 +234,18 @@
     }
 
     if (level === 'section' && notebook) {
-      const sorted = sortByName(activeNotebookObj?.sections ?? [], navOrder.sections[notebook])
+      const sorted = sortByName(
+        activeNotebookObj?.sections ?? [],
+        navOrder.sections[notebook]
+      )
       const names = sorted.map((s) => s.name)
       const fromIdx = names.indexOf(dragItem.name)
       const toIdx = names.indexOf(targetName)
       if (fromIdx === -1 || toIdx === -1) return
       names.splice(fromIdx, 1)
-      const insertAt = dropTarget?.before ? names.indexOf(targetName) : names.indexOf(targetName) + 1
+      const insertAt = dropTarget?.before
+        ? names.indexOf(targetName)
+        : names.indexOf(targetName) + 1
       names.splice(insertAt, 0, dragItem.name)
       persistSectionOrder(notebook, names)
     } else if (level === 'page' && section) {
@@ -198,7 +257,9 @@
       const toIdx = names.indexOf(targetName)
       if (fromIdx === -1 || toIdx === -1) return
       names.splice(fromIdx, 1)
-      const insertAt = dropTarget?.before ? names.indexOf(targetName) : names.indexOf(targetName) + 1
+      const insertAt = dropTarget?.before
+        ? names.indexOf(targetName)
+        : names.indexOf(targetName) + 1
       names.splice(insertAt, 0, dragItem.name)
       persistPageOrder(sectionKey, names)
     }
@@ -223,7 +284,10 @@
   // Sections sorted by nav_order (falling back to alphabetical) for #68.
   let sortedSections = $derived.by(() => {
     if (!activeNotebookObj) return []
-    return sortByName(activeNotebookObj.sections, navOrder.sections[activeNotebook] ?? [])
+    return sortByName(
+      activeNotebookObj.sections,
+      navOrder.sections[activeNotebook] ?? []
+    )
   })
 
   // Sections are optional — a page can live directly under a notebook — so the
@@ -329,7 +393,12 @@
     setTimeout(() => modalInputEl?.focus(), 0)
   }
 
-  function openRename(level: 'notebook' | 'section', notebook: string, section: string | undefined, currentName: string) {
+  function openRename(
+    level: 'notebook' | 'section',
+    notebook: string,
+    section: string | undefined,
+    currentName: string
+  ) {
     createMode = level
     editingMode = 'rename'
     renameCtx = { level, notebook, section }
@@ -360,6 +429,28 @@
     }
   }
 
+  // #100: link an external folder (e.g. a synced SharePoint mount) as a
+  // notebook, edited in place. The folder is never copied into the vault.
+  async function handleLinkExternalNotebook() {
+    try {
+      creating = true
+      createError = ''
+      const ln = await PickLinkedNotebook()
+      if (!ln || !ln.id) {
+        showNotebookDropdown = false
+        return // user cancelled
+      }
+      await loadNavigation()
+      handleSelectNotebook(ln.display_name)
+      showNotebookDropdown = false
+    } catch (e) {
+      createError = e instanceof Error ? e.message : String(e)
+      showNotebookDropdown = false
+    } finally {
+      creating = false
+    }
+  }
+
   async function handleCreate() {
     const trimmed = newName.trim()
     if (trimmed === '') return
@@ -375,7 +466,11 @@
             handleSelectNotebook(trimmed)
           }
         } else if (renameCtx.level === 'section') {
-          await RenameSection(renameCtx.notebook, renameCtx.section ?? '', trimmed)
+          await RenameSection(
+            renameCtx.notebook,
+            renameCtx.section ?? '',
+            trimmed
+          )
           await loadNavigation()
           if (activeSection === renameCtx.section) {
             activeSection = trimmed
@@ -495,8 +590,10 @@
     contextMenu = null
     let label = ''
     if (level === 'page' && page) label = `page "${page}"`
-    else if (level === 'section' && section) label = `section "${section}" and all its pages`
-    else if (level === 'notebook') label = `notebook "${notebook}" and all its content`
+    else if (level === 'section' && section)
+      label = `section "${section}" and all its pages`
+    else if (level === 'notebook')
+      label = `notebook "${notebook}" and all its content`
     deleteTarget = { level, notebook, section, page, label }
   }
 
@@ -510,7 +607,15 @@
       } else if (level === 'section' && section !== undefined) {
         await DeleteSection(notebook, section)
       } else if (level === 'notebook') {
-        await DeleteNotebook(notebook)
+        // #100: a linked notebook is UNLINKED (files untouched), not moved to
+        // trash. Vault notebooks are deleted as before.
+        const nb = tree.notebooks.find((n) => n.name === notebook)
+        if (nb && nb.source && nb.source !== 'vault') {
+          const id = nb.source.slice('linked:'.length)
+          if (id) await UnlinkNotebook(id)
+        } else {
+          await DeleteNotebook(notebook)
+        }
       }
       await loadNavigation()
       // Navigate away if the active item was deleted.
@@ -616,6 +721,20 @@
                   class="font-label-sm text-label-sm text-text-primary truncate flex-1"
                   >{nb.name}</span
                 >
+                {#if nb.source && nb.source !== 'vault'}
+                  <span
+                    class="material-symbols-outlined text-[14px] {nb.disconnected
+                      ? 'text-status-warn'
+                      : 'text-text-muted'}"
+                    title={nb.disconnected
+                      ? `Linked (offline): ${nb.root_path}`
+                      : `Linked: ${nb.root_path}`}
+                    aria-label={nb.disconnected
+                      ? 'Linked notebook offline'
+                      : 'Linked notebook'}
+                    >{nb.disconnected ? 'cloud_off' : 'link'}</span
+                  >
+                {/if}
                 {#if nb.name === activeNotebook}
                   <span
                     class="material-symbols-outlined text-accent-primary-start text-[16px]"
@@ -648,6 +767,18 @@
                 >folder_open</span
               >
               <span class="font-label-sm text-label-sm">Open Notebook…</span>
+            </button>
+            <button
+              onclick={handleLinkExternalNotebook}
+              disabled={creating}
+              title="Link a folder that lives outside the vault (e.g. a synced SharePoint mount); it is edited in place, never copied in."
+              class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-bg-hover transition-colors font-body-md border-none bg-transparent text-text-muted disabled:opacity-50"
+            >
+              <span class="material-symbols-outlined text-[18px]">add_link</span
+              >
+              <span class="font-label-sm text-label-sm"
+                >Link External Folder…</span
+              >
             </button>
           </div>
         </div>
@@ -684,13 +815,15 @@
       </span>
       <span title="New page from template" class="flex items-center">
         <button
-          onclick={() => window.dispatchEvent(new CustomEvent('open-template-picker'))}
+          onclick={() =>
+            window.dispatchEvent(new CustomEvent('open-template-picker'))}
           disabled={!activeNotebook}
           title="New page from template (Ctrl+Shift+T)"
           aria-label="New Page from Template"
           class="w-9 bg-bg-panel border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm-bold py-2 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          <span class="material-symbols-outlined text-[20px]">content_copy</span>
+          <span class="material-symbols-outlined text-[20px]">content_copy</span
+          >
         </button>
       </span>
     </div>
@@ -737,7 +870,7 @@
             {dropTarget}
             onToggleSection={toggleSection}
             onSelectPage={handleSelectPage}
-            onSelectSection={onSelectSection}
+            {onSelectSection}
             onCreatePageInline={handleCreatePageInline}
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
@@ -765,16 +898,17 @@
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={editingMode === 'rename' ? `Rename ${createMode}` : `New ${createMode}`}
+        aria-label={editingMode === 'rename'
+          ? `Rename ${createMode}`
+          : `New ${createMode}`}
         tabindex="-1"
         class="relative w-full max-w-md glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
         style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--bg-panel) 90%, transparent);"
       >
         <div class="px-5 py-4 border-b border-border-muted">
           <h2 class="font-headline-md text-headline-md text-text-primary">
-            {editingMode === 'rename' ? 'Rename' : 'New'} {createMode === 'notebook'
-              ? 'Notebook'
-              : 'Section'}
+            {editingMode === 'rename' ? 'Rename' : 'New'}
+            {createMode === 'notebook' ? 'Notebook' : 'Section'}
           </h2>
           <p class="text-text-muted text-[12px] font-body-md mt-0.5">
             {#if createMode === 'notebook'}
@@ -823,7 +957,13 @@
             disabled={creating || !newName.trim()}
             class="px-4 py-2 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {creating ? (editingMode === 'rename' ? 'Renaming…' : 'Creating…') : (editingMode === 'rename' ? 'Rename' : 'Create')}
+            {creating
+              ? editingMode === 'rename'
+                ? 'Renaming…'
+                : 'Creating…'
+              : editingMode === 'rename'
+                ? 'Rename'
+                : 'Create'}
           </button>
         </div>
       </div>
@@ -864,7 +1004,10 @@
       tabindex="-1"
       aria-label="Close context menu"
       onclick={closeContextMenu}
-      oncontextmenu={(e) => { e.preventDefault(); closeContextMenu() }}
+      oncontextmenu={(e) => {
+        e.preventDefault()
+        closeContextMenu()
+      }}
       class="absolute inset-0 cursor-default border-none bg-transparent p-0"
     ></button>
     <div
@@ -917,11 +1060,19 @@
     >
       <div class="px-5 py-4 border-b border-border-muted">
         <h2 class="font-headline-md text-headline-md text-text-primary">
-          Delete {deleteTarget.level}?
+          {deleteTargetLinked
+            ? 'Unlink Notebook?'
+            : `Delete ${deleteTarget.level}?`}
         </h2>
         <p class="text-text-muted text-[12px] font-body-md mt-1">
-          This will move the {deleteTarget.label} to <code>.system/trash/</code>.
-          You can recover it from there manually.
+          {#if deleteTargetLinked}
+            Unlinking <strong>{deleteTarget.label}</strong> stops indexing it.
+            Its files are left <strong>completely untouched</strong> — re-link the
+            folder later to index it again.
+          {:else}
+            This will move the {deleteTarget.label} to
+            <code>.system/trash/</code>. You can recover it from there manually.
+          {/if}
         </p>
       </div>
       <div class="flex items-center justify-end gap-2 px-5 py-3">
@@ -935,7 +1086,7 @@
           onclick={confirmDelete}
           class="px-4 py-2 rounded-lg bg-status-danger/20 border border-status-danger/40 text-status-danger font-label-sm-bold hover:brightness-110 transition-all cursor-pointer"
         >
-          Delete
+          {deleteTargetLinked ? 'Unlink' : 'Delete'}
         </button>
       </div>
     </div>

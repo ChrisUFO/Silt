@@ -15,6 +15,7 @@ function makeCtx(): PluginContext {
     activeNotebook: 'Work',
     activeSection: 'Journal',
     activePage: 'Daily',
+    today: '2026-06-16',
     sqliteQuery: mocks.sqliteQuery,
     updateBlockState: mocks.updateBlockState,
     mutateBlock: vi.fn(),

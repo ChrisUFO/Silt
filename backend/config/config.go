@@ -17,12 +17,13 @@ import (
 // SystemConfig is the parsed contents of <vault>/.system/config.yaml. It
 // mirrors the schema documented in SPECS.md §9.1.
 type SystemConfig struct {
-	Notebooks NotebooksConfig   `yaml:"notebooks" json:"notebooks"`
-	Editor    EditorConfig      `yaml:"editor" json:"editor"`
-	Parsing   ParsingConfig     `yaml:"parsing" json:"parsing"`
-	Hotkeys   map[string]string `yaml:"hotkeys" json:"hotkeys"`
-	Plugins   PluginsConfig     `yaml:"plugins" json:"plugins"`
-	UI        UIConfig          `yaml:"ui" json:"ui"`
+	Notebooks       NotebooksConfig   `yaml:"notebooks" json:"notebooks"`
+	Editor          EditorConfig      `yaml:"editor" json:"editor"`
+	Parsing         ParsingConfig     `yaml:"parsing" json:"parsing"`
+	Hotkeys         map[string]string `yaml:"hotkeys" json:"hotkeys"`
+	Plugins         PluginsConfig     `yaml:"plugins" json:"plugins"`
+	UI              UIConfig          `yaml:"ui" json:"ui"`
+	LinkedNotebooks []LinkedNotebook  `yaml:"linked_notebooks,omitempty" json:"linked_notebooks,omitempty"`
 }
 
 // NotebooksConfig holds spatial-mapping defaults.
@@ -56,6 +57,26 @@ type PluginsConfig struct {
 	Disabled       []string       `yaml:"disabled" json:"disabled"`
 	PluginSettings map[string]any `yaml:"plugin_settings" json:"plugin_settings"`
 }
+
+// LinkedNotebook is an external notebook root registered into the vault but
+// living outside it (e.g. a synced SharePoint/OneDrive folder). It is edited
+// IN PLACE — never copied into the vault — so its existing source of truth and
+// sync/conflict semantics are preserved (#100). The link registry
+// (config.yaml `linked_notebooks:`) is vault-scoped state alongside the active
+// plugin list; the markdown content (and any co-located <root>/.system/) stays
+// with the notebook root and is the product.
+type LinkedNotebook struct {
+	ID          string `yaml:"id" json:"id"`                     // stable id, e.g. "linked-<short>"; source column = "linked:"+ID
+	RootPath    string `yaml:"root_path" json:"root_path"`       // absolute path to the external notebook root
+	DisplayName string `yaml:"display_name" json:"display_name"` // sidebar label (the notebook "name")
+}
+
+// Source returns the `blocks.source` discriminator value for this linked
+// notebook ('linked:<id>'), matching what the indexer writes.
+func (l LinkedNotebook) Source() string { return "linked:" + l.ID }
+
+// LinkedNotebooksSource is the `blocks.source` value for in-vault notebooks.
+const LinkedNotebooksVaultSource = "vault"
 
 // UIConfig holds per-vault UI preferences (sidebar width, custom navigation
 // ordering). Stored in the YAML tier (per-vault) per ARCHITECTURE §0 rule #2.
@@ -134,18 +155,18 @@ func Defaults() SystemConfig {
 			FocusHighlightAncestors: true,
 		},
 		Parsing: ParsingConfig{
-			AutoInjectUUID: true,
-			ShorthandRegex: `^([ ]|[/]|[x])\s(TODO|DOING|DONE)\sTASK\s(?:\s*\[([^\]]*)\])?(?:\(([^)]*)\))?(?:#(\d+))?\s(.*)$`,
+			AutoInjectUUID:      true,
+			ShorthandRegex:      `^([ ]|[/]|[x])\s(TODO|DOING|DONE)\sTASK\s(?:\s*\[([^\]]*)\])?(?:\(([^)]*)\))?(?:#(\d+))?\s(.*)$`,
 			DefaultTaskPriority: 3,
 		},
 		Hotkeys: map[string]string{
-			"open_search":           "Ctrl+P",
-			"open_command_palette":  "Ctrl+Slash",
-			"toggle_sidebar":        "Ctrl+B",
-			"cycle_view_layout":     "Alt+Tab",
-			"indent_block":          "Tab",
-			"unindent_block":        "Shift+Tab",
-			"open_template_picker":  "Ctrl+Shift+T",
+			"open_search":          "Ctrl+P",
+			"open_command_palette": "Ctrl+Slash",
+			"toggle_sidebar":       "Ctrl+B",
+			"cycle_view_layout":    "Alt+Tab",
+			"indent_block":         "Tab",
+			"unindent_block":       "Shift+Tab",
+			"open_template_picker": "Ctrl+Shift+T",
 		},
 		Plugins: PluginsConfig{
 			Active:   []string{"silt-agenda", "silt-calendar", "silt-kanban"},

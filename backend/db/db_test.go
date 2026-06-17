@@ -59,7 +59,7 @@ func TestIndexFileBlocks_InsertsBlocksTasksAndTags(t *testing.T) {
 		sampleTaskBlock("11111111-1111-1111-1111-111111111111", 1),
 		sampleNoteBlock("22222222-2222-2222-2222-222222222222", 2),
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", blocks, []string{"work/project"}); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, []string{"work/project"}); err != nil {
 		t.Fatalf("IndexFileBlocks failed: %v", err)
 	}
 
@@ -98,7 +98,7 @@ func TestIndexFileBlocks_InsertsBlocksTasksAndTags(t *testing.T) {
 			LineNumber: 1,
 		},
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", blocksWithInlineTag, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocksWithInlineTag, nil); err != nil {
 		t.Fatalf("index inline tags: %v", err)
 	}
 	if err := dm.db.QueryRow("SELECT COUNT(*) FROM tags WHERE block_id = ?", "33333333-3333-3333-3333-333333333333").Scan(&tagCount); err != nil {
@@ -109,11 +109,95 @@ func TestIndexFileBlocks_InsertsBlocksTasksAndTags(t *testing.T) {
 	}
 }
 
+// TestIndexFileBlocks_PinnedProjection verifies the markdown *bool pin state
+// (nil / &false / &true) projects onto the INTEGER 0/1 tasks.pinned cache
+// column. The tri-state lives only in the parse→render cycle; SQLite caches a
+// plain 0/1 for query speed (nil and &false both project to 0). Covers a
+// previously-missing assertion (#123).
+func TestIndexFileBlocks_PinnedProjection(t *testing.T) {
+	dm := newTestDB(t)
+
+	boolPtr := func(b bool) *bool { return &b }
+	mk := func(id string, pinned *bool) parser.ParsedBlock {
+		b := sampleTaskBlock(id, 1)
+		b.Pinned = pinned
+		return b
+	}
+	blocks := []parser.ParsedBlock{
+		mk("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", boolPtr(true)),  // -> 1
+		mk("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", boolPtr(false)), // -> 0
+		mk("cccccccc-cccc-cccc-cccc-cccccccccccc", nil),            // -> 0
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks failed: %v", err)
+	}
+
+	cases := []struct {
+		id   string
+		want int
+	}{
+		{"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1},
+		{"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 0},
+		{"cccccccc-cccc-cccc-cccc-cccccccccccc", 0},
+	}
+	for _, c := range cases {
+		var got int
+		if err := dm.db.QueryRow("SELECT pinned FROM tasks WHERE block_id = ?", c.id).Scan(&got); err != nil {
+			t.Fatalf("select pinned for %s: %v", c.id, err)
+		}
+		if got != c.want {
+			t.Errorf("%s: expected pinned=%d, got %d", c.id, c.want, got)
+		}
+	}
+}
+
+// TestBlocksSource_DefaultsVault verifies the #100 `source` discriminator
+// column defaults to 'vault' for the classic in-vault indexing path (no
+// signature change required — the column default handles it) and that
+// GetBlockLocation surfaces the source for the path-resolution layer. A
+// linked-notebook source ('linked:<id>') is exercised in the #100 link phase.
+func TestBlocksSource_DefaultsVault(t *testing.T) {
+	dm := newTestDB(t)
+	id := "dddddddd-dddd-dddd-dddd-dddddddddddd"
+	blocks := []parser.ParsedBlock{sampleTaskBlock(id, 1)}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	var source string
+	if err := dm.db.QueryRow("SELECT source FROM blocks WHERE id = ?", id).Scan(&source); err != nil {
+		t.Fatalf("select source: %v", err)
+	}
+	if source != "vault" {
+		t.Errorf("expected source='vault' for in-vault block, got %q", source)
+	}
+
+	loc, err := dm.GetBlockLocation(id)
+	if err != nil {
+		t.Fatalf("GetBlockLocation: %v", err)
+	}
+	if loc.Source != "vault" {
+		t.Errorf("BlockLocation.Source = %q, want 'vault'", loc.Source)
+	}
+
+	// The source-aware covering index exists (pre-source idx_blocks_file was
+	// dropped on migration).
+	var n int
+	if err := dm.db.QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_blocks_src_file'",
+	).Scan(&n); err != nil {
+		t.Fatalf("check index: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected idx_blocks_src_file to exist, got count=%d", n)
+	}
+}
+
 func TestIndexFileBlocks_ReplacesExistingRows(t *testing.T) {
 	dm := newTestDB(t)
 
 	first := []parser.ParsedBlock{sampleTaskBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", first, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", first, nil); err != nil {
 		t.Fatalf("first IndexFileBlocks: %v", err)
 	}
 
@@ -121,7 +205,7 @@ func TestIndexFileBlocks_ReplacesExistingRows(t *testing.T) {
 		sampleTaskBlock("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 1),
 		sampleNoteBlock("cccccccc-cccc-cccc-cccc-cccccccccccc", 2),
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", second, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", second, nil); err != nil {
 		t.Fatalf("second IndexFileBlocks: %v", err)
 	}
 
@@ -147,12 +231,12 @@ func TestIndexFileBlocks_EmptyBlocksCommits(t *testing.T) {
 	dm := newTestDB(t)
 
 	// Seed with a block first.
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", []parser.ParsedBlock{sampleTaskBlock("dddddddd-dddd-dddd-dddd-dddddddddddd", 1)}, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", []parser.ParsedBlock{sampleTaskBlock("dddddddd-dddd-dddd-dddd-dddddddddddd", 1)}, nil); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
 	// Re-index with empty blocks should clear and commit successfully.
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", nil, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", nil, nil); err != nil {
 		t.Fatalf("empty re-index: %v", err)
 	}
 
@@ -169,11 +253,11 @@ func TestClearFileBlocks_CascadesToTasksAndTags(t *testing.T) {
 	dm := newTestDB(t)
 
 	blocks := []parser.ParsedBlock{sampleTaskBlock("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", 1)}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", blocks, []string{"cascade-tag"}); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, []string{"cascade-tag"}); err != nil {
 		t.Fatalf("index: %v", err)
 	}
 
-	if err := dm.ClearFileBlocks(nil, "Work", "Journal", "Daily"); err != nil {
+	if err := dm.ClearFileBlocks(nil, "vault", "Work", "Journal", "Daily"); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
 
@@ -223,7 +307,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 			LineNumber: 1,
 		},
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", blocks, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
 		t.Fatalf("index: %v", err)
 	}
 
@@ -315,7 +399,7 @@ func TestIndexFileBlocks_AttachesFrontmatterTagsByLoopIndex(t *testing.T) {
 			LineNumber: 7,
 		},
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", blocks, []string{"welcome", "tutorial"}); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, []string{"welcome", "tutorial"}); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -361,7 +445,7 @@ func TestIndexFileBlocks_ReindexAfterFrontmatterMetadataChange(t *testing.T) {
 			LineNumber: 1,
 		},
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", original, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", original, nil); err != nil {
 		t.Fatalf("first index: %v", err)
 	}
 
@@ -376,7 +460,7 @@ func TestIndexFileBlocks_ReindexAfterFrontmatterMetadataChange(t *testing.T) {
 			LineNumber: 1,
 		},
 	}
-	if err := dm.IndexFileBlocks("Personal", "Journal", "Daily", updated, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Personal", "Journal", "Daily", updated, nil); err != nil {
 		t.Fatalf("re-index with new metadata: %v", err)
 	}
 
@@ -432,7 +516,7 @@ func TestQueryTasksWithFilters_PopulatesTags(t *testing.T) {
 			LineNumber: 2,
 		},
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", blocks, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
 		t.Fatalf("index: %v", err)
 	}
 
@@ -542,7 +626,7 @@ func TestQueryTagHierarchy_DistinctCountsAtOrBeneath(t *testing.T) {
 			LineNumber: 3,
 		},
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", blocks, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
 		t.Fatalf("index: %v", err)
 	}
 
@@ -603,14 +687,14 @@ func TestIndexer_KanbanQueryPath(t *testing.T) {
 		{ID: "k-aaa-3333", Type: parser.BlockTask, CleanText: "doing task", Status: "DOING", Priority: 2, DueDate: "", LineNumber: 3},
 		{ID: "k-aaa-4444", Type: parser.BlockTask, CleanText: "done task", Status: "DONE", Priority: 1, DueDate: "2026-06-01", LineNumber: 4},
 	}
-	if err := dm.IndexFileBlocks("Work", "Sprint", "Board", tasks, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Sprint", "Board", tasks, nil); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 	// A task in a DIFFERENT section — must be excluded by the section filter.
 	other := []parser.ParsedBlock{
 		{ID: "k-bbb-5555", Type: parser.BlockTask, CleanText: "other section", Status: "TODO", Priority: 1, LineNumber: 1},
 	}
-	if err := dm.IndexFileBlocks("Work", "Other", "Board", other, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Other", "Board", other, nil); err != nil {
 		t.Fatalf("IndexFileBlocks other: %v", err)
 	}
 
@@ -916,7 +1000,7 @@ func TestAtomicWrite_KillMidWriteRecoversViaWAL(t *testing.T) {
 		id := fmt.Sprintf("00000000-0000-0000-0000-%012d", i)
 		blocks = append(blocks, sampleNoteBlock(id, i+1))
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", blocks, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -962,7 +1046,7 @@ func TestAtomicWrite_KillMidWriteRecoversViaWAL(t *testing.T) {
 func TestPluginRODB_ReadsOnDiskIndex(t *testing.T) {
 	dm, dbPath := newOnDiskDB(t)
 	blocks := []parser.ParsedBlock{sampleTaskBlock("aaaaaaaa-1111-1111-1111-111111111111", 1)}
-	if err := dm.IndexFileBlocks("NB", "", "PG", blocks, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "NB", "", "PG", blocks, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1079,13 +1163,13 @@ func indexSearchable(t *testing.T) *DatabaseManager {
 	a1 := parser.ParsedBlock{ID: "a1a1a1a1-1111-1111-1111-111111111111", Type: parser.BlockNote, CleanText: "sprint planning notes for the sprint planning meeting", LineNumber: 1}
 	a2 := parser.ParsedBlock{ID: "a2a2a2a2-2222-2222-2222-222222222222", Type: parser.BlockTask, CleanText: "sprint review prep", Status: "TODO", LineNumber: 2}
 	a3 := parser.ParsedBlock{ID: "a3a3a3a3-3333-3333-3333-333333333333", Type: parser.BlockNote, CleanText: "a totally unrelated line about weather", LineNumber: 3}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", []parser.ParsedBlock{a1, a2, a3}, []string{"work"}); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", []parser.ParsedBlock{a1, a2, a3}, []string{"work"}); err != nil {
 		t.Fatalf("index page A: %v", err)
 	}
 	// Page B (Work/Journal/Retros) — one highly relevant block from a different
 	// page, used to verify per-page grouping surfaces both pages.
 	b1 := parser.ParsedBlock{ID: "b1b1b1b1-1111-1111-1111-111111111111", Type: parser.BlockNote, CleanText: "last sprint retrospective action items", LineNumber: 1}
-	if err := dm.IndexFileBlocks("Work", "Journal", "Retros", []parser.ParsedBlock{b1}, []string{"work"}); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Retros", []parser.ParsedBlock{b1}, []string{"work"}); err != nil {
 		t.Fatalf("index page B: %v", err)
 	}
 	return dm
@@ -1169,7 +1253,7 @@ func TestSearch_PerPageGroupingCapsResultsPerPage(t *testing.T) {
 			LineNumber: i + 1,
 		})
 	}
-	if err := dm.IndexFileBlocks("NB", "", "PG", blocks, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "NB", "", "PG", blocks, nil); err != nil {
 		t.Fatal(err)
 	}
 	res, err := dm.SearchBlocksPaged("alpha", 0, 50)
@@ -1236,7 +1320,7 @@ func TestSearch_TagHydrationSurvivesFTS(t *testing.T) {
 		RawText: "- [ ] ship the release #dev/release <!-- id: dddddddd-1111-1111-1111-111111111111 -->",
 		LineNumber: 1,
 	}
-	if err := dm.IndexFileBlocks("Work", "", "Daily", []parser.ParsedBlock{b}, []string{"dev/release"}); err != nil {
+	if err := dm.IndexFileBlocks("vault", "Work", "", "Daily", []parser.ParsedBlock{b}, []string{"dev/release"}); err != nil {
 		t.Fatal(err)
 	}
 	res, err := dm.SearchBlocksPaged("release", 0, 10)
@@ -1272,14 +1356,14 @@ func TestSearch_UpdateReplacesOldFTSContent(t *testing.T) {
 	// block's text changes.
 	dm := newTestDB(t)
 	orig := parser.ParsedBlock{ID: "eeeeeeee-1111-1111-1111-111111111111", Type: parser.BlockNote, CleanText: "needle in a haystack", LineNumber: 1}
-	if err := dm.IndexFileBlocks("NB", "", "PG", []parser.ParsedBlock{orig}, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "NB", "", "PG", []parser.ParsedBlock{orig}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if res, _ := dm.SearchBlocksPaged("needle", 0, 10); res.Total != 1 {
 		t.Fatalf("pre-update: expected 1 needle, got %d", res.Total)
 	}
 	updated := parser.ParsedBlock{ID: orig.ID, Type: parser.BlockNote, CleanText: "the needle is gone now replaced by thread", LineNumber: 1}
-	if err := dm.IndexFileBlocks("NB", "", "PG", []parser.ParsedBlock{updated}, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "NB", "", "PG", []parser.ParsedBlock{updated}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if res, _ := dm.SearchBlocksPaged("needle", 0, 10); res.Total == 0 {
@@ -1355,7 +1439,7 @@ func TestSearch_UnicodeContentMatches(t *testing.T) {
 		ID: "ffffffff-1111-1111-1111-111111111111", Type: parser.BlockNote,
 		CleanText: "résumé review for the café launch", LineNumber: 1,
 	}
-	if err := dm.IndexFileBlocks("NB", "", "PG", []parser.ParsedBlock{b}, nil); err != nil {
+	if err := dm.IndexFileBlocks("vault", "NB", "", "PG", []parser.ParsedBlock{b}, nil); err != nil {
 		t.Fatal(err)
 	}
 	// accented-Latin term that the old filter would have stripped to "caf"/"resum".

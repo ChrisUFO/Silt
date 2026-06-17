@@ -123,6 +123,20 @@ Path resolution: the **notebook** is the top folder under the vault; the **page*
 
 Silt starts blank — no default notebook or section is created. The user creates or opens their first notebook from the sidebar's notebook selector.
 
+**Linked / external notebooks (#100).** A notebook root does not have to live
+inside the vault. The user can LINK an external folder (e.g. a synced
+SharePoint/OneDrive mount) as a notebook from the sidebar ("Link External
+Folder…"); it is browsed/searched/edited in place and is NEVER copied into the
+vault. The linked root IS one notebook: its sections/pages live directly under
+it (there is no leading notebook-name component the way there is under the
+vault). Each linked notebook carries a `source` of `'linked:<id>'` (vs.
+`'vault'`) so two notebooks that happen to share a name across roots cannot
+collide; display names are globally unique. The link registry lives in
+vault-scoped `config.yaml` (`linked_notebooks:`). Unlinking a notebook stops
+indexing it and leaves its files completely untouched (vs. deleting a vault
+notebook, which trashes it). See ARCHITECTURE.md §3.1 for the full model
+(identity, path resolution, multi-root watcher, failure modes).
+
 
 3.3 File Boundary Specification & Frontmatter Standard
 

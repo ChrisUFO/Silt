@@ -67,27 +67,33 @@ const mocks = vi.hoisted(() => ({
           }
         }
       }
-    }
+    },
+    error: ''
   },
   sqliteQuery: vi.fn(),
   updateBlockState: vi.fn(),
   updateTaskMeta: vi.fn(),
-  saveConfig: vi.fn().mockResolvedValue(true)
+  saveConfig: vi.fn().mockResolvedValue(true),
+  updatePluginSetting: vi.fn().mockResolvedValue(true)
 }))
 
 vi.mock('../../../settings/store.svelte', () => ({
   settings: mocks.settings,
-  saveConfig: mocks.saveConfig
+  saveConfig: mocks.saveConfig,
+  updatePluginSetting: mocks.updatePluginSetting
 }))
 
 import Kanban from './Kanban.svelte'
 import type { PluginContext, PluginManifest } from '../../sdk'
+import { reactiveCtx, setNav, resetNav } from './reactiveCtx.svelte'
 
 function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
   return {
     activeNotebook: 'Work',
     activeSection: 'Journal',
     activePage: 'Daily',
+    // Fixed local-day anchor so date-filter assertions are deterministic.
+    today: '2026-06-16',
     sqliteQuery: mocks.sqliteQuery,
     updateBlockState: mocks.updateBlockState,
     mutateBlock: vi.fn(),
@@ -541,12 +547,59 @@ describe('Kanban plugin (#19)', () => {
     expect(params).toContain(1)
   })
 
-  it('clicking "+ Add column" prompts for a name and persists via saveConfig', async () => {
+  it('due-date "today" filter binds the LOCAL day, not UTC date("now") (#118)', async () => {
+    // makeCtx pins today = '2026-06-16'. The fix replaced date('now') with a
+    // bound param drawn from ctx.today so comparisons match the local day.
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    mocks.sqliteQuery.mockClear()
+
+    const dueChip = screen.getByRole('button', { name: /Due date/ })
+    await fireEvent.click(dueChip)
+    await flush()
+
+    const todayBtn = screen.getByRole('button', { name: 'Today' })
+    await fireEvent.click(todayBtn)
+    await flush()
+
+    expect(mocks.sqliteQuery).toHaveBeenCalled()
+    const sql = mocks.sqliteQuery.mock.calls.at(-1)![0] as string
+    expect(sql).not.toContain("date('now')")
+    expect(sql).toContain('t.due_date = ?')
+    const params = mocks.sqliteQuery.mock.calls.at(-1)![1] as unknown[]
+    expect(params).toContain('2026-06-16')
+  })
+
+  it('due-date "this week" filter uses a BETWEEN with local today + 7 (#118)', async () => {
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    mocks.sqliteQuery.mockClear()
+
+    const dueChip = screen.getByRole('button', { name: /Due date/ })
+    await fireEvent.click(dueChip)
+    await flush()
+
+    const weekBtn = screen.getByRole('button', { name: 'This Week' })
+    await fireEvent.click(weekBtn)
+    await flush()
+
+    expect(mocks.sqliteQuery).toHaveBeenCalled()
+    const sql = mocks.sqliteQuery.mock.calls.at(-1)![0] as string
+    expect(sql).not.toContain("date('now')")
+    expect(sql).toContain('t.due_date BETWEEN ? AND ?')
+    const params = mocks.sqliteQuery.mock.calls.at(-1)![1] as unknown[]
+    expect(params).toContain('2026-06-16')
+    expect(params).toContain('2026-06-23')
+  })
+
+  it('clicking "+ Add column" prompts for a name and persists via updatePluginSetting (#120)', async () => {
     const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('Backlog')
     render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    mocks.saveConfig.mockClear()
+    mocks.updatePluginSetting.mockClear()
 
     const addBtn = screen.getByRole('button', { name: /add column/i })
     await fireEvent.click(addBtn)
@@ -555,8 +608,15 @@ describe('Kanban plugin (#19)', () => {
     expect(promptSpy).toHaveBeenCalled()
     // The new column renders as a lane group.
     expect(screen.getByRole('group', { name: 'Backlog' })).toBeInTheDocument()
-    // The column list was persisted to config.
-    expect(mocks.saveConfig).toHaveBeenCalledTimes(1)
+    // #120: the column list is persisted via the atomic per-plugin setter,
+    // NOT the read-mutate-saveConfig dance that could clobber an external edit.
+    expect(mocks.updatePluginSetting).toHaveBeenCalledTimes(1)
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'silt-kanban',
+      'columns',
+      expect.arrayContaining(['Backlog'])
+    )
+    expect(mocks.saveConfig).not.toHaveBeenCalled()
     promptSpy.mockRestore()
   })
 
@@ -565,7 +625,7 @@ describe('Kanban plugin (#19)', () => {
     render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    mocks.saveConfig.mockClear()
+    mocks.updatePluginSetting.mockClear()
 
     // Three columns exist initially (TODO / DOING / DONE). Open the
     // actions menu on the first lane (To Do) and remove it.
@@ -587,7 +647,7 @@ describe('Kanban plugin (#19)', () => {
     expect(
       screen.getByRole('group', { name: 'In Progress' })
     ).toBeInTheDocument()
-    expect(mocks.saveConfig).toHaveBeenCalledTimes(1)
+    expect(mocks.updatePluginSetting).toHaveBeenCalledTimes(1)
     confirmSpy.mockRestore()
   })
 
@@ -798,5 +858,94 @@ describe('Kanban plugin (#19)', () => {
     expect(doneHasCard).toBe(true)
     // No error banner — the stale failure was suppressed by moveSeq.
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  describe('scope auto-narrow (#124)', () => {
+    // These tests drive navigation via a $state-backed ctx (reactiveCtx) so
+    // the board's reactive scope effect tracks the change without a remount.
+    beforeEach(() => {
+      resetNav()
+      mocks.sqliteQuery.mockReset()
+      mocks.sqliteQuery.mockImplementation(async () => ({
+        rows: SAMPLE_ROWS,
+        truncated: false
+      }))
+    })
+
+    const checkedScope = (): string => {
+      const group = screen.getByRole('radiogroup', { name: 'Board scope' })
+      const checked = within(group)
+        .getAllByRole('radio')
+        .find((r) => r.getAttribute('aria-checked') === 'true')
+      return (checked?.textContent ?? '').trim().toLowerCase()
+    }
+
+    it('follows navigation: narrows to page when a page becomes active', async () => {
+      setNav({ notebook: 'Work', section: '', page: '' })
+      render(Kanban, {
+        ctx: reactiveCtx(mocks.sqliteQuery),
+        manifest: MANIFEST
+      })
+      await flush()
+      // No section/page active -> most-specific scope is notebook.
+      expect(checkedScope()).toBe('notebook')
+
+      // Navigate into a page (same as a sidebar click — no remount).
+      setNav({ section: 'Journal', page: 'Daily' })
+      await flush()
+      expect(checkedScope()).toBe('page')
+    })
+
+    it('sticks after a manual override; the Follow affordance appears', async () => {
+      setNav({ notebook: 'Work', section: 'Journal', page: 'Daily' })
+      render(Kanban, {
+        ctx: reactiveCtx(mocks.sqliteQuery),
+        manifest: MANIFEST
+      })
+      await flush()
+      expect(checkedScope()).toBe('page')
+
+      // Manual override to Vault.
+      await fireEvent.click(screen.getByRole('radio', { name: /Vault/ }))
+      await flush()
+      expect(checkedScope()).toBe('vault')
+      // The reset affordance appears once the user has overridden.
+      expect(
+        screen.getByRole('button', {
+          name: /Reset board scope to follow navigation/
+        })
+      ).toBeTruthy()
+
+      // Navigate to a different page — scope must NOT re-narrow.
+      setNav({ page: 'OtherPage' })
+      await flush()
+      expect(checkedScope()).toBe('vault')
+    })
+
+    it('reset re-enables auto-follow after an override', async () => {
+      setNav({ notebook: 'Work', section: 'Journal', page: 'Daily' })
+      render(Kanban, {
+        ctx: reactiveCtx(mocks.sqliteQuery),
+        manifest: MANIFEST
+      })
+      await flush()
+
+      // Override to Vault, then reset via the Follow affordance.
+      await fireEvent.click(screen.getByRole('radio', { name: /Vault/ }))
+      await flush()
+      await fireEvent.click(
+        screen.getByRole('button', {
+          name: /Reset board scope to follow navigation/
+        })
+      )
+      await flush()
+      // Back to the active page (auto-follow re-enabled).
+      expect(checkedScope()).toBe('page')
+
+      // Navigate away to notebook level — follows again.
+      setNav({ section: '', page: '' })
+      await flush()
+      expect(checkedScope()).toBe('notebook')
+    })
   })
 })

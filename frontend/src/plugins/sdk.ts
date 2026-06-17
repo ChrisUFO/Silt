@@ -4,6 +4,42 @@
 export type TaskStatus = 'TODO' | 'DOING' | 'DONE'
 
 /**
+ * Today's date in the user's LOCAL timezone as YYYY-MM-DD.
+ *
+ * Plugins compare against this instead of SQLite's `date('now')`, which is
+ * UTC and produces off-by-one results for the "today"/"overdue"/"this week"
+ * quick-picks near local midnight (#118). The webview's local timezone is
+ * the OS timezone (same machine as the Go backend's `time.Local`), so this
+ * is computed in-process — no IPC round-trip, and it stays in sync with the
+ * system clock on every read.
+ */
+export function localToday(): string {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/**
+ * Add `n` days to a YYYY-MM-DD string and return the resulting YYYY-MM-DD.
+ * Used for date-range bounds like "this week" (today + 7). Operates in the
+ * local timezone via Date arithmetic so month/year boundaries roll over
+ * correctly. Pure + deterministic → trivially unit-testable.
+ */
+export function plusDaysISO(iso: string, n: number): string {
+  // Parse as local Y/M/D (not UTC) to avoid off-by-one from Date's UTC
+  // default parsing of date-only strings.
+  const [y, m, d] = iso.split('-').map(Number)
+  const date = new Date(y, (m ?? 1) - 1, d ?? 1)
+  date.setDate(date.getDate() + n)
+  const yy = date.getFullYear()
+  const mm = String(date.getMonth() + 1).padStart(2, '0')
+  const dd = String(date.getDate()).padStart(2, '0')
+  return `${yy}-${mm}-${dd}`
+}
+
+/**
  * Result envelope returned by `PluginContext.sqliteQuery`. The shape
  * mirrors the Go-side `PluginRawQueryResult` struct: the row slice plus
  * a `truncated` flag the plugin can surface when the result hit the
@@ -32,6 +68,12 @@ export interface PluginContext {
   /** Active page — same reactivity as activeNotebook. */
   activePage: string
   /**
+   * Today's date in the user's LOCAL timezone as YYYY-MM-DD. Read this
+   * instead of SQLite's `date('now')` (UTC) so date comparisons match the
+   * local day (#118). A plain getter returning a fresh value on each read.
+   */
+  today: string
+  /**
    * Read-only SQL against the in-memory index (SELECT/WITH only). Returns
    * the row slice plus a `truncated` flag; see `SqliteQueryResult`.
    */
@@ -44,10 +86,14 @@ export interface PluginContext {
    * Update per-task metadata (pin, progress). Both fields are optional;
    * pass undefined to skip a field. Pin and progress are file-resident
    * user intent — the call round-trips through the markdown file.
+   *
+   * Pin is tri-state (#123): `true`→`[pin:: true]`, `false`→`[pin:: false]`
+   * (explicit unpinned, preserved across round-trips), `null`→clears the
+   * token entirely. `undefined` leaves the pin unchanged.
    */
   updateTaskMeta: (
     id: string,
-    meta: { pinned?: boolean; progress?: number }
+    meta: { pinned?: boolean | null; progress?: number }
   ) => Promise<boolean>
 }
 
