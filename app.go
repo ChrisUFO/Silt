@@ -953,22 +953,25 @@ func (a *App) RegisterPluginTemplates(pluginID string, tpls []*templates.Templat
 	a.wg.Add(1)
 	defer a.wg.Done()
 	// Set Source and PluginID uniformly on each template (defensive — the
-	// registry also validates).
+	// registry also validates). Nil elements are filtered out so the
+	// registry never receives them (it rejects nil entries).
+	var valid []*templates.Template
 	for _, t := range tpls {
 		if t == nil {
 			continue
 		}
 		t.Source = templates.SourcePlugin
 		t.PluginID = pluginID
+		valid = append(valid, t)
 	}
-	if err := templates.RegisterPluginTemplates(pluginID, tpls); err != nil {
+	if err := templates.RegisterPluginTemplates(pluginID, valid); err != nil {
 		log.Printf("templates: RegisterPluginTemplates(%q) failed: %v", pluginID, err)
 		return err
 	}
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "templates:changed", struct{}{})
 	}
-	log.Printf("templates: RegisterPluginTemplates → %d templates for %q", len(tpls), pluginID)
+	log.Printf("templates: RegisterPluginTemplates → %d templates for %q", len(valid), pluginID)
 	return nil
 }
 
@@ -1299,13 +1302,14 @@ func sanitizePathSegment(s string) string {
 		}
 		return r
 	}, s)
+	cleaned = strings.TrimSpace(cleaned)
 	for strings.HasPrefix(cleaned, "..") {
-		cleaned = strings.TrimPrefix(cleaned, "..")
+		cleaned = strings.TrimSpace(strings.TrimPrefix(cleaned, ".."))
 	}
 	if cleaned == "." {
 		cleaned = ""
 	}
-	return strings.TrimSpace(cleaned)
+	return cleaned
 }
 
 // sanitizeSectionPath sanitizes a multi-segment section path (e.g.
@@ -1431,7 +1435,17 @@ func (a *App) ListNavigation() (parser.NavigationTree, error) {
 			continue
 		}
 		nbPath := filepath.Join(a.vaultPath, nbName)
-		sections := a.walkSections(nbPath, nbName, "", counts)
+		rootPages, childSections := a.walkSections(nbPath, nbName, "", counts)
+		var sections []parser.NavigationSection
+		// Direct .md files at the notebook root form the section-less
+		// group (Name = ""), surfaced first in the sidebar.
+		if len(rootPages) > 0 {
+			sections = append(sections, parser.NavigationSection{
+				Name:  "",
+				Pages: rootPages,
+			})
+		}
+		sections = append(sections, childSections...)
 		tree.Notebooks = append(tree.Notebooks, parser.NavigationNotebook{
 			Name:     nbName,
 			Sections: sections,
@@ -1440,21 +1454,23 @@ func (a *App) ListNavigation() (parser.NavigationTree, error) {
 	return tree, nil
 }
 
-// walkSections builds the immediate sections under `dirPath` for the given
-// notebook. `parentSectionID` is the multi-segment section id of `dirPath`
-// itself (empty at the notebook root); each immediate sub-directory is a
-// section whose id is `parentSectionID + "/" + name`. Sections with no
-// pages and no children are still emitted (an empty section is a valid
-// section that should appear in the sidebar). The `section-less` group
-// (pages whose .md lives directly under the notebook root) is represented
-// as a section with Name = "".
+// walkSections reads `dirPath` once and returns:
+//   - `pages`: the direct .md files in this directory (the "own pages").
+//   - `sections`: one NavigationSection per sub-directory, each carrying its
+//     own pages and recursively-built children.
+//
+// `parentSectionID` is the multi-segment section id of `dirPath` itself
+// (empty at the notebook root). The caller (ListNavigation) is responsible
+// for turning the notebook-root `pages` into the section-less group.
+// Sections with no pages and no children are still emitted so freshly-
+// created sections appear in the sidebar immediately.
 func (a *App) walkSections(
 	dirPath, nbName, parentSectionID string,
 	counts map[navCountKey]int,
-) []parser.NavigationSection {
+) ([]parser.NavigationPage, []parser.NavigationSection) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 
 	var pages []parser.NavigationPage
@@ -1483,17 +1499,6 @@ func (a *App) walkSections(
 
 	var sections []parser.NavigationSection
 
-	// Direct pages in this directory form the section-less group, but ONLY
-	// when we're at the notebook root (parentSectionID == ""). At deeper
-	// levels, the .md files are the pages OF this section, not a separate
-	// "section-less" group.
-	if parentSectionID == "" && len(pages) > 0 {
-		sections = append(sections, parser.NavigationSection{
-			Name:  "",
-			Pages: pages,
-		})
-	}
-
 	for _, sd := range subDirs {
 		var childID string
 		if parentSectionID == "" {
@@ -1502,39 +1507,19 @@ func (a *App) walkSections(
 			childID = parentSectionID + "/" + sd
 		}
 		childPath := filepath.Join(dirPath, sd)
-		children := a.walkSections(childPath, nbName, childID, counts)
-		// Collect the child section's own direct pages by re-reading
-		// the directory (cheap; we're already here on disk). The
-		// recursive call also returned the children list; the child's
-		// own pages are the .md files in `childPath` that aren't part
-		// of the section-less group (which is empty at depth >= 1).
-		var childPages []parser.NavigationPage
-		if subEntries, err := os.ReadDir(childPath); err == nil {
-			for _, se := range subEntries {
-				if se.IsDir() || strings.HasPrefix(se.Name(), ".") {
-					continue
-				}
-				if !strings.EqualFold(filepath.Ext(se.Name()), ".md") {
-					continue
-				}
-				pn := strings.TrimSuffix(se.Name(), filepath.Ext(se.Name()))
-				childPages = append(childPages, parser.NavigationPage{
-					Name:  pn,
-					Count: counts[navCountKey{nbName, childID, pn}],
-				})
-			}
-			sortNavPages(childPages)
-		}
+		// Single read: the recursive call returns both the child's own
+		// pages and its nested sections, so we never re-read childPath.
+		childPages, childSections := a.walkSections(childPath, nbName, childID, counts)
 		// Preserve the child even when empty so a freshly-created
 		// section shows up in the sidebar.
 		sections = append(sections, parser.NavigationSection{
 			Name:     sd,
 			Pages:    childPages,
-			Children: children,
+			Children: childSections,
 		})
 	}
 
-	return sections
+	return pages, sections
 }
 
 func moveStringToEnd(s []string, v string) {

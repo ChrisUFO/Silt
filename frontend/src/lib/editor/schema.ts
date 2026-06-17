@@ -200,6 +200,11 @@ export const EmbedNode = Node.create({
 
   addAttributes() {
     return {
+      id: {
+        default: null,
+        parseHTML: (el) => el.getAttribute('data-id') || null,
+        renderHTML: (attrs) => (attrs.id ? { 'data-id': attrs.id } : {})
+      },
       uuid: {
         default: '',
         parseHTML: (el) => el.getAttribute('data-uuid') || '',

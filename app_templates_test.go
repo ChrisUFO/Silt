@@ -476,6 +476,43 @@ func TestRegisterPluginTemplates_IPC(t *testing.T) {
 	}
 }
 
+// TestRegisterPluginTemplates_FiltersNil verifies that nil elements in the
+// input slice are silently filtered rather than causing the registry to
+// reject the entire batch (loader.go rejects nil entries at the package
+// level).
+func TestRegisterPluginTemplates_FiltersNil(t *testing.T) {
+	app := newTestApp(t)
+	tpl := &templates.Template{
+		SchemaVersion: "1.0.0",
+		ID:            "nil-filter-tpl",
+		Title:         "Nil Filter Tpl",
+		Category:      "notes",
+		Body:          "# {{title}}\n",
+	}
+	// Slice contains one valid template and one nil.
+	if err := app.RegisterPluginTemplates(
+		"silt-test", []*templates.Template{tpl, nil},
+	); err != nil {
+		t.Fatalf("RegisterPluginTemplates with nil entry should succeed (filtered): %v", err)
+	}
+
+	res, err := app.ListTemplates()
+	if err != nil {
+		t.Fatalf("ListTemplates: %v", err)
+	}
+	var count int
+	for _, s := range res.Templates {
+		if s.PluginID == "silt-test" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected 1 plugin template after nil filtering, got %d", count)
+	}
+
+	app.UnregisterPluginTemplates("silt-test")
+}
+
 // TestCreatePageFromTemplate_DeepSection_AppearsInNavigation is the regression
 // test for #97 (and the fix in #88). A page created from a template in a
 // deeply-nested section (e.g. `Work/Projects/Active`) lands at the correct

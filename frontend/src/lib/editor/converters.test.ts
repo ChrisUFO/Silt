@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { SiltBlockExtensions, UniqueBlockIds } from './index'
+import { EmbedNode, BlockReferenceNode } from './schema'
 import { blocksToDoc, docToBlocks } from './converters'
 import type { ParsedBlock, DocJSON } from './types'
 
@@ -55,6 +56,8 @@ function makeEditor() {
         trailingNode: false
       }),
       ...SiltBlockExtensions,
+      EmbedNode,
+      BlockReferenceNode,
       UniqueBlockIds
     ]
   })
@@ -369,7 +372,7 @@ describe('uniqueIdPlugin', () => {
       content: [
         {
           type: 'embedNode',
-          attrs: { uuid: UUID_A }
+          attrs: { id: UUID_A, uuid: UUID_A }
         } as any
       ]
     }
@@ -378,5 +381,45 @@ describe('uniqueIdPlugin', () => {
     expect(back[0].clean_text).toBe(`{{embed:${UUID_A}}}`)
     expect(back[0].raw_text).toBe(`{{embed:${UUID_A}}}`)
     expect(back[0].type).toBe('NOTE')
+    expect(back[0].id).toBe(UUID_A)
+  })
+
+  it('sole-embed NOTE block becomes a top-level embedNode with id (#85)', () => {
+    // A NOTE whose entire clean_text is {{embed:uuid}} must become a
+    // top-level embedNode (group: 'block'), not an inline child of a
+    // noteBlock (content: 'inline*'). The block's id is preserved as the
+    // embedNode's id attr.
+    const blockId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    const embedUuid = '11111111-2222-4333-8444-555555555555'
+    const block = mkBlock('NOTE', {
+      id: blockId,
+      clean_text: `{{embed:${embedUuid}}}`
+    })
+    const doc = blocksToDoc([block])
+    expect(doc.content).toHaveLength(1)
+    expect(doc.content[0]?.type).toBe('embedNode')
+    expect(doc.content[0]?.attrs?.id).toBe(blockId)
+    expect(doc.content[0]?.attrs?.uuid).toBe(embedUuid)
+
+    // Round-trips back to the same NOTE block.
+    const back = docToBlocks(doc)
+    expect(back).toHaveLength(1)
+    expect(back[0].type).toBe('NOTE')
+    expect(back[0].id).toBe(blockId)
+    expect(back[0].clean_text).toBe(`{{embed:${embedUuid}}}`)
+  })
+
+  it('sole-embed note survives a real TipTap editor round-trip', () => {
+    const editor = makeEditor()
+    const embedUuid = '33333333-4444-4555-8666-777777777777'
+    const block = mkBlock('NOTE', {
+      clean_text: `{{embed:${embedUuid}}}`
+    })
+    editor.commands.setContent(blocksToDoc([block]))
+    const back = docToBlocks(editor.getJSON() as DocJSON)
+    expect(back).toHaveLength(1)
+    expect(back[0].clean_text).toBe(`{{embed:${embedUuid}}}`)
+    expect(back[0].id).toBeTruthy()
+    editor.destroy()
   })
 })

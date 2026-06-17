@@ -51,6 +51,10 @@ func TestSanitizePathSegment(t *testing.T) {
 		{"foo..bar", "foo..bar"},
 		{"foo.bar", "foo.bar"},
 		{"   spaced   ", "spaced"},
+		{"  ..", ""},
+		{" ..foo", "foo"},
+		{" .. foo", "foo"},
+		{"\t..evil", "evil"},
 		{"", ""},
 	}
 	for _, c := range cases {

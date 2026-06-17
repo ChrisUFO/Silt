@@ -101,9 +101,28 @@ function deriveParentIDs(blocks: ParsedBlock[]): void {
   }
 }
 
+// Match a clean_text that is solely a {{embed:uuid}} token (the entire
+// block body is one embed). Such blocks become top-level embedNode blocks
+// (group: 'block') rather than inline children of a noteBlock (which only
+// allows inline content).
+const SOLE_EMBED_RE =
+  /^\{\{embed:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}\}$/i
+
 // Convert a single ParsedBlock to its ProseMirror node JSON.
 function blockToNode(block: ParsedBlock): NodeJSON {
   const text = block.clean_text || ''
+
+  // A NOTE whose entire body is a single {{embed:uuid}} token becomes a
+  // top-level embedNode. Wrapping a block-level node inside noteBlock's
+  // inline-only content would violate the ProseMirror schema (#85).
+  const embedMatch = text.match(SOLE_EMBED_RE)
+  if (embedMatch) {
+    return {
+      type: 'embedNode',
+      attrs: { id: block.id, uuid: embedMatch[1] }
+    }
+  }
+
   const content: NodeJSON[] = text ? tokenizeInline(text) : []
 
   switch (block.type) {
