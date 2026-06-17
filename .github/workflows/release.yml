@@ -98,6 +98,11 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Wails CLI
+        # bash is required even on windows-latest: the default shell there is
+        # pwsh, which can't parse `VAR=$(...)`, `${VAR}`, or `$GITHUB_PATH`.
+        # Without this, the Windows build leg fails instantly and — because
+        # `release` needs the whole `build` matrix — no Release is created.
+        shell: bash
         run: |
           WAILS_VERSION=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2)
           go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}
