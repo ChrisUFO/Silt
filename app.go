@@ -1523,21 +1523,6 @@ func (a *App) walkSections(
 	return pages, sections
 }
 
-func moveStringToEnd(s []string, v string) {
-	idx := -1
-	for i, x := range s {
-		if x == v {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
-		return
-	}
-	copy(s[idx:], s[idx+1:])
-	s[len(s)-1] = v
-}
-
 func sortStrings(s []string) {
 	for i := 1; i < len(s); i++ {
 		for j := i; j > 0 && s[j-1] > s[j]; j-- {

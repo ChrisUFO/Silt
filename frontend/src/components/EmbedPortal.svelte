@@ -23,13 +23,13 @@
 
   interface Props {
     uuid: string
-    hostNotebook: string
-    hostSection: string
-    hostPage: string
-    hostFileDate: string
+    hostNotebook?: string
+    hostSection?: string
+    hostPage?: string
+    hostFileDate?: string
   }
 
-  let { uuid, hostNotebook, hostSection, hostPage, hostFileDate }: Props =
+  let { uuid, hostNotebook = '', hostSection = '', hostPage = '', hostFileDate = '' }: Props =
     $props()
 
   // Recursion guard: an embed is recursive only when it appears in its

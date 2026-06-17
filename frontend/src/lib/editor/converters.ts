@@ -57,7 +57,7 @@ function inlineText(content?: NodeJSON[]): string {
 // Graph nodes). Matches {{embed:uuid}} as an embedNode and ((uuid)) as a
 // blockReferenceNode (#85). UUIDs follow the 8-4-4-4-12 hex pattern.
 const SMART_GRAPH_TOKEN =
-  /(\{\{embed:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}\})|\(\(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)\)/g
+  /(\{\{embed:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}\})|\(\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)\)/gi
 
 function tokenizeInline(text: string): NodeJSON[] {
   const out: NodeJSON[] = []

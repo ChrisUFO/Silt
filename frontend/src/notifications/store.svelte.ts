@@ -3,7 +3,6 @@
 // and settings/store.svelte.ts (Svelte 5 $state runes in a .svelte.ts
 // module). Consumers (TipTapEditor, TemplatePicker, etc.) call
 // pushNotification; ToastContainer.svelte renders the live stack.
-import type { templates } from '../../wailsjs/go/models'
 
 export type NotificationKind = 'info' | 'success' | 'error'
 
@@ -96,7 +95,3 @@ export function _resetForTests(): void {
   clearAllNotifications()
   nextId = 1
 }
-
-// Re-export the templates namespace so consumers can build template
-// notifications without a second import (forward-compat helper).
-export type { templates }

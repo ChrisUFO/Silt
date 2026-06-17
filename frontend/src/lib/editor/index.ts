@@ -12,8 +12,6 @@ export { SiltBlockExtensionsWithNodeViews } from './nodeViews'
 export { blocksToDoc, docToBlocks } from './converters'
 export { UniqueBlockIds, freshId } from './uniqueIdPlugin'
 export { SiltBlockKeymaps } from './keymaps'
-export { EditorHostContext } from './hostContext'
-export type { EditorHostContextOptions } from './hostContext'
 export {
   TaskMetaSuggest,
   applyMetaSuggestion,

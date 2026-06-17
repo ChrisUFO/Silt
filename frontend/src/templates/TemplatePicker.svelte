@@ -218,6 +218,16 @@
   async function handleConfirm(): Promise<void> {
     if (!selectedId) return
     creating = true
+
+    // Plugin templates are resolved via the plugin://<plugin-id>/<template-id>
+    // URI scheme; the backend's CachedGetTemplate delegates plugin:// to the
+    // in-memory registry. For builtin/disk templates, the plain id works.
+    const selected = selectedSummary
+    const tplId =
+      selected?.source === 'plugin' && selected?.plugin_id
+        ? `plugin://${selected.plugin_id}/${selected.id}`
+        : selectedId
+
     try {
       if (mode === 'new-page') {
         const name = pageName.trim()
@@ -229,12 +239,12 @@
           setTemplateStatus({ kind: 'error', message: 'Open a notebook first.' })
           return
         }
-        await CreatePageFromTemplate(notebook, section, name, '', selectedId, { ...placeholderValues })
+        await CreatePageFromTemplate(notebook, section, name, '', tplId, { ...placeholderValues })
         window.dispatchEvent(new CustomEvent('focus-page-title'))
         onCreatedPage?.(name)
         onClose()
       } else {
-        const blocks = await RenderTemplateBlocks(selectedId, { ...placeholderValues })
+        const blocks = await RenderTemplateBlocks(tplId, { ...placeholderValues })
         onInsertBlocks?.(blocks)
         onClose()
       }
