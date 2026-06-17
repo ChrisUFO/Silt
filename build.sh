@@ -26,6 +26,25 @@ check_tool() {
     fi
 }
 
+# Create a zip archive portably. `zip` is unavailable on Windows runners and
+# recent windows-* images no longer ship 7-Zip either (actions/runner-images
+# #9361), so fall back through 7z -> PowerShell Compress-Archive, which ships
+# with every Windows install. Works for local builds (zip present) too.
+# Usage: make_zip <archive.zip> <path>
+make_zip() {
+    local archive="$1" target="$2"
+    if command -v zip &> /dev/null; then
+        zip -9q "$archive" "$target"
+    elif command -v 7z &> /dev/null; then
+        7z a -bd -y -tzip "$archive" "$target" >/dev/null
+    elif command -v powershell.exe &> /dev/null; then
+        powershell.exe -NoProfile -Command "Compress-Archive -LiteralPath '$target' -DestinationPath '$archive' -CompressionLevel Optimal"
+    else
+        log_error "No zip tool available (need zip, 7z, or powershell.exe)."
+        exit 1
+    fi
+}
+
 # Bump the patch component of a semver string (echoes MAJOR.MINOR.PATCH+1).
 bump_patch() {
     local major minor patch
@@ -137,7 +156,7 @@ mkdir -p "$BUILD_DIR"
 log_info "Creating portable zip..."
 ZIP_NAME="${APP_NAME}-v${VERSION}-portable.zip"
 cp "$BINARY" "$BUILD_DIR/${APP_NAME}.exe"
-(cd "$BUILD_DIR" && zip -9q "$ZIP_NAME" "${APP_NAME}.exe")
+(cd "$BUILD_DIR" && make_zip "$ZIP_NAME" "${APP_NAME}.exe")
 rm "$BUILD_DIR/${APP_NAME}.exe"
 log_info "  -> $BUILD_DIR/$ZIP_NAME"
 
