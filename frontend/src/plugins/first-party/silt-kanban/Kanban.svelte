@@ -1,6 +1,7 @@
 <script lang="ts">
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
+  import { untrack } from 'svelte'
   import type { PluginContext, PluginManifest, TaskStatus } from '../../sdk'
   import { plusDaysISO } from '../../sdk'
   import { settings, saveConfig } from '../../../settings/store.svelte'
@@ -52,7 +53,7 @@
       const next =
         (((start + i * dir) % SCOPES.length) + SCOPES.length) % SCOPES.length
       if (!isScopeDisabled(SCOPES[next])) {
-        scope = SCOPES[next]
+        setScope(SCOPES[next])
         ;(e.currentTarget as HTMLElement)
           .querySelector<HTMLElement>(`[data-scope="${SCOPES[next]}"]`)
           ?.focus()
@@ -62,6 +63,26 @@
   }
 
   let scope = $state<Scope>(defaultScope())
+  // #124: the board auto-narrows its scope to follow the active nav level
+  // (vault -> notebook -> section -> page) UNTIL the user manually picks a
+  // scope, after which it sticks (respects intent). The reset-to-context
+  // affordance clears this flag so the board follows navigation again.
+  let scopeUserOverride = $state(false)
+
+  // setScope is the single entry point for a USER-initiated scope change
+  // (click or keyboard) — it records the override so subsequent navigation
+  // no longer re-narrows the board.
+  function setScope(s: Scope) {
+    scopeUserOverride = true
+    scope = s
+  }
+
+  function resetScopeToContext() {
+    scopeUserOverride = false
+    untrack(() => {
+      scope = defaultScope()
+    })
+  }
   let lanes = $state<Record<string, KanbanCard[]>>({})
   let loading = $state(true)
   let errorMsg = $state('')
@@ -269,6 +290,28 @@
     void filters.dueDate
     void filters.tags
     reload()
+  })
+
+  // #124: auto-narrow the scope to follow the active nav level until the
+  // user manually overrides it. Reads of scope happen under untrack so this
+  // effect depends only on the nav level + the override flag (writing scope
+  // here must not re-trigger it). When the override is set but the chosen
+  // scope's nav level goes inactive (e.g. navigating off the page), re-narrow
+  // to the new default so the board never shows an empty, invalid scope.
+  $effect(() => {
+    void ctx.activeNotebook
+    void ctx.activeSection
+    void ctx.activePage
+    void scopeUserOverride
+    untrack(() => {
+      if (!scopeUserOverride) {
+        scope = defaultScope()
+        return
+      }
+      if (isScopeDisabled(scope)) {
+        scope = defaultScope()
+      }
+    })
   })
 
   // --- Filter persistence (debounced) ---
@@ -577,7 +620,7 @@
       {#each SCOPES as s}
         <button
           data-scope={s}
-          onclick={() => (scope = s)}
+          onclick={() => setScope(s)}
           role="radio"
           aria-checked={scope === s}
           tabindex={scope === s ? 0 : -1}
@@ -602,8 +645,22 @@
       <span class="material-symbols-outlined text-[16px]">add</span>
       <span>Column</span>
     </button>
-    <span class="text-text-muted text-[12px] font-body-md ml-auto">
-      {scopeCrumb} · {totalCards} task{totalCards === 1 ? '' : 's'}
+    <span
+      class="text-text-muted text-[12px] font-body-md ml-auto flex items-center gap-2"
+    >
+      <span>{scopeCrumb} · {totalCards} task{totalCards === 1 ? '' : 's'}</span>
+      {#if scopeUserOverride}
+        <button
+          type="button"
+          onclick={resetScopeToContext}
+          aria-label="Reset board scope to follow navigation"
+          title="Follow navigation"
+          class="flex items-center gap-1 px-1.5 py-0.5 rounded border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 transition-colors"
+        >
+          <span class="material-symbols-outlined text-[14px]">my_location</span>
+          <span class="font-label-sm">Follow</span>
+        </button>
+      {/if}
     </span>
   </header>
 

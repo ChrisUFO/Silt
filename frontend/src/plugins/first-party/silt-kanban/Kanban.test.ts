@@ -82,6 +82,7 @@ vi.mock('../../../settings/store.svelte', () => ({
 
 import Kanban from './Kanban.svelte'
 import type { PluginContext, PluginManifest } from '../../sdk'
+import { reactiveCtx, setNav, resetNav } from './reactiveCtx.svelte'
 
 function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
   return {
@@ -847,5 +848,94 @@ describe('Kanban plugin (#19)', () => {
     expect(doneHasCard).toBe(true)
     // No error banner — the stale failure was suppressed by moveSeq.
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  describe('scope auto-narrow (#124)', () => {
+    // These tests drive navigation via a $state-backed ctx (reactiveCtx) so
+    // the board's reactive scope effect tracks the change without a remount.
+    beforeEach(() => {
+      resetNav()
+      mocks.sqliteQuery.mockReset()
+      mocks.sqliteQuery.mockImplementation(async () => ({
+        rows: SAMPLE_ROWS,
+        truncated: false
+      }))
+    })
+
+    const checkedScope = (): string => {
+      const group = screen.getByRole('radiogroup', { name: 'Board scope' })
+      const checked = within(group)
+        .getAllByRole('radio')
+        .find((r) => r.getAttribute('aria-checked') === 'true')
+      return (checked?.textContent ?? '').trim().toLowerCase()
+    }
+
+    it('follows navigation: narrows to page when a page becomes active', async () => {
+      setNav({ notebook: 'Work', section: '', page: '' })
+      render(Kanban, {
+        ctx: reactiveCtx(mocks.sqliteQuery),
+        manifest: MANIFEST
+      })
+      await flush()
+      // No section/page active -> most-specific scope is notebook.
+      expect(checkedScope()).toBe('notebook')
+
+      // Navigate into a page (same as a sidebar click — no remount).
+      setNav({ section: 'Journal', page: 'Daily' })
+      await flush()
+      expect(checkedScope()).toBe('page')
+    })
+
+    it('sticks after a manual override; the Follow affordance appears', async () => {
+      setNav({ notebook: 'Work', section: 'Journal', page: 'Daily' })
+      render(Kanban, {
+        ctx: reactiveCtx(mocks.sqliteQuery),
+        manifest: MANIFEST
+      })
+      await flush()
+      expect(checkedScope()).toBe('page')
+
+      // Manual override to Vault.
+      await fireEvent.click(screen.getByRole('radio', { name: /Vault/ }))
+      await flush()
+      expect(checkedScope()).toBe('vault')
+      // The reset affordance appears once the user has overridden.
+      expect(
+        screen.getByRole('button', {
+          name: /Reset board scope to follow navigation/
+        })
+      ).toBeTruthy()
+
+      // Navigate to a different page — scope must NOT re-narrow.
+      setNav({ page: 'OtherPage' })
+      await flush()
+      expect(checkedScope()).toBe('vault')
+    })
+
+    it('reset re-enables auto-follow after an override', async () => {
+      setNav({ notebook: 'Work', section: 'Journal', page: 'Daily' })
+      render(Kanban, {
+        ctx: reactiveCtx(mocks.sqliteQuery),
+        manifest: MANIFEST
+      })
+      await flush()
+
+      // Override to Vault, then reset via the Follow affordance.
+      await fireEvent.click(screen.getByRole('radio', { name: /Vault/ }))
+      await flush()
+      await fireEvent.click(
+        screen.getByRole('button', {
+          name: /Reset board scope to follow navigation/
+        })
+      )
+      await flush()
+      // Back to the active page (auto-follow re-enabled).
+      expect(checkedScope()).toBe('page')
+
+      // Navigate away to notebook level — follows again.
+      setNav({ section: '', page: '' })
+      await flush()
+      expect(checkedScope()).toBe('notebook')
+    })
   })
 })
