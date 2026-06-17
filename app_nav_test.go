@@ -8,7 +8,103 @@ import (
 	"testing"
 
 	"silt/backend/config"
+	"silt/backend/parser"
 )
+
+// TestListNavigation_DeepNesting verifies that #88's recursive walker
+// surfaces sections at any depth and preserves the section's own pages
+// alongside its nested children. The on-disk layout is:
+//
+//	<vault>/Work/Projects/Active/Site.md   (section="Projects/Active", page="Site")
+//	<vault>/Work/Journal/Daily.md          (section="Journal", page="Daily")
+//	<vault>/Work/Top.md                     (no section; page="Top")
+//
+// The expected tree is:
+//
+//	Work
+//	  ├ "" (no section) -> [Top]
+//	  ├ Projects
+//	  │   └ Active -> [Site]
+//	  └ Journal -> [Daily]
+func TestListNavigation_DeepNesting(t *testing.T) {
+	app := newTestApp(t)
+
+	root := app.vaultPath
+	// Layout
+	for _, p := range []string{
+		filepath.Join(root, "Work", "Projects", "Active"),
+		filepath.Join(root, "Work", "Journal"),
+	} {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", p, err)
+		}
+	}
+	writeFile(t, filepath.Join(root, "Work", "Projects", "Active", "Site.md"),
+		"---\nnotebook: Work\nsection: Projects/Active\npage: Site\ndate: 2026-06-15\ntags: []\n---\n# Site\n")
+	writeFile(t, filepath.Join(root, "Work", "Journal", "Daily.md"),
+		"---\nnotebook: Work\nsection: Journal\npage: Daily\ndate: 2026-06-15\ntags: []\n---\n# Daily\n")
+	writeFile(t, filepath.Join(root, "Work", "Top.md"),
+		"---\nnotebook: Work\nsection: \"\"\npage: Top\ndate: 2026-06-15\ntags: []\n---\n# Top\n")
+
+	tree, err := app.ListNavigation()
+	if err != nil {
+		t.Fatalf("ListNavigation: %v", err)
+	}
+	if len(tree.Notebooks) != 1 {
+		t.Fatalf("expected 1 notebook, got %d", len(tree.Notebooks))
+	}
+	work := tree.Notebooks[0]
+	if work.Name != "Work" {
+		t.Fatalf("notebook name = %q", work.Name)
+	}
+	if len(work.Sections) < 3 {
+		t.Fatalf("expected at least 3 top-level sections (no-section, Projects, Journal), got %d", len(work.Sections))
+	}
+
+	// Find the section-less group first (Name == "").
+	var sectionless *parser.NavigationSection
+	var projects *parser.NavigationSection
+	var journal *parser.NavigationSection
+	for i := range work.Sections {
+		sec := &work.Sections[i]
+		switch sec.Name {
+		case "":
+			sectionless = sec
+		case "Projects":
+			projects = sec
+		case "Journal":
+			journal = sec
+		}
+	}
+	if sectionless == nil || projects == nil || journal == nil {
+		t.Fatalf("missing top-level sections: sectionless=%v projects=%v journal=%v", sectionless, projects, journal)
+	}
+
+	// Section-less: one page (Top).
+	if len(sectionless.Pages) != 1 || sectionless.Pages[0].Name != "Top" {
+		t.Errorf("section-less pages = %+v", sectionless.Pages)
+	}
+
+	// Projects has one child ("Active") which has the Site page.
+	if len(projects.Children) != 1 {
+		t.Fatalf("Projects children = %d, want 1", len(projects.Children))
+	}
+	active := projects.Children[0]
+	if active.Name != "Active" {
+		t.Errorf("Active.Name = %q", active.Name)
+	}
+	if len(active.Pages) != 1 || active.Pages[0].Name != "Site" {
+		t.Errorf("Active pages = %+v", active.Pages)
+	}
+
+	// Journal is a flat section with one page.
+	if len(journal.Pages) != 1 || journal.Pages[0].Name != "Daily" {
+		t.Errorf("Journal pages = %+v", journal.Pages)
+	}
+	if len(journal.Children) != 0 {
+		t.Errorf("Journal should have no children, got %d", len(journal.Children))
+	}
+}
 
 // --- Config UI block tests (#63, #68) ---
 

@@ -387,3 +387,160 @@ func touchFile(t *testing.T, path string) {
 		t.Fatalf("Chtimes %s: %v", path, err)
 	}
 }
+
+// --- Plugin template registry (#96) --------------------------------------
+
+func TestRegisterPluginTemplates_HappyPath(t *testing.T) {
+	ResetPluginRegistry()
+	tpl := &Template{
+		SchemaVersion: "1.0.0",
+		ID:            "plugin-sprint",
+		Title:         "Sprint",
+		Category:      "projects",
+		Body:          "# {{title}}\n",
+		Source:        SourcePlugin,
+		PluginID:      "silt-kanban",
+	}
+	if err := RegisterPluginTemplates("silt-kanban", []*Template{tpl}); err != nil {
+		t.Fatalf("RegisterPluginTemplates: %v", err)
+	}
+	summaries := ListPluginTemplates()
+	if len(summaries) != 1 {
+		t.Fatalf("ListPluginTemplates count = %d, want 1", len(summaries))
+	}
+	if summaries[0].PluginID != "silt-kanban" {
+		t.Errorf("summary PluginID = %q, want silt-kanban", summaries[0].PluginID)
+	}
+	if summaries[0].Source != SourcePlugin {
+		t.Errorf("summary Source = %q, want %q", summaries[0].Source, SourcePlugin)
+	}
+}
+
+func TestRegisterPluginTemplates_RejectsEmptyPluginID(t *testing.T) {
+	ResetPluginRegistry()
+	if err := RegisterPluginTemplates("", []*Template{{ID: "x"}}); err == nil {
+		t.Fatal("expected error for empty plugin id")
+	}
+}
+
+func TestRegisterPluginTemplates_RejectsNilSlice(t *testing.T) {
+	ResetPluginRegistry()
+	if err := RegisterPluginTemplates("p", nil); err == nil {
+		t.Fatal("expected error for nil slice")
+	}
+}
+
+func TestRegisterPluginTemplates_RejectsMismatchedSource(t *testing.T) {
+	ResetPluginRegistry()
+	err := RegisterPluginTemplates("p", []*Template{{
+		SchemaVersion: "1.0.0", ID: "x", Title: "X", Category: "notes", Body: "b",
+		Source: SourceBuiltin,
+	}})
+	if err == nil {
+		t.Fatal("expected error for non-plugin source")
+	}
+}
+
+func TestRegisterPluginTemplates_RejectsMismatchedPluginID(t *testing.T) {
+	ResetPluginRegistry()
+	err := RegisterPluginTemplates("plugin-a", []*Template{{
+		SchemaVersion: "1.0.0", ID: "x", Title: "X", Category: "notes", Body: "b",
+		Source: SourcePlugin, PluginID: "plugin-b",
+	}})
+	if err == nil {
+		t.Fatal("expected error for mismatched plugin id")
+	}
+}
+
+func TestUnregisterPluginTemplates_Idempotent(t *testing.T) {
+	ResetPluginRegistry()
+	UnregisterPluginTemplates("never-registered")
+	UnregisterPluginTemplates("never-registered")
+}
+
+func TestGetPluginTemplate_ResolvesURI(t *testing.T) {
+	ResetPluginRegistry()
+	_ = RegisterPluginTemplates("silt-kanban", []*Template{{
+		SchemaVersion: "1.0.0", ID: "sprint", Title: "Sprint",
+		Category: "projects", Body: "# {{title}}",
+		Source: SourcePlugin, PluginID: "silt-kanban",
+	}})
+	got, err := GetPluginTemplate("plugin://silt-kanban/sprint")
+	if err != nil {
+		t.Fatalf("GetPluginTemplate: %v", err)
+	}
+	if got.ID != "sprint" || got.Title != "Sprint" {
+		t.Errorf("resolved template = %+v", got)
+	}
+}
+
+func TestGetPluginTemplate_NotFound(t *testing.T) {
+	ResetPluginRegistry()
+	if _, err := GetPluginTemplate("plugin://missing/missing"); err == nil {
+		t.Fatal("expected error for unregistered plugin")
+	}
+}
+
+func TestGetPluginTemplate_InvalidURI(t *testing.T) {
+	ResetPluginRegistry()
+	if _, err := GetPluginTemplate("not-a-uri"); err == nil {
+		t.Fatal("expected error for invalid URI")
+	}
+	if _, err := GetPluginTemplate("plugin://"); err == nil {
+		t.Fatal("expected error for uri missing plugin id")
+	}
+	if _, err := GetPluginTemplate("plugin://plugin-only/"); err == nil {
+		t.Fatal("expected error for uri missing template id")
+	}
+}
+
+func TestListTemplates_IncludesPluginTemplates(t *testing.T) {
+	ResetPluginRegistry()
+	dir := t.TempDir()
+	_ = RegisterPluginTemplates("silt-kanban", []*Template{{
+		SchemaVersion: "1.0.0", ID: "plugin-template", Title: "Plugin Tpl",
+		Category: "projects", Body: "# plugin",
+		Source: SourcePlugin, PluginID: "silt-kanban",
+	}})
+	res, err := ListTemplates(dir)
+	if err != nil {
+		t.Fatalf("ListTemplates: %v", err)
+	}
+	var found bool
+	for _, s := range res.Templates {
+		if s.ID == "plugin-template" {
+			found = true
+			if s.PluginID != "silt-kanban" {
+				t.Errorf("PluginID = %q", s.PluginID)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("plugin template not in listing")
+	}
+}
+
+func TestGetTemplate_PluginURI(t *testing.T) {
+	ResetPluginRegistry()
+	_ = RegisterPluginTemplates("silt-kanban", []*Template{{
+		SchemaVersion: "1.0.0", ID: "x", Title: "X",
+		Category: "notes", Body: "b",
+		Source: SourcePlugin, PluginID: "silt-kanban",
+	}})
+	got, err := GetTemplate("", "plugin://silt-kanban/x")
+	if err != nil {
+		t.Fatalf("GetTemplate via plugin URI: %v", err)
+	}
+	if got.ID != "x" {
+		t.Errorf("id = %q", got.ID)
+	}
+}
+
+func TestRejectPluginIDInFrontmatter(t *testing.T) {
+	if err := rejectPluginIDInFrontmatter([]byte("plugin_id: foo")); err == nil {
+		t.Error("expected error for plugin_id: line")
+	}
+	if err := rejectPluginIDInFrontmatter([]byte("title: ok\nbody: hello")); err != nil {
+		t.Errorf("benign frontmatter should pass: %v", err)
+	}
+}

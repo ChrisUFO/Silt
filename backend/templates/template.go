@@ -83,11 +83,12 @@ type Placeholder struct {
 }
 
 // Template is the parsed, in-memory representation of a page template. The
-// YAML-tagged fields are the frontmatter (the metadata block at the top of the
-// .md file); Body is the Markdown after the frontmatter; Source records where
-// the template came from (builtin/disk). Body and Source carry yaml:"-" so a
-// yaml.Marshal of a *Template round-trips exactly the frontmatter — this is
-// what SerializeTemplate relies on.
+// YAML-tagged fields are the frontmatter (the metadata block at the top of
+// the .md file); Body is the Markdown after the frontmatter; Source records
+// where the template came from (builtin/disk/plugin). Body, Source, and
+// PluginID carry yaml:"-" so a yaml.Marshal of a *Template round-trips
+// exactly the frontmatter — this is what SerializeTemplate relies on.
+// PluginID is non-empty only for Source == "plugin" templates (#96).
 type Template struct {
 	SchemaVersion string        `json:"schema_version" yaml:"schema_version"`
 	ID            string        `json:"id" yaml:"id"`
@@ -98,6 +99,7 @@ type Template struct {
 	Placeholders  []Placeholder `json:"placeholders,omitempty" yaml:"placeholders,omitempty"`
 	Body          string        `json:"body" yaml:"-"`
 	Source        string        `json:"source,omitempty" yaml:"-"`
+	PluginID      string        `json:"plugin_id,omitempty" yaml:"-"`
 }
 
 // AsSummary returns the lightweight metadata view used by ListTemplates for the
@@ -118,6 +120,7 @@ func (t *Template) AsSummary() TemplateSummary {
 		Category:     t.Category,
 		Icon:         t.Icon,
 		Source:       t.Source,
+		PluginID:     t.PluginID,
 		Placeholders: ph,
 	}
 }
@@ -125,7 +128,8 @@ func (t *Template) AsSummary() TemplateSummary {
 // TemplateSummary is the listing item returned by ListTemplates: everything the
 // picker needs to render + group + build the placeholder form EXCEPT the Body
 // (which can be large). The frontend fetches the full Template via GetTemplate
-// lazily when a row is previewed or selected.
+// lazily when a row is previewed or selected. PluginID is set when Source ==
+// "plugin" (#96) and the picker uses it to group plugin templates.
 type TemplateSummary struct {
 	ID           string        `json:"id"`
 	Title        string        `json:"title"`
@@ -133,5 +137,6 @@ type TemplateSummary struct {
 	Category     string        `json:"category"`
 	Icon         string        `json:"icon,omitempty"`
 	Source       string        `json:"source,omitempty"`
+	PluginID     string        `json:"plugin_id,omitempty"`
 	Placeholders []Placeholder `json:"placeholders,omitempty"`
 }

@@ -26,7 +26,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 const uniqueIdKey = new PluginKey('silt-unique-block-ids')
 
 // The block node names that carry a UUID identity.
-const BLOCK_NODE_NAMES = new Set(['taskBlock', 'noteBlock', 'headerBlock'])
+const BLOCK_NODE_NAMES = new Set(['taskBlock', 'noteBlock', 'headerBlock', 'embedNode'])
 
 function freshId(): string {
   // crypto.randomUUID is available in all modern browsers and the Wails

@@ -30,16 +30,56 @@ function detectBullet(rawText: string): string {
 }
 
 // Concatenate all inline text from a node's content, matching how the Go
-// parser reconstructs clean_text from a block's text content.
+// parser reconstructs clean_text from a block's text content. Smart Graph
+// nodes (embedNode, blockReferenceNode) emit their textual form
+// ({{embed:uuid}} and ((uuid)) respectively) so the on-disk file is
+// round-trip identical (#85).
 function inlineText(content?: NodeJSON[]): string {
   if (!content) return ''
   return content
     .map((child) => {
       if (child.text !== undefined) return child.text
+      if (child.type === 'embedNode') {
+        const uuid = (child.attrs?.uuid as string) || ''
+        return `{{embed:${uuid}}}`
+      }
+      if (child.type === 'blockReferenceNode') {
+        const uuid = (child.attrs?.uuid as string) || ''
+        return `((${uuid}))`
+      }
       if (child.content) return inlineText(child.content)
       return ''
     })
     .join('')
+}
+
+// Tokenize clean_text into an ordered list of inline nodes (text + Smart
+// Graph nodes). Matches {{embed:uuid}} as an embedNode and ((uuid)) as a
+// blockReferenceNode (#85). UUIDs follow the 8-4-4-4-12 hex pattern.
+const SMART_GRAPH_TOKEN =
+  /(\{\{embed:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}\})|\(\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)\)/gi
+
+function tokenizeInline(text: string): NodeJSON[] {
+  const out: NodeJSON[] = []
+  if (!text) return out
+  let last = 0
+  let match: RegExpExecArray | null
+  SMART_GRAPH_TOKEN.lastIndex = 0
+  while ((match = SMART_GRAPH_TOKEN.exec(text)) !== null) {
+    if (match.index > last) {
+      out.push({ type: 'text', text: text.slice(last, match.index) })
+    }
+    if (match[1]) {
+      out.push({ type: 'embedNode', attrs: { uuid: match[2] } })
+    } else if (match[3]) {
+      out.push({ type: 'blockReferenceNode', attrs: { uuid: match[3] } })
+    }
+    last = match.index + match[0].length
+  }
+  if (last < text.length) {
+    out.push({ type: 'text', text: text.slice(last) })
+  }
+  return out
 }
 
 // Derive parent_id from block depths via the stack-walk algorithm used by the
@@ -61,10 +101,29 @@ function deriveParentIDs(blocks: ParsedBlock[]): void {
   }
 }
 
+// Match a clean_text that is solely a {{embed:uuid}} token (the entire
+// block body is one embed). Such blocks become top-level embedNode blocks
+// (group: 'block') rather than inline children of a noteBlock (which only
+// allows inline content).
+const SOLE_EMBED_RE =
+  /^\{\{embed:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}\}$/i
+
 // Convert a single ParsedBlock to its ProseMirror node JSON.
 function blockToNode(block: ParsedBlock): NodeJSON {
   const text = block.clean_text || ''
-  const content: NodeJSON[] = text ? [{ type: 'text', text }] : []
+
+  // A NOTE whose entire body is a single {{embed:uuid}} token becomes a
+  // top-level embedNode. Wrapping a block-level node inside noteBlock's
+  // inline-only content would violate the ProseMirror schema (#85).
+  const embedMatch = text.match(SOLE_EMBED_RE)
+  if (embedMatch) {
+    return {
+      type: 'embedNode',
+      attrs: { id: block.id, uuid: embedMatch[1] }
+    }
+  }
+
+  const content: NodeJSON[] = text ? tokenizeInline(text) : []
 
   switch (block.type) {
     case 'TASK':
@@ -144,9 +203,34 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
   for (let i = 0; i < content.length; i++) {
     const node = content[i]
     const lineNumber = i + 1
-    const cleanText = inlineText(node.content)
     const attrs = (node.attrs || {}) as Record<string, any>
     const id: string = attrs.id || ''
+
+    // Smart Graph block-level node: the embed token is its own line. We
+    // emit a NOTE block carrying just the {{embed:uuid}} text in its body
+    // (atomic; depth 0; no parent). The Go side will write the token
+    // verbatim, so the on-disk file is unchanged.
+    if (node.type === 'embedNode') {
+      const uuid = (attrs.uuid as string) || ''
+      blocks.push({
+        id,
+        parent_id: '',
+        type: 'NOTE',
+        depth: 0,
+        raw_text: `{{embed:${uuid}}}`,
+        clean_text: `{{embed:${uuid}}}`,
+        status: '',
+        owner: '',
+        start_date: '',
+        due_date: '',
+        priority: 3,
+        line_number: lineNumber,
+        file_date: ''
+      })
+      continue
+    }
+
+    const cleanText = inlineText(node.content)
 
     let type: BlockType
     switch (node.type) {

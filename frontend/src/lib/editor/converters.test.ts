@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { SiltBlockExtensions, UniqueBlockIds } from './index'
+import { EmbedNode, BlockReferenceNode } from './schema'
 import { blocksToDoc, docToBlocks } from './converters'
 import type { ParsedBlock, DocJSON } from './types'
 
@@ -55,6 +56,8 @@ function makeEditor() {
         trailingNode: false
       }),
       ...SiltBlockExtensions,
+      EmbedNode,
+      BlockReferenceNode,
       UniqueBlockIds
     ]
   })
@@ -314,6 +317,109 @@ describe('uniqueIdPlugin', () => {
     expect(back[1].id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
     )
+    editor.destroy()
+  })
+
+  // -- Smart Graph (#85) ----------------------------------------------------
+
+  const UUID_A = '11111111-1111-4111-8111-111111111111'
+  const UUID_B = '22222222-2222-4222-8222-222222222222'
+
+  it('tokenizes {{embed:uuid}} in clean_text as an embedNode (#85)', () => {
+    const block = mkBlock('NOTE', {
+      clean_text: `See {{embed:${UUID_A}}} for context.`
+    })
+    const doc = blocksToDoc([block])
+    const noteNode = doc.content[0] as any
+    const embeds = noteNode.content.filter((c: any) => c.type === 'embedNode')
+    expect(embeds).toHaveLength(1)
+    expect(embeds[0].attrs.uuid).toBe(UUID_A)
+    // Text before and after the embed.
+    const texts = noteNode.content
+      .filter((c: any) => c.type === 'text')
+      .map((c: any) => c.text)
+      .join('')
+    expect(texts).toBe('See  for context.')
+  })
+
+  it('tokenizes ((uuid)) in clean_text as a blockReferenceNode (#85)', () => {
+    const block = mkBlock('NOTE', {
+      clean_text: `Linked: ((${UUID_A})) and ((${UUID_B})).`
+    })
+    const doc = blocksToDoc([block])
+    const noteNode = doc.content[0] as any
+    const refs = noteNode.content.filter((c: any) => c.type === 'blockReferenceNode')
+    expect(refs).toHaveLength(2)
+    expect(refs[0].attrs.uuid).toBe(UUID_A)
+    expect(refs[1].attrs.uuid).toBe(UUID_B)
+  })
+
+  it('round-trips embeds and refs through docToBlocks (#85)', () => {
+    const block = mkBlock('NOTE', {
+      clean_text: `Pre {{embed:${UUID_A}}} mid ((${UUID_B})) post`
+    })
+    const doc = blocksToDoc([block])
+    const back = docToBlocks(doc)
+    expect(back).toHaveLength(1)
+    expect(back[0].clean_text).toBe(block.clean_text)
+  })
+
+  it('block-level embedNode (top-level) round-trips as a note carrying the token', () => {
+    // Direct doc construction: a top-level embedNode is preserved through
+    // docToBlocks as a NOTE block whose clean_text is the embed token.
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'embedNode',
+          attrs: { id: UUID_A, uuid: UUID_A }
+        } as any
+      ]
+    }
+    const back = docToBlocks(doc)
+    expect(back).toHaveLength(1)
+    expect(back[0].clean_text).toBe(`{{embed:${UUID_A}}}`)
+    expect(back[0].raw_text).toBe(`{{embed:${UUID_A}}}`)
+    expect(back[0].type).toBe('NOTE')
+    expect(back[0].id).toBe(UUID_A)
+  })
+
+  it('sole-embed NOTE block becomes a top-level embedNode with id (#85)', () => {
+    // A NOTE whose entire clean_text is {{embed:uuid}} must become a
+    // top-level embedNode (group: 'block'), not an inline child of a
+    // noteBlock (content: 'inline*'). The block's id is preserved as the
+    // embedNode's id attr.
+    const blockId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    const embedUuid = '11111111-2222-4333-8444-555555555555'
+    const block = mkBlock('NOTE', {
+      id: blockId,
+      clean_text: `{{embed:${embedUuid}}}`
+    })
+    const doc = blocksToDoc([block])
+    expect(doc.content).toHaveLength(1)
+    expect(doc.content[0]?.type).toBe('embedNode')
+    expect(doc.content[0]?.attrs?.id).toBe(blockId)
+    expect(doc.content[0]?.attrs?.uuid).toBe(embedUuid)
+
+    // Round-trips back to the same NOTE block.
+    const back = docToBlocks(doc)
+    expect(back).toHaveLength(1)
+    expect(back[0].type).toBe('NOTE')
+    expect(back[0].id).toBe(blockId)
+    expect(back[0].clean_text).toBe(`{{embed:${embedUuid}}}`)
+  })
+
+  it('sole-embed note survives a real TipTap editor round-trip', () => {
+    const editor = makeEditor()
+    const embedUuid = '33333333-4444-4555-8666-777777777777'
+    const block = mkBlock('NOTE', {
+      clean_text: `{{embed:${embedUuid}}}`
+    })
+    editor.commands.setContent(blocksToDoc([block]))
+    const back = docToBlocks(editor.getJSON() as DocJSON)
+    expect(back).toHaveLength(1)
+    expect(back[0].clean_text).toBe(`{{embed:${embedUuid}}}`)
+    expect(back[0].id).toBeTruthy()
     editor.destroy()
   })
 })

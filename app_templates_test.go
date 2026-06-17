@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"silt/backend/parser"
 	"silt/backend/templates"
 )
 
@@ -340,6 +341,236 @@ func TestCreatePageFromTemplate_IPC_BeforeVault(t *testing.T) {
 	_, err := app.CreatePageFromTemplate("nb", "", "pg", "", "daily-note", nil)
 	if err == nil {
 		t.Error("expected error when no vault is loaded")
+	}
+}
+
+// TestCreatePageFromTemplate_EmbedAndRefPreservedInFile is the page-file
+// passthrough test for #93. A template body containing {{embed:uuid}} and
+// ((uuid)) (Smart Graph syntax) is rendered into a page; the resulting
+// .md file on disk must contain the tokens byte-for-byte. The renderer
+// already passes these tokens through (render_test.go's
+// TestRender_SmartGraphEmbedPassthrough + TestRender_BlockReferencePassthrough);
+// this test pins the IPC/file-write layer to preserve that guarantee so
+// the editor's NodeViews (Phase 8) can pick up the tokens unchanged.
+func TestCreatePageFromTemplate_EmbedAndRefPreservedInFile(t *testing.T) {
+	app := newTestApp(t)
+	notebook := "EmbedTest"
+	if err := os.MkdirAll(filepath.Join(app.vaultPath, notebook), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	const body = "See {{embed:abc-123-def}} and ((abc-123-def)) plus {{date}}."
+	tpl := templates.Template{
+		SchemaVersion: "1.0.0",
+		ID:            "embed-test-tpl",
+		Title:         "Embed Test",
+		Category:      "notes",
+		Body:          body,
+	}
+	if err := app.SaveUserTemplate(tpl); err != nil {
+		t.Fatalf("SaveUserTemplate: %v", err)
+	}
+	_, err := app.CreatePageFromTemplate(notebook, "", "EmbedPage", "", "embed-test-tpl", nil)
+	if err != nil {
+		t.Fatalf("CreatePageFromTemplate: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(app.vaultPath, notebook, "EmbedPage.md"))
+	if err != nil {
+		t.Fatalf("read page: %v", err)
+	}
+	content := string(raw)
+	if !strings.Contains(content, "{{embed:abc-123-def}}") {
+		t.Errorf("embed token not preserved in page file:\n%s", content)
+	}
+	if !strings.Contains(content, "((abc-123-def))") {
+		t.Errorf("block-reference token not preserved in page file:\n%s", content)
+	}
+}
+
+// TestCreatePageFromTemplate_SanitizesEdgeCaseNames is the regression test for
+// #98 (and the fix in #89). After the sanitizePathSegment rewrite, internal
+// ".." substrings in a user-supplied page name are preserved verbatim — they
+// are legitimate filename characters, not path-traversal indicators. Only a
+// leading ".." (a path-traversal signal) is stripped. Each case below asserts
+// the expected on-disk file name and the corresponding blocks-table row.
+func TestCreatePageFromTemplate_SanitizesEdgeCaseNames(t *testing.T) {
+	cases := []struct {
+		name        string
+		input       string
+		wantFile    string
+		wantIndexed bool
+	}{
+		{"internal_dots_preserved", "2.0..2.1", "2.0..2.1.md", true},
+		{"multi_internal_dots_preserved", "a..b..c", "a..b..c.md", true},
+		{"leading_dots_stripped", "..foo", "foo.md", true},
+		{"exact_dots_rejected", "..", "", false},
+		{"four_dots_then_name", "....foo", "foo.md", true},
+		{"slash_then_dots", "foo/..bar", "foo..bar.md", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			app := newTestApp(t)
+			notebook := "EdgeCases"
+			os.MkdirAll(filepath.Join(app.vaultPath, notebook), 0o755)
+			_, err := app.CreatePageFromTemplate(notebook, "", c.input, "", "notes", map[string]string{"title": "Edge"})
+			if c.wantIndexed {
+				if err != nil {
+					t.Fatalf("CreatePageFromTemplate(%q) failed: %v", c.input, err)
+				}
+				wantPath := filepath.Join(app.vaultPath, notebook, c.wantFile)
+				if _, statErr := os.Stat(wantPath); statErr != nil {
+					t.Errorf("expected file %q on disk, got error: %v", wantPath, statErr)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("CreatePageFromTemplate(%q) should have failed", c.input)
+				}
+			}
+		})
+	}
+}
+
+// TestRegisterPluginTemplates_IPC verifies the plugin-template IPC (#96):
+// registering makes the templates appear in ListTemplates with Source =
+// "plugin" and PluginID set; unregistering removes them. Emits
+// templates:changed (asserted via the test's captured emit log — see
+// app_templates_test.go for the helper).
+func TestRegisterPluginTemplates_IPC(t *testing.T) {
+	app := newTestApp(t)
+	tpl := &templates.Template{
+		SchemaVersion: "1.0.0",
+		ID:            "ipc-plugin-tpl",
+		Title:         "IPC Plugin Tpl",
+		Category:      "notes",
+		Body:          "# {{title}}\n",
+	}
+	if err := app.RegisterPluginTemplates("silt-kanban", []*templates.Template{tpl}); err != nil {
+		t.Fatalf("RegisterPluginTemplates: %v", err)
+	}
+	res, err := app.ListTemplates()
+	if err != nil {
+		t.Fatalf("ListTemplates: %v", err)
+	}
+	var found *templates.TemplateSummary
+	for i := range res.Templates {
+		if res.Templates[i].ID == "ipc-plugin-tpl" {
+			found = &res.Templates[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("plugin template not in listing after register")
+	}
+	if found.Source != templates.SourcePlugin {
+		t.Errorf("Source = %q, want %q", found.Source, templates.SourcePlugin)
+	}
+	if found.PluginID != "silt-kanban" {
+		t.Errorf("PluginID = %q, want silt-kanban", found.PluginID)
+	}
+
+	// Unregister removes it from the listing.
+	app.UnregisterPluginTemplates("silt-kanban")
+	res, _ = app.ListTemplates()
+	for _, s := range res.Templates {
+		if s.ID == "ipc-plugin-tpl" {
+			t.Error("template still in listing after unregister")
+		}
+	}
+}
+
+// TestRegisterPluginTemplates_FiltersNil verifies that nil elements in the
+// input slice are silently filtered rather than causing the registry to
+// reject the entire batch (loader.go rejects nil entries at the package
+// level).
+func TestRegisterPluginTemplates_FiltersNil(t *testing.T) {
+	app := newTestApp(t)
+	tpl := &templates.Template{
+		SchemaVersion: "1.0.0",
+		ID:            "nil-filter-tpl",
+		Title:         "Nil Filter Tpl",
+		Category:      "notes",
+		Body:          "# {{title}}\n",
+	}
+	// Slice contains one valid template and one nil.
+	if err := app.RegisterPluginTemplates(
+		"silt-test", []*templates.Template{tpl, nil},
+	); err != nil {
+		t.Fatalf("RegisterPluginTemplates with nil entry should succeed (filtered): %v", err)
+	}
+
+	res, err := app.ListTemplates()
+	if err != nil {
+		t.Fatalf("ListTemplates: %v", err)
+	}
+	var count int
+	for _, s := range res.Templates {
+		if s.PluginID == "silt-test" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected 1 plugin template after nil filtering, got %d", count)
+	}
+
+	app.UnregisterPluginTemplates("silt-test")
+}
+
+// TestCreatePageFromTemplate_DeepSection_AppearsInNavigation is the regression
+// test for #97 (and the fix in #88). A page created from a template in a
+// deeply-nested section (e.g. `Work/Projects/Active`) lands at the correct
+// filesystem path AND appears in the navigation tree at the nested level.
+func TestCreatePageFromTemplate_DeepSection_AppearsInNavigation(t *testing.T) {
+	app := newTestApp(t)
+	notebook := "Work"
+	// Layout the deep section on disk first.
+	if err := os.MkdirAll(filepath.Join(app.vaultPath, notebook, "Projects", "Active"), 0o755); err != nil {
+		t.Fatalf("mkdir deep section: %v", err)
+	}
+
+	_, err := app.CreatePageFromTemplate(notebook, "Projects/Active", "SiteLaunch", "", "notes", map[string]string{"title": "Site Launch"})
+	if err != nil {
+		t.Fatalf("CreatePageFromTemplate in deep section: %v", err)
+	}
+
+	// File on disk at the multi-segment path.
+	wantPath := filepath.Join(app.vaultPath, notebook, "Projects", "Active", "SiteLaunch.md")
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Errorf("expected file at %s: %v", wantPath, err)
+	}
+
+	// Visible in the navigation tree under the nested section.
+	tree, err := app.ListNavigation()
+	if err != nil {
+		t.Fatalf("ListNavigation: %v", err)
+	}
+	if len(tree.Notebooks) != 1 {
+		t.Fatalf("expected 1 notebook, got %d", len(tree.Notebooks))
+	}
+	work := tree.Notebooks[0]
+	// Walk to Projects/Active and find the page.
+	var projects *parser.NavigationSection
+	for i := range work.Sections {
+		if work.Sections[i].Name == "Projects" {
+			projects = &work.Sections[i]
+			break
+		}
+	}
+	if projects == nil {
+		t.Fatalf("Projects section not found in navigation: %+v", work.Sections)
+	}
+	if len(projects.Children) == 0 {
+		t.Fatalf("Projects should have a nested child (Active), got none")
+	}
+	active := projects.Children[0]
+	if active.Name != "Active" {
+		t.Errorf("nested section name = %q, want Active", active.Name)
+	}
+	var found bool
+	for _, p := range active.Pages {
+		if p.Name == "SiteLaunch" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("SiteLaunch page not found in Active.Pages = %+v", active.Pages)
 	}
 }
 

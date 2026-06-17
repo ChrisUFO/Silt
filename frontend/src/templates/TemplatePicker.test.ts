@@ -31,7 +31,10 @@ const mocks = vi.hoisted(() => ({
   },
   templateStatus: { kind: 'info' as const, message: '' },
   loadTemplates: vi.fn(),
-  clearTemplateStatus: vi.fn()
+  clearTemplateStatus: vi.fn(),
+  setTemplateStatus: vi.fn(),
+  notifications: { items: [] as Array<{ kind: string; message: string }> },
+  pushNotification: vi.fn()
 }))
 
 vi.mock('../../wailsjs/go/main/App.js', () => ({
@@ -41,7 +44,7 @@ vi.mock('../../wailsjs/go/main/App.js', () => ({
   SaveUserTemplate: vi.fn(),
   DeleteUserTemplate: vi.fn(),
   ReloadTemplates: vi.fn(),
-  CreatePageFromTemplate: vi.fn(),
+  CreatePageFromTemplate: vi.fn().mockResolvedValue('2026-06-15'),
   RenderTemplateBlocks: vi.fn().mockResolvedValue([])
 }))
 
@@ -54,8 +57,15 @@ vi.mock('./store.svelte', () => ({
   templateStatus: mocks.templateStatus,
   loadTemplates: mocks.loadTemplates,
   initTemplates: vi.fn(() => () => {}),
-  setTemplateStatus: vi.fn(),
+  setTemplateStatus: mocks.setTemplateStatus,
   clearTemplateStatus: mocks.clearTemplateStatus
+}))
+
+vi.mock('../notifications/store.svelte', () => ({
+  notificationsState: mocks.notifications,
+  pushNotification: mocks.pushNotification,
+  dismissNotification: vi.fn(),
+  clearAllNotifications: vi.fn()
 }))
 
 import TemplatePicker from './TemplatePicker.svelte'
@@ -64,6 +74,8 @@ describe('TemplatePicker (#55)', () => {
   beforeEach(() => {
     mocks.loadTemplates.mockReset()
     mocks.clearTemplateStatus.mockReset()
+    mocks.setTemplateStatus.mockReset()
+    mocks.pushNotification.mockReset()
   })
 
   afterEach(() => {
@@ -140,5 +152,130 @@ describe('TemplatePicker (#55)', () => {
     await fireEvent.input(search, { target: { value: 'zzz-no-match' } })
 
     expect(screen.getByText('No templates match your search.')).toBeInTheDocument()
+  })
+
+  it('pre-fills the page-name field in new-page mode (#95)', () => {
+    render(TemplatePicker, {
+      props: {
+        mode: 'new-page',
+        notebook: 'Work',
+        section: '',
+        onClose: vi.fn(),
+        onCreatedPage: vi.fn()
+      }
+    })
+
+    const input = screen.getByLabelText('Page name') as HTMLInputElement
+    expect(input.value).toMatch(/^Page \d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('dispatches focus-page-title on successful CreatePageFromTemplate (#95)', async () => {
+    const { CreatePageFromTemplate } = await import('../../wailsjs/go/main/App.js')
+    ;(CreatePageFromTemplate as ReturnType<typeof vi.fn>).mockResolvedValue('2026-06-15')
+
+    const onCreatedPage = vi.fn()
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+
+    render(TemplatePicker, {
+      props: {
+        mode: 'new-page',
+        notebook: 'Work',
+        section: '',
+        onClose: vi.fn(),
+        onCreatedPage
+      }
+    })
+
+    const input = screen.getByLabelText('Page name') as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'Sprint Day' } })
+    const createBtn = screen.getByText('Create Page')
+    await fireEvent.click(createBtn)
+
+    await vi.waitFor(() => {
+      expect(CreatePageFromTemplate).toHaveBeenCalledWith(
+        'Work',
+        '',
+        'Sprint Day',
+        '',
+        'daily-note',
+        expect.any(Object)
+      )
+    })
+    expect(dispatchSpy).toHaveBeenCalled()
+    const event = dispatchSpy.mock.calls
+      .map((c) => c[0] as Event)
+      .find((e) => e.type === 'focus-page-title')
+    expect(event).toBeDefined()
+    expect(onCreatedPage).toHaveBeenCalledWith('Sprint Day')
+    dispatchSpy.mockRestore()
+  })
+
+  it('pushes a toast when CreatePageFromTemplate fails (#94)', async () => {
+    const { CreatePageFromTemplate } = await import('../../wailsjs/go/main/App.js')
+    ;(CreatePageFromTemplate as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('disk full')
+    )
+    const onCreatedPage = vi.fn()
+    render(TemplatePicker, {
+      props: {
+        mode: 'new-page',
+        notebook: 'Work',
+        section: '',
+        onClose: vi.fn(),
+        onCreatedPage
+      }
+    })
+    const input = screen.getByLabelText('Page name') as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'Will Fail' } })
+    await fireEvent.click(screen.getByText('Create Page'))
+    await vi.waitFor(() => {
+      expect(mocks.pushNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'error' })
+      )
+    })
+    expect(mocks.setTemplateStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'error' })
+    )
+    expect(onCreatedPage).not.toHaveBeenCalled()
+  })
+
+  it('pushes a toast when RenderTemplateBlocks fails (#94)', async () => {
+    const { RenderTemplateBlocks } = await import('../../wailsjs/go/main/App.js')
+    ;(RenderTemplateBlocks as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('IPC lost')
+    )
+    const onInsertBlocks = vi.fn()
+    render(TemplatePicker, {
+      props: { mode: 'insert', onClose: vi.fn(), onInsertBlocks }
+    })
+    await fireEvent.click(screen.getByText('Insert'))
+    await vi.waitFor(() => {
+      expect(mocks.pushNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'error' })
+      )
+    })
+    expect(mocks.setTemplateStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'error' })
+    )
+    expect(onInsertBlocks).not.toHaveBeenCalled()
+  })
+
+  it('groups plugin templates under Plugins / <plugin_id> (#96)', () => {
+    mocks.templatesState.items.push({
+      id: 'kanban-sprint',
+      title: 'Sprint',
+      description: 'A plugin template',
+      category: 'projects',
+      icon: 'sprint',
+      source: 'plugin',
+      plugin_id: 'silt-kanban',
+      placeholders: []
+    } as any)
+    render(TemplatePicker, {
+      props: { mode: 'insert', onClose: vi.fn(), onInsertBlocks: vi.fn() }
+    })
+    // The plugin group header appears; the plugin template is rendered.
+    expect(screen.getByText('Plugins / silt-kanban')).toBeInTheDocument()
+    expect(screen.getByText('Sprint')).toBeInTheDocument()
   })
 })

@@ -509,6 +509,7 @@ Pipeline (single source of truth shared with SPECS.md §6.5 / docs/TEMPLATES.md)
           │   ListTemplates / GetTemplate / RenderTemplate
           │   RenderTemplateBlocks / SaveUserTemplate
           │   DeleteUserTemplate / ReloadTemplates
+          │   RegisterPluginTemplates / UnregisterPluginTemplates (#96)
           │   CreatePageFromTemplate
           │   events: templates:changed
           ▼
@@ -525,7 +526,7 @@ Pipeline (single source of truth shared with SPECS.md §6.5 / docs/TEMPLATES.md)
 ```
 
 backend/templates package:
-- template.go — Template struct (SchemaVersion, ID, Title, Description, Category, Icon, Placeholders, Body, Source). Source is "builtin" (embedded, read-only), "disk" (user-authored, writable), or "plugin" (reserved for future plugin-provided templates). SupportedSchemaVersion = "1.0.0" (informational/forward-compatible).
+- template.go — Template struct (SchemaVersion, ID, Title, Description, Category, Icon, Placeholders, Body, Source, PluginID). Source is "builtin" (embedded, read-only), "disk" (user-authored, writable), or "plugin" (runtime-registered by a plugin, #96). PluginID is non-empty only when Source == "plugin"; both Source and PluginID are `yaml:"-"` so disk frontmatter can never claim a plugin provenance. SupportedSchemaVersion = "1.0.0" (informational/forward-compatible).
 - render.go — Render(t, vars, opts) → (string, warnings). A ~30-line substitution renderer (NOT Go text/template). The placeholder grammar `{{[a-z][a-z0-9_]*}}` structurally excludes Smart Graph syntax: `{{embed:uuid}}` (colon) and `((uuid))` (parentheses) never match the regex, so they pass through byte-for-byte. Built-in defaults (date/time/iso_date/weekday) resolve from RenderOptions.Now in RenderOptions.Timezone. Declared-but-unprovided placeholders stay literal (no warning); truly-unknown tokens stay literal + warn (forward-compat).
 - validate.go — Validate(*Template) returns structured ValidationErrors (id grammar `^[a-z0-9_-]+$`, non-empty body/title/schema_version/category, placeholder-name grammar `^[a-z][a-z0-9_]*$`, no duplicate placeholder names, semver schema_version). Categories are additive: an unknown-but-non-empty category is valid (the loader emits a forward-compat warning); only an empty category is rejected.
 - default.go — `//go:embed builtin/*.md` (embed.FS). EmbeddedTemplates() / ParseEmbeddedByID(id) / BuiltinIDs() (filename==id convention) / IsBuiltinID(id) (the write-path read-only guard). Fail-loud: an invalid embedded template is a release-blocking authoring bug.
@@ -563,6 +564,13 @@ Each page renders a single TipTap editor instance (`TipTapEditor.svelte`) contai
 The ProseMirror schema defines three block node types (`taskBlock`, `noteBlock`, `headerBlock`) that map 1:1 to `parser.ParsedBlock`. Each carries a UUID `id` attr and a per-block `file_date`. A `UniqueBlockIds` extension (`appendTransaction`) mints fresh UUIDs for pasted/duplicated blocks to prevent `blocks`-table PK collisions.
 
 NodeView components (`TaskBlockView`, `NoteBlockView`, `HeaderBlockView`) render the Svelte UI for each block type — checkbox cycle for tasks, drag handles, meta badges. The slash menu (`/` at block start) surfaces commands to change block types.
+
+**Smart Graph NodeViews (#85).** Two additional schema nodes render Smart Graph syntax as live, interactive elements inside the editor. The converter layer (`frontend/src/lib/editor/converters.ts`) tokenizes `clean_text` and emits the corresponding node types inline within the parent `noteBlock`; on save, the textual tokens are reconstructed byte-for-byte so the on-disk file is round-trip identical.
+
+- `embedNode` (block-level, atomic) — `{{embed:uuid}}` becomes a live `EmbedPortal` NodeView. The portal fetches the referenced block via `ResolveBlockReference` and renders it as a nested live view.
+- `blockReferenceNode` (inline, atomic) — `((uuid))` becomes a clickable `BlockReferenceChip` NodeView that navigates to the referenced block via the `navigate-to-block` DOM event.
+
+The NodeView wrappers (`frontend/src/components/editor/EmbedNodeView.svelte`, `BlockReferenceNodeView.svelte`) re-use the existing read-mode `EmbedPortal.svelte` and `BlockReferenceChip.svelte` components — the same rendering pipeline serves both the read-mode (search snippets, standalone embeds) and the NodeView contexts.
 
 5.2 Drag-and-Drop Kanban Board
 

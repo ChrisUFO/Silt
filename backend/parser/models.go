@@ -64,14 +64,19 @@ type TaskQueryFilter struct {
 
 // NavigationTree describes the Notebook > Section > Page hierarchy for the
 // sidebar navigator. Counts are block counts so the UI can render badges.
+// Sections nest via `Children` (#88) so deeply-nested folders like
+// `Work/Projects/Active/Site.md` appear as a tree rather than being lost
+// behind a flat single-level list.
 type NavigationPage struct {
 	Name  string `json:"name"`
 	Count int    `json:"count"`
 }
 
 type NavigationSection struct {
-	Name  string             `json:"name"`
-	Pages []NavigationPage   `json:"pages"`
+	Name     string              `json:"name"`
+	Path     string              `json:"path,omitempty"`
+	Pages    []NavigationPage    `json:"pages"`
+	Children []NavigationSection `json:"children,omitempty"`
 }
 
 type NavigationNotebook struct {

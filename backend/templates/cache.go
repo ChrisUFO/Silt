@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -49,6 +50,13 @@ var globalTemplateCache = &templateCache{
 func CachedGetTemplate(templatesDir, id string) (*Template, error) {
 	if id == "" {
 		return nil, ErrTemplateNotFound
+	}
+	// Plugin templates are resolved from the in-memory registry, not the
+	// on-disk cache or the embedded set (#96). Delegate directly so the
+	// picker's plain-id path (which constructs the plugin:// URI at the
+	// IPC call site) and any direct plugin:// caller both work.
+	if strings.HasPrefix(id, "plugin://") {
+		return GetPluginTemplate(id)
 	}
 	// Embedded first-class templates are authoritative from the binary; serve
 	// them directly (cheap, never stale relative to the build).

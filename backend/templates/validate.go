@@ -57,6 +57,32 @@ func (ve ValidationErrors) Error() string {
 	return strings.Join(msgs, "; ")
 }
 
+// rejectPluginIDInFrontmatter rejects `plugin_id:` lines in YAML frontmatter.
+// Plugin templates are registered programmatically via RegisterPluginTemplates
+// (#96); a user-authored .md file claiming to be from a plugin would be a
+// corruption indicator. The field is also yaml:"-" on the struct so it never
+// deserializes, but we belt-and-suspenders this with an explicit check on the
+// raw frontmatter text.
+func rejectPluginIDInFrontmatter(raw []byte) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	lower := string(raw)
+	if !strings.Contains(lower, "plugin_id") {
+		return nil
+	}
+	for _, line := range strings.Split(lower, "\n") {
+		l := strings.TrimSpace(line)
+		if strings.HasPrefix(l, "plugin_id:") {
+			return fmt.Errorf(
+				"plugin_id is reserved for plugin-registered templates; " +
+					"set Source = \"plugin\" via the plugin registry instead",
+			)
+		}
+	}
+	return nil
+}
+
 // Validate checks a parsed template against the canonical schema. It returns
 // nil if the template is well-formed, or a ValidationErrors slice listing every
 // structural problem (missing identity, empty body, malformed id/schema_version,

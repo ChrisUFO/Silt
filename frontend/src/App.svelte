@@ -30,6 +30,7 @@
   import { matchHotkey } from './settings/hotkeys'
   import SidebarResizeHandle from './components/SidebarResizeHandle.svelte'
   import { setActiveLocation } from './plugins/location.svelte'
+  import ToastContainer from './components/ToastContainer.svelte'
   import logo from './assets/logo.svg'
 
   let isInitialized = $state(false)
@@ -542,6 +543,8 @@
     />
   {/if}
 </main>
+
+<ToastContainer />
 
 <style>
   .animate-spin-slow {

@@ -253,7 +253,7 @@ Every line block is given a unique identifier appended as a comment suffix: <!--
 
 Block Reference ((uuid)): Inline placeholder text that renders as an interactive, clickable link. Hovering over the link reveals the original block content. Clicking it centers the view directly on the source file location.
 
-Block Embed {{embed:uuid}}: Renders a live, interactive portal displaying the source block inline. Svelte coordinates a dual-binding listener on the embedded portal: any text changes made in the embed are piped back to update the source file, and any changes in the source file are immediately updated in the embed.
+Block Embed {{embed:uuid}}: Renders a live, interactive portal displaying the source block inline. Svelte coordinates a dual-binding listener on the embedded portal: any text changes made in the embed are piped back to update the source file, and any changes in the source file are immediately updated in the embed. In the TipTap editor surface (#85), both `((uuid))` and `{{embed:uuid}}` render as live ProseMirror NodeViews (`BlockReferenceNode` inline atom and `EmbedNode` block atom respectively) via `SvelteNodeViewRenderer`, reusing the same read-mode components (`BlockReferenceChip.svelte`, `EmbedPortal.svelte`). The editor's converters tokenize `clean_text` to emit these node types and reconstruct the textual tokens on save, so the on-disk file is round-trip identical.
 
 6. User Interface Specification
 
@@ -366,7 +366,9 @@ Default Library: the full first-class set is embedded in the Go binary (`backend
 
 Mechanism: the Go backend resolves templates (on-disk + embedded, deduped, sorted by Category then Title) and exposes them over the Wails IPC bridge (`ListTemplates` / `GetTemplate` / `RenderTemplate` / `RenderTemplateBlocks` / `SaveUserTemplate` / `DeleteUserTemplate` / `ReloadTemplates` / `CreatePageFromTemplate`). A Svelte template store receives the listing and drives the picker modal; the backend emits a `templates:changed` event so the picker re-lists on add/edit/delete. A file watcher on `.system/templates/` hot-reloads external changes. Inserted templates produce real Silt blocks — tasks (`- [ ] TODO TASK …`) flow into Kanban/Agenda/Calendar, embeds/references resolve, and blocks get fresh UUIDs via the standard pipeline (§4, §5.2). No SQLite schema change, no file-write-lock change, no settings.json change — templates are vault-scoped Markdown, read-mostly, on the existing atomic-write path.
 
-Forward Compatibility: `schema_version` is informational (a forward-versioned template keeps loading); the `Source` field reserves a `plugin` tier for future plugin-provided templates; categories are additive (unknown categories warn, never reject); and new built-ins land as a single `.md` file + embed with no engine change.
+Forward Compatibility: `schema_version` is informational (a forward-versioned template keeps loading); the `Source` field supports three tiers — `builtin` (embedded, read-only), `disk` (user-authored, writable), and `plugin` (runtime-registered by a plugin, #96); categories are additive (unknown categories warn, never reject); and new built-ins land as a single `.md` file + embed with no engine change.
+
+Plugin Templates (#96): plugins register templates at runtime via the `RegisterPluginTemplates(pluginID, []*Template)` IPC method. Plugin templates carry `Source = "plugin"` and a `PluginID` field (both `yaml:"-"` so disk frontmatter can never claim a plugin provenance). The canonical URI for a plugin template is `plugin://<plugin-id>/<template-id>`, resolved by `GetTemplate` directly to the in-memory registry. The picker groups plugin templates under a `Plugins / <plugin-id>` header. Plugin templates are deduped last (on-disk > embedded > plugin) so a plugin can't shadow a first-class or user template. The registry is capped at 100 templates per plugin.
 
 
 7. Reliability, Protection, & Performance Targets

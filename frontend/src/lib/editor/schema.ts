@@ -184,3 +184,80 @@ export const HeaderBlock = Node.create({
 // NoteBlock (plain text) is the natural default; TaskBlock and HeaderBlock
 // are opt-in types the user creates via the slash menu.
 export const SiltBlockExtensions = [NoteBlock, TaskBlock, HeaderBlock]
+
+// ---- EmbedNode (block-level, atomic) -------------------------------------
+// Renders Smart Graph `{{embed:uuid}}` as a live EmbedPortal NodeView (#85).
+// Atomic (no editable children); the NodeView fetches the referenced block
+// via ResolveBlockReference and renders it as a nested live portal. The
+// `uuid` attr is the block UUID; the textual form `{{embed:uuid}}` is
+// reconstructed in clean_text on save.
+export const EmbedNode = Node.create({
+  name: 'embedNode',
+  group: 'block',
+  atom: true,
+  selectable: true,
+  draggable: false,
+
+  addAttributes() {
+    return {
+      id: {
+        default: null,
+        parseHTML: (el) => el.getAttribute('data-id') || null,
+        renderHTML: (attrs) => (attrs.id ? { 'data-id': attrs.id } : {})
+      },
+      uuid: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-uuid') || '',
+        renderHTML: (attrs) =>
+          attrs.uuid ? { 'data-uuid': attrs.uuid } : {}
+      }
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'div[data-type="embed"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'div',
+      mergeAttributes({ 'data-type': 'embed' }, HTMLAttributes)
+    ]
+  }
+})
+
+// ---- BlockReferenceNode (inline, atomic) --------------------------------
+// Renders Smart Graph `((uuid))` as an inline BlockReferenceChip NodeView
+// (#85). Inline (sits inside a noteBlock's content); clicking the chip
+// navigates to the referenced block. The `uuid` attr is the block UUID;
+// the textual form `((uuid))` is reconstructed in clean_text on save.
+export const BlockReferenceNode = Node.create({
+  name: 'blockReferenceNode',
+  group: 'inline',
+  inline: true,
+  atom: true,
+  selectable: true,
+  draggable: false,
+
+  addAttributes() {
+    return {
+      uuid: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-uuid') || '',
+        renderHTML: (attrs) =>
+          attrs.uuid ? { 'data-uuid': attrs.uuid } : {}
+      }
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'span[data-type="block-ref"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'span',
+      mergeAttributes({ 'data-type': 'block-ref' }, HTMLAttributes)
+    ]
+  }
+})

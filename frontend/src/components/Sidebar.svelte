@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
+  import SidebarSection from './SidebarSection.svelte'
   import {
     ListNavigation,
     CreateNotebook,
@@ -23,6 +24,7 @@
   interface NavSection {
     name: string
     pages: NavPage[]
+    children?: NavSection[]
   }
   interface NavNotebook {
     name: string
@@ -724,106 +726,26 @@
         </div>
       {:else}
         {#each sortedSections as sec (sec.name)}
-          {@const isExpanded = expandedSections.has(sec.name)}
-          <div class="mb-0.5">
-            <!-- Section header -->
-            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div
-              class="group flex items-center gap-1 px-2 py-1.5 cursor-pointer rounded hover:bg-bg-hover transition-colors"
-              class:drag-over-top={dropTarget?.level === 'section' && dropTarget.name === sec.name && dropTarget.before}
-              class:drag-over-bottom={dropTarget?.level === 'section' && dropTarget.name === sec.name && !dropTarget.before}
-              draggable="true"
-              ondragstart={(e) => handleDragStart(e, 'section', sec.name)}
-              ondragover={(e) => handleDragOver(e, 'section', sec.name)}
-              ondragleave={handleDragLeave}
-              ondrop={(e) => handleDrop(e, 'section', sec.name, activeNotebook)}
-              ondragend={handleDragEnd}
-              onclick={() => toggleSection(sec.name)}
-              oncontextmenu={(e) => openContextMenu(e, 'section', activeNotebook, sec.name)}
-              role="treeitem"
-              tabindex="0"
-              aria-expanded={isExpanded}
-              aria-selected={activeSection === sec.name}
-            >
-              <span
-                class="material-symbols-outlined text-text-muted text-[16px] transition-transform"
-                class:rotate-90={isExpanded}
-              >
-                chevron_right
-              </span>
-              <span
-                class="material-symbols-outlined text-text-muted text-[17px]"
-                >{sec.name ? 'folder' : 'drafts'}</span
-              >
-              <span
-                class="font-label-sm-bold text-label-sm-bold uppercase tracking-wider text-text-primary truncate flex-1"
-                >{sec.name ? sec.name : 'Pages (no section)'}</span
-              >
-              <span
-                class="text-[9px] font-label-sm text-text-muted bg-bg-panel border border-border-muted rounded-full px-1.5 py-0.5"
-                >{sec.pages.length}</span
-              >
-              <button
-                onclick={(e) => {
-                  e.stopPropagation()
-                  activeSection = sec.name
-                  onSelectSection(sec.name)
-                  handleCreatePageInline(sec.name)
-                }}
-                title="New page in this section"
-                class="opacity-0 group-hover:opacity-100 text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0.5 rounded transition-all"
-              >
-                <span class="material-symbols-outlined text-[16px]">add</span>
-              </button>
-            </div>
-
-            <!-- Pages -->
-            {#if isExpanded}
-              <div class="ml-4 border-l border-border-muted pl-1 mt-0.5 mb-1.5">
-                {#if sec.pages.length === 0}
-                  <div
-                    class="text-text-muted text-[11px] font-body-md py-1.5 px-2 italic"
-                  >
-                    No pages. Click + to add one.
-                  </div>
-                {:else}
-                  {#each sortByName(sec.pages, navOrder.pages[`${activeNotebook}/${sec.name}`] ?? []) as pg (pg.name)}
-                    {@const isActive =
-                      activeSection === sec.name && activePage === pg.name}
-                    <button
-                      onclick={() => handleSelectPage(sec.name, pg.name)}
-                      oncontextmenu={(e) => openContextMenu(e, 'page', activeNotebook, sec.name, pg.name)}
-                      draggable="true"
-                      ondragstart={(e) => handleDragStart(e, 'page', pg.name, sec.name)}
-                      ondragover={(e) => handleDragOver(e, 'page', pg.name)}
-                      ondragleave={handleDragLeave}
-                      ondrop={(e) => handleDrop(e, 'page', pg.name, activeNotebook, sec.name)}
-                      ondragend={handleDragEnd}
-                      class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
-                      class:bg-bg-hover={isActive}
-                      class:text-accent-primary-start={isActive}
-                      class:text-text-muted={!isActive}
-                      class:hover:text-text-primary={!isActive}
-                      role="treeitem"
-                      aria-selected={isActive}
-                    >
-                      {#if isActive}
-                        <span
-                          class="absolute left-0 top-1 bottom-1 w-[2px] bg-accent-primary-start rounded-full"
-                        ></span>
-                      {/if}
-                      <span class="material-symbols-outlined text-[15px]"
-                        >article</span
-                      >
-                      <span class="truncate flex-1" title={pg.name}
-                        >{pg.name}</span
-                      >
-                    </button>
-                  {/each}
-                {/if}
-              </div>
-            {/if}
-          </div>
+          <SidebarSection
+            section={sec}
+            depth={0}
+            {activeNotebook}
+            {activeSection}
+            {activePage}
+            {expandedSections}
+            {navOrder}
+            {dropTarget}
+            onToggleSection={toggleSection}
+            onSelectPage={handleSelectPage}
+            onSelectSection={onSelectSection}
+            onCreatePageInline={handleCreatePageInline}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onDragEnd={handleDragEnd}
+            onContextMenu={openContextMenu}
+          />
         {/each}
       {/if}
     </div>

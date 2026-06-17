@@ -86,13 +86,28 @@ describe('templates store', () => {
     dispose()
   })
 
-  it('initTemplates dispose unsubscribes', () => {
-    const dispose = initTemplates()
-    dispose()
+  it('loadTemplates preserves plugin_id on plugin templates (#96)', async () => {
+    mockListTemplates.mockResolvedValue({
+      templates: [
+        {
+          id: 'plugin-tpl',
+          title: 'Plugin Tpl',
+          category: 'projects',
+          source: 'plugin',
+          plugin_id: 'silt-kanban'
+        },
+        { id: 'daily-note', title: 'Daily Note', category: 'daily', source: 'builtin' }
+      ],
+      errors: [],
+      warnings: []
+    } as any)
 
-    // Re-init should work after dispose.
-    const dispose2 = initTemplates()
-    expect(mockEventsOn).toHaveBeenCalledTimes(2)
-    dispose2()
+    await loadTemplates()
+
+    expect(templatesState.items.length).toBe(2)
+    const pluginTpl = templatesState.items.find((t) => t.id === 'plugin-tpl')
+    expect(pluginTpl).toBeDefined()
+    expect(pluginTpl?.source).toBe('plugin')
+    expect(pluginTpl?.plugin_id).toBe('silt-kanban')
   })
 })
