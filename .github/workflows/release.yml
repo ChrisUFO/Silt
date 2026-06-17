@@ -128,30 +128,37 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev build-essential pkg-config
 
-      - name: Install NSIS (with retry + PATH sync)
+      - name: Install NSIS and expose makensis
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # Chocolatey updates the Machine/User PATH (registry) but NOT the
-          # running process, so Get-Command makensis would silently miss a
-          # successful install. Sync $env:PATH from the registry before probing.
-          function Sync-Path {
-            $env:PATH = `
-              [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + `
-              [System.Environment]::GetEnvironmentVariable('PATH', 'User')
+          # The Chocolatey `nsis` package installs makensis.exe to
+          # C:\Program Files (x86)\NSIS but does NOT shim it onto PATH and
+          # does NOT update the registry PATH, so Get-Command / a PATH sync
+          # both miss a successful install. Resolve the binary by its known
+          # install location instead.
+          $candidates = @(
+            'C:\Program Files (x86)\NSIS',
+            'C:\Program Files\NSIS',
+            "$env:ProgramData\chocolatey\bin"
+          )
+          function Find-Makensis {
+            foreach ($d in $candidates) {
+              $p = Join-Path $d 'makensis.exe'
+              if (Test-Path $p) { return $p }
+            }
+            return $null
           }
-          Sync-Path
 
-          if (Get-Command makensis -ErrorAction SilentlyContinue) {
-            Write-Host "makensis already on PATH."
-          } else {
+          $makensis = Find-Makensis
+          if (-not $makensis) {
             $maxRetries = 3
             for ($i = 1; $i -le $maxRetries; $i++) {
               Write-Host "Installing NSIS via Chocolatey (attempt $i of $maxRetries)..."
               & choco install nsis -y --no-progress
               $code = $LASTEXITCODE
-              Sync-Path
-              if ($code -eq 0 -and (Get-Command makensis -ErrorAction SilentlyContinue)) {
+              $makensis = Find-Makensis
+              if ($code -eq 0 -and $makensis) {
                 Write-Host "NSIS installed successfully."
                 break
               }
@@ -164,9 +171,11 @@ jobs:
             }
           }
 
-          # The build runs under bash in a later step; export makensis's dir
-          # via GITHUB_PATH so it is on PATH there too.
-          $nsisBin = Split-Path (Get-Command makensis).Source -Parent
+          $nsisBin = Split-Path $makensis -Parent
+          Write-Host "Using makensis: $makensis"
+          # Expose to this session and to every following step (the build
+          # runs under bash, which only sees GITHUB_PATH additions).
+          $env:PATH = "$nsisBin;$env:PATH"
           Add-Content -Path $env:GITHUB_PATH -Value $nsisBin
           Write-Host "Added $nsisBin to GITHUB_PATH."
 
