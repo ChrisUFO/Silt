@@ -2,7 +2,8 @@
   // Recursive section renderer for the sidebar tree (#88). Renders one
   // NavigationSection plus its nested Children. Each level tracks its own
   // expanded state via the parent Sidebar's `expandedSections` set (keyed
-  // by the multi-segment section path, e.g. "Projects/Active").
+  // by the section's single-segment display name — the immediate folder
+  // name, not the full path).
   //
   // Drag-to-reorder (#68), right-click context menu (#62), and HTML5 DnD
   // handlers are threaded in from the parent Sidebar so every section and

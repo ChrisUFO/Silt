@@ -135,6 +135,11 @@ func GetPluginTemplate(uri string) (*Template, error) {
 		)
 	}
 	cp := *t
+	if len(cp.Placeholders) > 0 {
+		ph := make([]Placeholder, len(cp.Placeholders))
+		copy(ph, cp.Placeholders)
+		cp.Placeholders = ph
+	}
 	return &cp, nil
 }
 
