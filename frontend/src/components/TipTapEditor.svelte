@@ -24,6 +24,7 @@
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import { settings } from '../settings/store.svelte'
   import { measureFrameBudget } from '../lib/perf/frame-budget'
+  import { getActiveLocation } from '../plugins/location.svelte'
   import CommandPalette from './CommandPalette.svelte'
 
   interface Props {
@@ -110,7 +111,9 @@
   // Capture the initial blocks under untrack to signal that the one-shot
   // capture is intentional — the $effect below handles live reactivity (#64).
   const initialDoc = untrack(() => blocksToDoc(blocks))
-  const initialKey = untrack(() => `${blocks.map((b) => b.id).join(',')}:${blocks.length}`)
+  const initialKey = untrack(
+    () => `${blocks.map((b) => b.id).join(',')}:${blocks.length}`
+  )
   let lastSyncedBlocksKey = $state(initialKey)
   const editorStore = createEditor({
     extensions: [
@@ -208,7 +211,9 @@
       docToBlocks(editorInstance.getJSON())
     )
     try {
-      await SaveFileBlocks(notebook, section, page, updatedBlocks)
+      // Source ('vault' | 'linked:<id>') resolves the notebook's root (#100).
+      const source = getActiveLocation().source
+      await SaveFileBlocks(source, notebook, section, page, updatedBlocks)
     } catch (e) {
       console.error('TipTapEditor: SaveFileBlocks failed:', e)
     }

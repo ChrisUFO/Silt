@@ -27,6 +27,7 @@ import (
 	"silt/backend/themes"
 	"silt/backend/vault"
 
+	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -417,9 +418,14 @@ func (a *App) InitializeVault() (bool, error) {
 
 // FetchPageBlocks returns a flat list of all blocks for a page, ordered by
 // line_number. A page is a single file; each block carries its own file_date.
-func (a *App) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBlock, error) {
+// source ('vault' | 'linked:<id>') scopes the lookup so a linked notebook
+// sharing a display name with a vault notebook returns its own page (#100).
+func (a *App) FetchPageBlocks(source, notebook, section, page string) ([]parser.ParsedBlock, error) {
 	if a.db == nil {
 		return nil, fmt.Errorf("vault database not loaded")
+	}
+	if source == "" {
+		source = "vault"
 	}
 
 	a.wg.Add(1)
@@ -428,7 +434,7 @@ func (a *App) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBl
 	var res []parser.ParsedBlock
 	var err error
 	a.coordinator.WithDBRead(func() {
-		res, err = a.db.FetchPageBlocks(notebook, section, page)
+		res, err = a.db.FetchPageBlocks(source, notebook, section, page)
 	})
 
 	return res, err
@@ -493,73 +499,73 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 
 	var writeErr error
 	a.coordinator.LockBlockWrite(blockID, func() {
-	a.coordinator.LockFileWrite(filePath, func() {
-		contentBytes, err := os.ReadFile(filePath)
-		if err != nil {
-			writeErr = err
-			return
-		}
+		a.coordinator.LockFileWrite(filePath, func() {
+			contentBytes, err := os.ReadFile(filePath)
+			if err != nil {
+				writeErr = err
+				return
+			}
 
-		// Parse the whole file, flip the target task's status in the parsed
-		// slice, then re-render through the single serializer. This keeps
-		// UpdateBlockState on the same write path as every other writer
-		// (one on-disk format definition) and preserves unmanaged lines via
-		// the original body.
-		// Use the file's modification time as the default date for blocks
-		// whose comment lacks a @ date suffix — matches the scanner's behavior.
-		// Using time.Now() here would silently shift old blocks' dates to today.
-		fileDate := fileOrDefaultDate(filePath)
-		parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
-		if parseErr != nil {
-			writeErr = fmt.Errorf("failed to parse file for state update: %w", parseErr)
-			return
-		}
-		found := false
-		for i := range parsedBlocks {
-			if parsedBlocks[i].ID == blockID {
-				if parsedBlocks[i].Type != parser.BlockTask {
-					writeErr = fmt.Errorf("block %s is not a task", blockID)
-					return
+			// Parse the whole file, flip the target task's status in the parsed
+			// slice, then re-render through the single serializer. This keeps
+			// UpdateBlockState on the same write path as every other writer
+			// (one on-disk format definition) and preserves unmanaged lines via
+			// the original body.
+			// Use the file's modification time as the default date for blocks
+			// whose comment lacks a @ date suffix — matches the scanner's behavior.
+			// Using time.Now() here would silently shift old blocks' dates to today.
+			fileDate := fileOrDefaultDate(filePath)
+			parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
+			if parseErr != nil {
+				writeErr = fmt.Errorf("failed to parse file for state update: %w", parseErr)
+				return
+			}
+			found := false
+			for i := range parsedBlocks {
+				if parsedBlocks[i].ID == blockID {
+					if parsedBlocks[i].Type != parser.BlockTask {
+						writeErr = fmt.Errorf("block %s is not a task", blockID)
+						return
+					}
+					parsedBlocks[i].Status = newState
+					found = true
+					break
 				}
-				parsedBlocks[i].Status = newState
-				found = true
-				break
 			}
-		}
-		if !found {
-			writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
-			return
-		}
-
-		frontmatter, body := splitFrontmatter(string(contentBytes))
-		if frontmatter == "" {
-			today := time.Now().Format("2006-01-02")
-			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(today))
-			body = string(contentBytes)
-		}
-
-		newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
-
-		a.tracker.RegisterWrite(filePath)
-
-		if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
-			writeErr = err
-			return
-		}
-
-		// Re-parse with the sanitized metadata so the re-indexed row
-		// uses the same cleaned values that went into the file path.
-		blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
-		if err == nil {
-			var idxErr error
-			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks(remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta.Tags, remeta.Warnings...)
-			})
-			if idxErr != nil {
-				log.Printf("UpdateBlockState: IndexFileBlocks failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
+			if !found {
+				writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
+				return
 			}
-		}
-	})
+
+			frontmatter, body := splitFrontmatter(string(contentBytes))
+			if frontmatter == "" {
+				today := time.Now().Format("2006-01-02")
+				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(today))
+				body = string(contentBytes)
+			}
+
+			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
+
+			a.tracker.RegisterWrite(filePath)
+
+			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+				writeErr = err
+				return
+			}
+
+			// Re-parse with the sanitized metadata so the re-indexed row
+			// uses the same cleaned values that went into the file path.
+			blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
+			if err == nil {
+				var idxErr error
+				a.coordinator.WithDBWrite(func() {
+					idxErr = a.db.IndexFileBlocks(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta.Tags, remeta.Warnings...)
+				})
+				if idxErr != nil {
+					log.Printf("UpdateBlockState: IndexFileBlocks failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
+				}
+			}
+		})
 	}) // LockBlockWrite
 
 	if writeErr != nil {
@@ -812,8 +818,8 @@ func (a *App) PickExportPath(defaultFilename string) (string, error) {
 		return "", fmt.Errorf("application context not ready")
 	}
 	return runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:            "Export active theme",
-		DefaultFilename:  defaultFilename,
+		Title:           "Export active theme",
+		DefaultFilename: defaultFilename,
 		Filters: []runtime.FileFilter{
 			{DisplayName: "Silt Theme (*.json)", Pattern: "*.json"},
 		},
@@ -1025,7 +1031,7 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 		if perr == nil {
 			var idxErr error
 			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
+				idxErr = a.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
 			})
 			if idxErr != nil {
 				log.Printf("CreatePageFromTemplate: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
@@ -1069,7 +1075,6 @@ func (a *App) RenderTemplateBlocks(id string, vars map[string]string) ([]parser.
 	}
 	return blocks, nil
 }
-
 
 // ResolveBlockReference looks up a ((uuid)) reference, returning its content
 // and location for hover previews and scroll-to-source navigation. Missing
@@ -1148,74 +1153,74 @@ func (a *App) MutateBlock(blockID, newText string) error {
 
 	var writeErr error
 	a.coordinator.LockBlockWrite(blockID, func() {
-	a.coordinator.LockFileWrite(filePath, func() {
-		// Don't clobber a block the user is actively editing in another view
-		// (the timeline editor holds a focus lock on the file while focused).
-		// Refuse rather than silently overwrite; callers (e.g. EmbedPortal)
-		// retry once the editor releases the lock.
-		if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
-			writeErr = errBlockBeingEdited
-			return
-		}
-		contentBytes, err := os.ReadFile(filePath)
-		if err != nil {
-			writeErr = err
-			return
-		}
-
-		// Parse the whole file, mutate the target block in the slice, then
-		// re-render through the single serializer (RenderFileContent). This
-		// preserves unmanaged lines (code fences, prose) via the original
-		// body and keeps MutateBlock on the same write path as every other
-		// writer, so there is one on-disk format definition.
-		// Use the file's modification time as the default date for blocks
-		// whose comment lacks a @ date suffix — matches the scanner's behavior.
-		fileDate := fileOrDefaultDate(filePath)
-		parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
-		if parseErr != nil {
-			writeErr = fmt.Errorf("failed to parse file for mutation: %w", parseErr)
-			return
-		}
-		found := false
-		for i := range parsedBlocks {
-			if parsedBlocks[i].ID == blockID {
-				parsedBlocks[i].CleanText = cleanText
-				found = true
-				break
+		a.coordinator.LockFileWrite(filePath, func() {
+			// Don't clobber a block the user is actively editing in another view
+			// (the timeline editor holds a focus lock on the file while focused).
+			// Refuse rather than silently overwrite; callers (e.g. EmbedPortal)
+			// retry once the editor releases the lock.
+			if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
+				writeErr = errBlockBeingEdited
+				return
 			}
-		}
-		if !found {
-			writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
-			return
-		}
-
-		frontmatter, body := splitFrontmatter(string(contentBytes))
-		if frontmatter == "" {
-			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(time.Now().Format("2006-01-02")))
-		}
-
-		newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
-
-		a.tracker.RegisterWrite(filePath)
-		if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
-			writeErr = err
-			return
-		}
-
-		// Re-parse the rendered output and reindex so the cache reflects the
-		// canonical on-disk state (RenderFileContent may have normalized the
-		// mutated line's format).
-		reblocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
-		if err == nil {
-			var idxErr error
-			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks(remeta.Notebook, remeta.Section, remeta.Page, reblocks, remeta.Tags, remeta.Warnings...)
-			})
-			if idxErr != nil {
-				log.Printf("MutateBlock: IndexFileBlocks failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
+			contentBytes, err := os.ReadFile(filePath)
+			if err != nil {
+				writeErr = err
+				return
 			}
-		}
-	})
+
+			// Parse the whole file, mutate the target block in the slice, then
+			// re-render through the single serializer (RenderFileContent). This
+			// preserves unmanaged lines (code fences, prose) via the original
+			// body and keeps MutateBlock on the same write path as every other
+			// writer, so there is one on-disk format definition.
+			// Use the file's modification time as the default date for blocks
+			// whose comment lacks a @ date suffix — matches the scanner's behavior.
+			fileDate := fileOrDefaultDate(filePath)
+			parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
+			if parseErr != nil {
+				writeErr = fmt.Errorf("failed to parse file for mutation: %w", parseErr)
+				return
+			}
+			found := false
+			for i := range parsedBlocks {
+				if parsedBlocks[i].ID == blockID {
+					parsedBlocks[i].CleanText = cleanText
+					found = true
+					break
+				}
+			}
+			if !found {
+				writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
+				return
+			}
+
+			frontmatter, body := splitFrontmatter(string(contentBytes))
+			if frontmatter == "" {
+				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(time.Now().Format("2006-01-02")))
+			}
+
+			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
+
+			a.tracker.RegisterWrite(filePath)
+			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+				writeErr = err
+				return
+			}
+
+			// Re-parse the rendered output and reindex so the cache reflects the
+			// canonical on-disk state (RenderFileContent may have normalized the
+			// mutated line's format).
+			reblocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
+			if err == nil {
+				var idxErr error
+				a.coordinator.WithDBWrite(func() {
+					idxErr = a.db.IndexFileBlocks(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, reblocks, remeta.Tags, remeta.Warnings...)
+				})
+				if idxErr != nil {
+					log.Printf("MutateBlock: IndexFileBlocks failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
+				}
+			}
+		})
 	}) // LockBlockWrite
 	if writeErr != nil {
 		return writeErr
@@ -1364,21 +1369,23 @@ func (a *App) ListNavigation() (parser.NavigationTree, error) {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
-	// 1. Block counts per (notebook, section, page) from the index.
-	type nspKey struct{ n, s, p string }
+	// 1. Block counts per (source, notebook, section, page) from the index.
+	// Source is part of the key so a linked notebook sharing a display name
+	// with a vault notebook gets its own counts (#100).
+	type nspKey struct{ src, n, s, p string }
 	counts := map[nspKey]int{}
 	if a.db != nil {
 		a.coordinator.WithDBRead(func() {
-			rows, err := a.db.SQLDB().Query("SELECT notebook, section, page, COUNT(*) FROM blocks GROUP BY notebook, section, page")
+			rows, err := a.db.SQLDB().Query("SELECT COALESCE(source, 'vault'), notebook, section, page, COUNT(*) FROM blocks GROUP BY COALESCE(source, 'vault'), notebook, section, page")
 			if err != nil {
 				return
 			}
 			defer rows.Close()
 			for rows.Next() {
-				var n, s, p string
+				var src, n, s, p string
 				var c int
-				if err := rows.Scan(&n, &s, &p, &c); err == nil {
-					counts[nspKey{n, s, p}] = c
+				if err := rows.Scan(&src, &n, &s, &p, &c); err == nil {
+					counts[nspKey{src, n, s, p}] = c
 				}
 			}
 		})
@@ -1416,7 +1423,7 @@ func (a *App) ListNavigation() (parser.NavigationTree, error) {
 				pageName := strings.TrimSuffix(name, filepath.Ext(name))
 				secPages[""] = append(secPages[""], parser.NavigationPage{
 					Name:  pageName,
-					Count: counts[nspKey{nbName, "", pageName}],
+					Count: counts[nspKey{"vault", nbName, "", pageName}],
 				})
 				continue
 			}
@@ -1438,12 +1445,12 @@ func (a *App) ListNavigation() (parser.NavigationTree, error) {
 				pageName := strings.TrimSuffix(d2.Name(), filepath.Ext(d2.Name()))
 				secPages[name] = append(secPages[name], parser.NavigationPage{
 					Name:  pageName,
-					Count: counts[nspKey{nbName, name, pageName}],
+					Count: counts[nspKey{"vault", nbName, name, pageName}],
 				})
 			}
 		}
 
-		nn := parser.NavigationNotebook{Name: nbName, Sections: []parser.NavigationSection{}}
+		nn := parser.NavigationNotebook{Name: nbName, Source: "vault", Sections: []parser.NavigationSection{}}
 		secNames := make([]string, 0, len(secPages))
 		for s := range secPages {
 			secNames = append(secNames, s)
@@ -1458,6 +1465,51 @@ func (a *App) ListNavigation() (parser.NavigationTree, error) {
 		}
 		tree.Notebooks = append(tree.Notebooks, nn)
 	}
+
+	// 2. Linked (external) notebooks (#100). Their sections/pages are built
+	// from the index counts (the root may be momentarily offline; the
+	// last-synced rows still show). Each link is one notebook.
+	a.configMu.RLock()
+	links := append([]config.LinkedNotebook(nil), a.cfg.LinkedNotebooks...)
+	a.configMu.RUnlock()
+	for _, ln := range links {
+		src := ln.Source()
+		// Group this link's index rows by section.
+		secPages := map[string][]parser.NavigationPage{}
+		for k, c := range counts {
+			if k.src == src && k.n == ln.DisplayName {
+				secPages[k.s] = append(secPages[k.s], parser.NavigationPage{Name: k.p, Count: c})
+			}
+		}
+		disconnected := false
+		if _, statErr := os.Stat(ln.RootPath); statErr != nil {
+			disconnected = true
+		}
+		nn := parser.NavigationNotebook{
+			Name:         ln.DisplayName,
+			Source:       src,
+			RootPath:     ln.RootPath,
+			Disconnected: disconnected,
+			Sections:     []parser.NavigationSection{},
+		}
+		secNames := make([]string, 0, len(secPages))
+		for s := range secPages {
+			secNames = append(secNames, s)
+		}
+		sortStrings(secNames)
+		moveStringToEnd(secNames, "")
+		for _, s := range secNames {
+			pages := secPages[s]
+			sortNavPages(pages)
+			nn.Sections = append(nn.Sections, parser.NavigationSection{Name: s, Pages: pages})
+		}
+		tree.Notebooks = append(tree.Notebooks, nn)
+	}
+
+	// Mix vault + linked notebooks alphabetically by name for a unified tree.
+	sort.Slice(tree.Notebooks, func(i, j int) bool {
+		return tree.Notebooks[i].Name < tree.Notebooks[j].Name
+	})
 	return tree, nil
 }
 
@@ -1699,6 +1751,222 @@ func (a *App) PickNotebookFolder() (string, error) {
 	return a.OpenNotebook(selectedPath)
 }
 
+// --- Linked / external notebooks (#100) -------------------------------------
+//
+// A linked notebook is a folder OUTSIDE the vault (e.g. a synced SharePoint
+// mount) registered into the vault so it can be browsed/searched/edited in
+// place. Its markdown is NEVER copied into the vault — the external folder
+// remains the source of truth. The link registry (config.yaml
+// `linked_notebooks:`) is vault-scoped; the index rows carry source =
+// 'linked:<id>' so same-named notebooks across roots cannot collide.
+
+// LinkNotebook registers an external folder as a linked notebook: validates it,
+// assigns a stable id, rejects collisions (with vault notebooks or existing
+// links), persists the registry, watches the root, and indexes its tree. The
+// external files (and any co-located <root>/.system/) are never modified.
+func (a *App) LinkNotebook(folderPath string) (config.LinkedNotebook, error) {
+	if a.vaultPath == "" {
+		return config.LinkedNotebook{}, fmt.Errorf("vault not loaded")
+	}
+	absPath, err := filepath.Abs(folderPath)
+	if err != nil {
+		return config.LinkedNotebook{}, fmt.Errorf("invalid folder path: %w", err)
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return config.LinkedNotebook{}, fmt.Errorf("folder not found: %w", err)
+	}
+	if !info.IsDir() {
+		return config.LinkedNotebook{}, fmt.Errorf("selected path is not a folder")
+	}
+	// A linked root must live OUTSIDE the vault (otherwise it's just an
+	// in-vault notebook — use OpenNotebook). Refusing the vault prevents a
+	// double-index (vault + linked) of the same tree.
+	if isPathWithinRoot(absPath, a.vaultPath) {
+		return config.LinkedNotebook{}, fmt.Errorf("that folder is already inside the vault — open it as a notebook instead of linking")
+	}
+	displayName := sanitizePathSegment(filepath.Base(absPath))
+	if displayName == "" {
+		return config.LinkedNotebook{}, fmt.Errorf("invalid folder name")
+	}
+	id := "linked-" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12]
+	ln := config.LinkedNotebook{ID: id, RootPath: filepath.Clean(absPath), DisplayName: displayName}
+
+	// Reject display-name collisions: a vault notebook or an existing link with
+	// the same name would be ambiguous in the sidebar and in (notebook, ...)
+	// lookups (source disambiguates the index, but the UX must stay clear).
+	if err := a.rejectLinkCollision(ln); err != nil {
+		return config.LinkedNotebook{}, err
+	}
+
+	// Persist the registry atomically under configMu (self-write suppressed so
+	// the watcher doesn't bounce it back as an external edit).
+	a.configMu.Lock()
+	a.cfg.LinkedNotebooks = append(a.cfg.LinkedNotebooks, ln)
+	cfg := a.cfg
+	a.configMu.Unlock()
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	if err := config.Save(a.vaultPath, cfg); err != nil {
+		return config.LinkedNotebook{}, fmt.Errorf("failed to persist link registry: %w", err)
+	}
+
+	// Watch the root so external edits re-index, then index the tree. Errors
+	// here don't unwind the link — the notebook stays registered (the user can
+	// re-link or the watcher picks it up later); we surface them as a return.
+	if a.watcher != nil {
+		_ = a.watcher.AddWatchRoot(ln.RootPath, ln.Source(), ln.DisplayName)
+	}
+	if _, idxErr := a.indexLinkedTree(ln); idxErr != nil {
+		log.Printf("LinkNotebook(%s): indexTree failed: %v (link registered; will retry on next change)", ln.DisplayName, idxErr)
+	}
+	return ln, nil
+}
+
+// UnlinkNotebook removes a linked notebook from the registry, stops watching
+// it, and drops its local index rows. The external files are left completely
+// untouched (safe default). Idempotent.
+func (a *App) UnlinkNotebook(id string) error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	a.configMu.Lock()
+	removed := false
+	kept := a.cfg.LinkedNotebooks[:0]
+	var rootPath string
+	for _, ln := range a.cfg.LinkedNotebooks {
+		if ln.ID == id {
+			removed = true
+			rootPath = ln.RootPath
+			continue
+		}
+		kept = append(kept, ln)
+	}
+	a.cfg.LinkedNotebooks = kept
+	cfg := a.cfg
+	a.configMu.Unlock()
+	if !removed {
+		return nil // idempotent: unknown id is a no-op
+	}
+
+	if a.watcher != nil && rootPath != "" {
+		a.watcher.RemoveWatchRoot(rootPath)
+	}
+	// Drop the local index rows for this source. The files table rows (keyed by
+	// absolute path) are pruned by PruneStaleFiles on the next startup scan;
+	// dropping them eagerly here would race the watcher's Remove events.
+	a.coordinator.WithDBWrite(func() {
+		_ = a.db.ClearSourceBlocks("linked:" + id)
+	})
+
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	return config.Save(a.vaultPath, cfg)
+}
+
+// PickLinkedNotebook opens the native folder picker and links the chosen
+// external folder. Returns the linked notebook, or a zero value (no error) when
+// the user cancels.
+func (a *App) PickLinkedNotebook() (config.LinkedNotebook, error) {
+	if a.ctx == nil {
+		return config.LinkedNotebook{}, fmt.Errorf("application context not ready")
+	}
+	selectedPath, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Link External Notebook Folder",
+	})
+	if err != nil {
+		return config.LinkedNotebook{}, fmt.Errorf("failed to open folder picker: %w", err)
+	}
+	if selectedPath == "" {
+		return config.LinkedNotebook{}, nil // user cancelled
+	}
+	return a.LinkNotebook(selectedPath)
+}
+
+// rejectLinkCollision fails loud if the linked notebook's display name collides
+// with an in-vault notebook folder or an already-registered link.
+func (a *App) rejectLinkCollision(ln config.LinkedNotebook) error {
+	// Existing links.
+	a.configMu.RLock()
+	for _, existing := range a.cfg.LinkedNotebooks {
+		if existing.ID == ln.ID || existing.RootPath == ln.RootPath || existing.DisplayName == ln.DisplayName {
+			a.configMu.RUnlock()
+			return fmt.Errorf("a linked notebook with this name/path is already registered")
+		}
+	}
+	a.configMu.RUnlock()
+	// Vault notebooks (top-level dirs, excluding dot/system).
+	entries, err := os.ReadDir(a.vaultPath)
+	if err == nil {
+		for _, e := range entries {
+			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+				if e.Name() == ln.DisplayName {
+					return fmt.Errorf("a vault notebook named %q already exists; choose a different folder", ln.DisplayName)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// indexLinkedTree walks a linked root's markdown and indexes it under the
+// linked source. The notebook name is the link's DisplayName (the root IS one
+// notebook); sections/pages are derived from the path relative to the root.
+// Returns the number of files indexed.
+func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
+	files, warnings, err := parser.WalkMarkdown(ln.RootPath)
+	for _, w := range warnings {
+		log.Printf("LinkNotebook(%s): %s", ln.DisplayName, w)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("walk linked root: %w", err)
+	}
+	source := ln.Source()
+	indexed := 0
+	for _, file := range files {
+		rel, err := filepath.Rel(ln.RootPath, file)
+		if err != nil {
+			continue
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		pageName := parts[len(parts)-1]
+		if strings.HasSuffix(strings.ToLower(pageName), ".md") {
+			pageName = pageName[:len(pageName)-3]
+		}
+		section := ""
+		if len(parts) > 1 {
+			section = strings.Join(parts[:len(parts)-1], "/")
+		}
+		contentBytes, err := os.ReadFile(file)
+		if err != nil {
+			log.Printf("LinkNotebook(%s): read %s failed: %v", ln.DisplayName, file, err)
+			continue
+		}
+		blocks, meta, _, _, perr := parser.ParseFileContent(string(contentBytes), ln.DisplayName, section, pageName, fileOrDefaultDate(file), a.spacesPerTab)
+		if perr != nil {
+			log.Printf("LinkNotebook(%s): parse %s failed: %v", ln.DisplayName, file, perr)
+			continue
+		}
+		var idxErr error
+		a.coordinator.WithDBWrite(func() {
+			idxErr = a.db.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
+			if idxErr == nil {
+				if st, serr := os.Stat(file); serr == nil {
+					_ = a.db.MarkFileIndexed(nil, file, st.ModTime().UnixNano(), st.Size())
+				}
+			}
+		})
+		if idxErr != nil {
+			log.Printf("LinkNotebook(%s): index %s failed: %v", ln.DisplayName, file, idxErr)
+			continue
+		}
+		indexed++
+	}
+	return indexed, nil
+}
+
 // CreateSection creates a section folder inside a notebook. A section groups
 // pages; it has no content of its own.
 func (a *App) CreateSection(notebook, section string) error {
@@ -1768,7 +2036,7 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 		if err == nil {
 			var idxErr error
 			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
+				idxErr = a.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
 			})
 			if idxErr != nil {
 				log.Printf("CreatePage: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
@@ -1786,9 +2054,12 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 // SaveFileBlocks writes the updated list of blocks back to the page file.
 // With the per-day file model removed, a page is a single file at
 // <vault>/<notebook>/<section>/<page>.md. Each block carries its own file_date.
-func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.ParsedBlock) error {
+func (a *App) SaveFileBlocks(source, notebook, section, page string, blocks []parser.ParsedBlock) error {
 	if a.db == nil {
 		return fmt.Errorf("vault database not loaded")
+	}
+	if source == "" {
+		source = "vault"
 	}
 
 	safeNotebook := sanitizePathSegment(notebook)
@@ -1798,8 +2069,12 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 		return fmt.Errorf("invalid path metadata")
 	}
 
-	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
-	if !isPathWithinRoot(filePath, a.vaultPath) {
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
+	if err != nil {
+		return fmt.Errorf("resolve notebook dir: %w", err)
+	}
+	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
+	if !isPathWithinRoot(filePath, notebookDir) {
 		return fmt.Errorf("path escapes vault")
 	}
 
@@ -1823,54 +2098,54 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 	// again.
 	var beforeIDs []string
 	a.coordinator.WithDBRead(func() {
-		beforeIDs, _ = a.db.BlockIDsForPage(safeNotebook, safeSection, safePage)
+		beforeIDs, _ = a.db.BlockIDsForPage(source, safeNotebook, safeSection, safePage)
 	})
 
 	var writeErr error
 	a.coordinator.LockBlocksWrite(blockIDs, func() {
-	a.coordinator.LockFileWrite(filePath, func() {
-		contentBytes, err := os.ReadFile(filePath)
-		if err != nil && !os.IsNotExist(err) {
-			writeErr = fmt.Errorf("failed to read existing file: %w", err)
-			return
-		}
-
-		// Split frontmatter from body. The body (frontmatter stripped) is
-		// handed to RenderFileContent so it can preserve unmanaged lines
-		// (code fences, blanks, prose) in their relative position to the
-		// managed blocks. The frontmatter is emitted verbatim; if the file
-		// had none, synthesize the default so the note stays self-describing.
-		frontmatter, body := splitFrontmatter(string(contentBytes))
-
-		if frontmatter == "" {
-			today := time.Now().Format("2006-01-02")
-			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(today))
-			body = string(contentBytes)
-		}
-
-		// RenderFileContent is the single serializer: it assigns any missing
-		// block IDs, weaves preserved unmanaged lines around the managed
-		// blocks, and emits the canonical per-block format.
-		newContent := parser.RenderFileContent(blocks, body, frontmatter, a.spacesPerTab)
-
-		a.tracker.RegisterWrite(filePath)
-
-		if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
-			writeErr = err
-			return
-		}
-
-		parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab)
-		if err == nil {
-			var idxErr error
-			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta.Tags, meta.Warnings...)
-			})
-			if idxErr != nil {
-				log.Printf("SaveFileBlocks: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
+		a.coordinator.LockFileWrite(filePath, func() {
+			contentBytes, err := os.ReadFile(filePath)
+			if err != nil && !os.IsNotExist(err) {
+				writeErr = fmt.Errorf("failed to read existing file: %w", err)
+				return
 			}
-		}
-	})
+
+			// Split frontmatter from body. The body (frontmatter stripped) is
+			// handed to RenderFileContent so it can preserve unmanaged lines
+			// (code fences, blanks, prose) in their relative position to the
+			// managed blocks. The frontmatter is emitted verbatim; if the file
+			// had none, synthesize the default so the note stays self-describing.
+			frontmatter, body := splitFrontmatter(string(contentBytes))
+
+			if frontmatter == "" {
+				today := time.Now().Format("2006-01-02")
+				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(today))
+				body = string(contentBytes)
+			}
+
+			// RenderFileContent is the single serializer: it assigns any missing
+			// block IDs, weaves preserved unmanaged lines around the managed
+			// blocks, and emits the canonical per-block format.
+			newContent := parser.RenderFileContent(blocks, body, frontmatter, a.spacesPerTab)
+
+			a.tracker.RegisterWrite(filePath)
+
+			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+				writeErr = err
+				return
+			}
+
+			parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab)
+			if err == nil {
+				var idxErr error
+				a.coordinator.WithDBWrite(func() {
+					idxErr = a.db.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta.Tags, meta.Warnings...)
+				})
+				if idxErr != nil {
+					log.Printf("SaveFileBlocks: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
+				}
+			}
+		})
 	}) // LockBlocksWrite
 
 	if writeErr != nil {
@@ -1945,7 +2220,7 @@ func (a *App) reindexFile(filePath, notebook, section, page string) {
 	}
 	var idxErr error
 	a.coordinator.WithDBWrite(func() {
-		idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
+		idxErr = a.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
 	})
 	if idxErr != nil {
 		log.Printf("reindexFile: index failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
@@ -2057,7 +2332,7 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 
 		// 4. Clear old index entries + re-index at new path.
 		a.coordinator.WithDBWrite(func() {
-			_ = a.db.ClearFileBlocks(nil, safeNotebook, safeSection, safeOldPage)
+			_ = a.db.ClearFileBlocks(nil, "vault", safeNotebook, safeSection, safeOldPage)
 		})
 		a.coordinator.WithDBWrite(func() {
 			_ = a.db.ForgetFile(oldFile)
@@ -2156,7 +2431,7 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 			pageFiles = append(pageFiles, fc.name)
 		}
 		a.coordinator.WithDBWrite(func() {
-			_ = a.db.ClearFileBlocks(nil, safeNotebook, safeOldSection, "")
+			_ = a.db.ClearFileBlocks(nil, "vault", safeNotebook, safeOldSection, "")
 		})
 		for _, pageFile := range pageFiles {
 			oldPath := filepath.Join(oldDir, pageFile)
@@ -2270,7 +2545,7 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 			// Clear old index entries via the typed API (not raw SQL) so
 			// the files mtime cache is also cleaned via ForgetFile.
 			a.coordinator.WithDBWrite(func() {
-				_ = a.db.ClearFileBlocks(nil, safeOldNotebook, section, page)
+				_ = a.db.ClearFileBlocks(nil, "vault", safeOldNotebook, section, page)
 				_ = a.db.ForgetFile(fc.oldPath)
 			})
 			newMdPath := filepath.Join(newDir, rel)
@@ -2314,8 +2589,8 @@ func (a *App) DeletePage(notebook, section, page string) error {
 		}
 		var blockIDs []string
 		a.coordinator.WithDBWrite(func() {
-			blockIDs, _ = a.db.BlockIDsForPage(safeNotebook, safeSection, safePage)
-			_ = a.db.ClearFileBlocks(nil, safeNotebook, safeSection, safePage)
+			blockIDs, _ = a.db.BlockIDsForPage("vault", safeNotebook, safeSection, safePage)
+			_ = a.db.ClearFileBlocks(nil, "vault", safeNotebook, safeSection, safePage)
 			_ = a.db.ForgetFile(filePath)
 		})
 		// Release the deleted blocks' per-block mutex entries (#122).
@@ -2367,7 +2642,7 @@ func (a *App) DeleteSection(notebook, section string) error {
 
 		a.coordinator.WithDBWrite(func() {
 			for _, pg := range pageNames {
-				_ = a.db.ClearFileBlocks(nil, safeNotebook, safeSection, pg)
+				_ = a.db.ClearFileBlocks(nil, "vault", safeNotebook, safeSection, pg)
 			}
 		})
 	})
@@ -2434,7 +2709,7 @@ func (a *App) DeleteNotebook(notebook string) error {
 		// Clear blocks + files-cache entries per page via the typed API.
 		for _, pg := range pages {
 			a.coordinator.WithDBWrite(func() {
-				_ = a.db.ClearFileBlocks(nil, safeNotebook, pg.section, pg.page)
+				_ = a.db.ClearFileBlocks(nil, "vault", safeNotebook, pg.section, pg.page)
 				_ = a.db.ForgetFile(pg.path)
 			})
 		}
@@ -2525,7 +2800,7 @@ func migratePerDayFiles(vaultPath string, spacesPerTab int) []string {
 
 	// Collect directories that contain date-named .md files.
 	type pageDir struct {
-		dir      string
+		dir       string
 		dateFiles []string // sorted filenames
 	}
 	var pageDirs []pageDir
@@ -2880,89 +3155,89 @@ func (a *App) PluginUpdateTaskMeta(blockID string, pin int, progress int) (bool,
 
 	var writeErr error
 	a.coordinator.LockBlockWrite(blockID, func() {
-	a.coordinator.LockFileWrite(filePath, func() {
-		contentBytes, err := os.ReadFile(filePath)
-		if err != nil {
-			writeErr = err
-			return
-		}
-		fileDate := fileOrDefaultDate(filePath)
-		parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
-		if parseErr != nil {
-			writeErr = fmt.Errorf("failed to parse file for task meta update: %w", parseErr)
-			return
-		}
-		found := false
-		for i := range parsedBlocks {
-			if parsedBlocks[i].ID == blockID && parsedBlocks[i].Type == parser.BlockTask {
-				if pin != -1 {
-					switch pin {
-					case -2:
-						parsedBlocks[i].Pinned = nil // remove the token
-					case 0:
-						b := false
-						parsedBlocks[i].Pinned = &b // [pin:: false]
-					case 1:
-						b := true
-						parsedBlocks[i].Pinned = &b // [pin:: true]
+		a.coordinator.LockFileWrite(filePath, func() {
+			contentBytes, err := os.ReadFile(filePath)
+			if err != nil {
+				writeErr = err
+				return
+			}
+			fileDate := fileOrDefaultDate(filePath)
+			parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
+			if parseErr != nil {
+				writeErr = fmt.Errorf("failed to parse file for task meta update: %w", parseErr)
+				return
+			}
+			found := false
+			for i := range parsedBlocks {
+				if parsedBlocks[i].ID == blockID && parsedBlocks[i].Type == parser.BlockTask {
+					if pin != -1 {
+						switch pin {
+						case -2:
+							parsedBlocks[i].Pinned = nil // remove the token
+						case 0:
+							b := false
+							parsedBlocks[i].Pinned = &b // [pin:: false]
+						case 1:
+							b := true
+							parsedBlocks[i].Pinned = &b // [pin:: true]
+						}
 					}
+					if progress != -1 {
+						parsedBlocks[i].Progress = progress
+					}
+					found = true
+					break
 				}
-				if progress != -1 {
-					parsedBlocks[i].Progress = progress
+			}
+			if !found {
+				writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
+				return
+			}
+
+			frontmatter, body := splitFrontmatter(string(contentBytes))
+			if frontmatter == "" {
+				// Use the date from the parsed metadata (derived from the
+				// file's mtime or frontmatter fallback), NOT time.Now(), so
+				// we don't inject today's date over a file whose blocks
+				// carry their own per-block file_date.
+				fmDate := meta.Date
+				if fmDate == "" {
+					fmDate = fileDate
 				}
-				found = true
-				break
+				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(fmDate))
+				body = string(contentBytes)
 			}
-		}
-		if !found {
-			writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
-			return
-		}
+			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
+			a.tracker.RegisterWrite(filePath)
+			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+				writeErr = err
+				return
+			}
 
-		frontmatter, body := splitFrontmatter(string(contentBytes))
-		if frontmatter == "" {
-			// Use the date from the parsed metadata (derived from the
-			// file's mtime or frontmatter fallback), NOT time.Now(), so
-			// we don't inject today's date over a file whose blocks
-			// carry their own per-block file_date.
-			fmDate := meta.Date
-			if fmDate == "" {
-				fmDate = fileDate
+			// Re-index so SQLite reflects the new pin/progress values.
+			blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
+			if err == nil {
+				var idxErr error
+				a.coordinator.WithDBWrite(func() {
+					idxErr = a.db.IndexFileBlocks(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta.Tags, remeta.Warnings...)
+				})
+				if idxErr != nil {
+					log.Printf("PluginUpdateTaskMeta: IndexFileBlocks failed: %v", idxErr)
+				}
+			} else {
+				// The file write succeeded but re-parsing the rendered content
+				// failed — the index stays stale until the next fsnotify scan.
+				// This should never happen (the content was just rendered from
+				// successfully-parsed blocks) but log it so the gap is observable.
+				log.Printf("PluginUpdateTaskMeta: re-parse of rendered content failed (file written, index stale until next scan): %v", err)
 			}
-			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(fmDate))
-			body = string(contentBytes)
-		}
-		newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
-		a.tracker.RegisterWrite(filePath)
-		if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
-			writeErr = err
-			return
-		}
 
-		// Re-index so SQLite reflects the new pin/progress values.
-		blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
-		if err == nil {
-			var idxErr error
-			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks(remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta.Tags, remeta.Warnings...)
-			})
-			if idxErr != nil {
-				log.Printf("PluginUpdateTaskMeta: IndexFileBlocks failed: %v", idxErr)
+			for _, b := range blocks {
+				if b.ID == blockID {
+					a.emitBlockChanged(b.ID, safeNotebook, safeSection, safePage, b.FileDate)
+				}
 			}
-		} else {
-			// The file write succeeded but re-parsing the rendered content
-			// failed — the index stays stale until the next fsnotify scan.
-			// This should never happen (the content was just rendered from
-			// successfully-parsed blocks) but log it so the gap is observable.
-			log.Printf("PluginUpdateTaskMeta: re-parse of rendered content failed (file written, index stale until next scan): %v", err)
-		}
-
-		for _, b := range blocks {
-			if b.ID == blockID {
-				a.emitBlockChanged(b.ID, safeNotebook, safeSection, safePage, b.FileDate)
-			}
-		}
-	})
+		})
 	}) // LockBlockWrite
 	if writeErr != nil {
 		return false, writeErr

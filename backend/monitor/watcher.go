@@ -44,6 +44,23 @@ type DirectoryWatcher struct {
 	focusMu     sync.RWMutex
 	focusLeases map[string]time.Time // path -> lease expiry
 	focusTTL    time.Duration
+
+	// Multi-root support (#100): the watcher observes the vault root PLUS any
+	// number of linked (external) notebook roots. rootInfo maps each watched
+	// root to its source + (for linked roots) the notebook display name, so
+	// resolveFileMetadata can attribute an event to the right notebook without
+	// consulting the registry on every fsnotify event. The vault root's
+	// notebook is "" because a vault holds MANY notebooks (derived per-file
+	// from the first path component); a linked root IS one notebook.
+	rootMu   sync.RWMutex
+	roots    []string
+	rootInfo map[string]watchRoot
+}
+
+// watchRoot records how to interpret paths beneath a watched root.
+type watchRoot struct {
+	source   string // 'vault' or 'linked:<id>'
+	notebook string // linked: display name; vault: "" (derived per-file)
 }
 
 func NewDirectoryWatcher(vaultPath string, dm *db.DatabaseManager, tracker *WriteTracker, coordinator *core.ExecutionCoordinator, spacesPerTab int) (*DirectoryWatcher, error) {
@@ -52,6 +69,7 @@ func NewDirectoryWatcher(vaultPath string, dm *db.DatabaseManager, tracker *Writ
 		return nil, fmt.Errorf("failed to create fsnotify watcher: %w", err)
 	}
 
+	cleanVault := filepath.Clean(vaultPath)
 	return &DirectoryWatcher{
 		watcher:      watcher,
 		vaultPath:    vaultPath,
@@ -62,6 +80,12 @@ func NewDirectoryWatcher(vaultPath string, dm *db.DatabaseManager, tracker *Writ
 		closeChan:    make(chan struct{}),
 		focusLeases:  make(map[string]time.Time),
 		focusTTL:     DefaultFocusLeaseTTL,
+		// The vault root is registered up-front so resolveFileMetadata works
+		// even before Start() (tests exercise reindexFile directly). Its
+		// notebook is "" because a vault holds many notebooks (derived
+		// per-file from the first path component).
+		roots:    []string{cleanVault},
+		rootInfo: map[string]watchRoot{cleanVault: {source: "vault", notebook: ""}},
 	}, nil
 }
 
@@ -208,6 +232,7 @@ func (dw *DirectoryWatcher) FailedPaths() []string {
 }
 
 func (dw *DirectoryWatcher) Start() error {
+	// The vault root is registered in the constructor; just watch it.
 	if err := dw.AddRecursive(dw.vaultPath); err != nil {
 		return err
 	}
@@ -215,6 +240,57 @@ func (dw *DirectoryWatcher) Start() error {
 	go dw.listenLoop()
 	dw.startLeaseSweeper()
 	return nil
+}
+
+// registerRoot records a watched root + its source/notebook metadata. Idempotent
+// (an already-registered root is a no-op). Caller holds the write lock or is in
+// single-threaded setup.
+func (dw *DirectoryWatcher) registerRoot(rootPath string, info watchRoot) {
+	root := filepath.Clean(rootPath)
+	dw.rootMu.Lock()
+	defer dw.rootMu.Unlock()
+	if _, ok := dw.rootInfo[root]; ok {
+		return
+	}
+	dw.roots = append(dw.roots, root)
+	dw.rootInfo[root] = info
+}
+
+// AddWatchRoot registers an additional (linked) notebook root and begins
+// watching it, sharing the existing fsnotify watcher, tracker, coordinator and
+// lease maps (#100). source is 'linked:<id>'; notebook is the display name (a
+// linked root IS one notebook).
+func (dw *DirectoryWatcher) AddWatchRoot(rootPath, source, notebook string) error {
+	root := filepath.Clean(rootPath)
+	dw.registerRoot(root, watchRoot{source: source, notebook: notebook})
+	return dw.AddRecursive(root)
+}
+
+// RemoveWatchRoot stops watching a linked root and drops its metadata. The
+// markdown content is left untouched (unlink semantics — safe default).
+func (dw *DirectoryWatcher) RemoveWatchRoot(rootPath string) {
+	root := filepath.Clean(rootPath)
+	dw.rootMu.Lock()
+	if _, ok := dw.rootInfo[root]; !ok {
+		dw.rootMu.Unlock()
+		return
+	}
+	delete(dw.rootInfo, root)
+	for i, r := range dw.roots {
+		if r == root {
+			dw.roots = append(dw.roots[:i], dw.roots[i+1:]...)
+			break
+		}
+	}
+	dw.rootMu.Unlock()
+	// Best-effort unwatch of every dir under the root. fsnotify Remove is a
+	// no-op for paths it isn't watching, so WalkDir is safe.
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, _ error) error {
+		if d != nil && d.IsDir() {
+			_ = dw.watcher.Remove(p)
+		}
+		return nil
+	})
 }
 
 // resolveFileMetadata derives (notebook, section, page, date) for a markdown
@@ -229,10 +305,29 @@ func (dw *DirectoryWatcher) Start() error {
 // its own file_date in the trailing comment; this is just the default fallback).
 // Files too shallow to resolve return empty notebook/section/page so callers
 // can skip them rather than indexing under empty strings.
-func (dw *DirectoryWatcher) resolveFileMetadata(path string) (notebook, section, page, dateStr string) {
-	relPath, err := filepath.Rel(dw.vaultPath, path)
+// resolveFileMetadata derives (notebook, section, page, date) for a markdown
+// file from its path relative to the governing watched root (#100).
+//
+// Vault root: a vault holds MANY notebooks, so the notebook is the first path
+// component under the vault:
+//   <vault>/<notebook>/[<section>/...]<page>.md
+//
+// Linked root: the root IS one notebook (its display name is registered with
+// the root), so the path components are sections/page directly:
+//   <linkedRoot>/[<section>/...]<page>.md
+//
+// The governing root is the longest registered root that is an ancestor of the
+// path (correct under nesting; a linked root inside another root is unlikely
+// but the longest-prefix match handles it deterministically).
+func (dw *DirectoryWatcher) resolveFileMetadata(path string) (source, notebook, section, page, dateStr string) {
+	root, info, ok := dw.governingRoot(path)
+	if !ok {
+		return "", "", "", "", time.Now().Format("2006-01-02")
+	}
+
+	relPath, err := filepath.Rel(root, path)
 	if err != nil {
-		return "", "", "", time.Now().Format("2006-01-02")
+		return "", "", "", "", time.Now().Format("2006-01-02")
 	}
 
 	relPathClean := filepath.ToSlash(relPath)
@@ -240,31 +335,65 @@ func (dw *DirectoryWatcher) resolveFileMetadata(path string) (notebook, section,
 	filename := parts[len(parts)-1]
 	ancestors := parts[:len(parts)-1]
 
-	// Strip .md extension to get the page name.
 	pageName := filename
 	if strings.HasSuffix(strings.ToLower(pageName), ".md") {
 		pageName = pageName[:len(pageName)-3]
 	}
 
-	if len(ancestors) >= 1 {
-		notebook = ancestors[0]
-		page = pageName
-		if len(ancestors) > 1 {
-			section = strings.Join(ancestors[1:], "/")
+	if info.source == "vault" {
+		// Vault: notebook = first component; section = the rest (if any).
+		if len(ancestors) >= 1 {
+			notebook = ancestors[0]
+			page = pageName
+			if len(ancestors) > 1 {
+				section = strings.Join(ancestors[1:], "/")
+			}
 		}
 	} else {
-		notebook, section, page = "", "", ""
+		// Linked: the root is the notebook; everything beneath it is section/page.
+		notebook = info.notebook
+		page = pageName
+		if len(ancestors) > 0 {
+			section = strings.Join(ancestors, "/")
+		}
+		if notebook == "" {
+			// Registered linked root without a display name — can't attribute.
+			notebook, section, page = "", "", ""
+		}
 	}
 
 	dateStr = ""
-	info, err := os.Stat(path)
+	info2, err := os.Stat(path)
 	if err == nil {
-		dateStr = info.ModTime().Format("2006-01-02")
+		dateStr = info2.ModTime().Format("2006-01-02")
 	} else {
 		dateStr = time.Now().Format("2006-01-02")
 	}
 
-	return notebook, section, page, dateStr
+	return info.source, notebook, section, page, dateStr
+}
+
+// governingRoot returns the longest registered root that is an ancestor of path
+// (or equals it), plus its metadata. Returns ok=false if the path is not under
+// any watched root.
+func (dw *DirectoryWatcher) governingRoot(path string) (string, watchRoot, bool) {
+	cleaned := filepath.Clean(path)
+	dw.rootMu.RLock()
+	defer dw.rootMu.RUnlock()
+	var best string
+	bestInfo := watchRoot{}
+	found := false
+	sep := string(os.PathSeparator)
+	for _, r := range dw.roots {
+		if cleaned == r || strings.HasPrefix(cleaned, r+sep) {
+			if !found || len(r) > len(best) {
+				best = r
+				bestInfo = dw.rootInfo[r]
+				found = true
+			}
+		}
+	}
+	return best, bestInfo, found
 }
 
 func (dw *DirectoryWatcher) listenLoop() {
@@ -348,7 +477,7 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 			return
 		}
 
-		notebook, section, page, dateStr := dw.resolveFileMetadata(path)
+		source, notebook, section, page, dateStr := dw.resolveFileMetadata(path)
 		// Skip files that do not map to a notebook/section/page (e.g. living
 		// too shallow in the vault). They are surfaced as init-warnings on
 		// the full scan; here we just ignore them.
@@ -373,7 +502,7 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 		}
 
 		dw.coordinator.WithDBWrite(func() {
-			if err := dw.dm.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...); err != nil {
+			if err := dw.dm.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...); err != nil {
 				log.Printf("reindexFile: IndexFileBlocks failed for %s: %v", path, err)
 				return
 			}
@@ -390,7 +519,7 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 }
 
 func (dw *DirectoryWatcher) clearIndexForFile(path string) []string {
-	notebook, section, page, _ := dw.resolveFileMetadata(path)
+	source, notebook, section, page, _ := dw.resolveFileMetadata(path)
 	if notebook == "" {
 		return nil
 	}
@@ -399,8 +528,8 @@ func (dw *DirectoryWatcher) clearIndexForFile(path string) []string {
 	// and all other DB-touching paths. Without this, a concurrent file event
 	// can race an in-flight query and produce database-locked errors.
 	dw.coordinator.WithDBWrite(func() {
-		ids, _ = dw.dm.BlockIDsForPage(notebook, section, page)
-		_ = dw.dm.ClearFileBlocks(nil, notebook, section, page)
+		ids, _ = dw.dm.BlockIDsForPage(source, notebook, section, page)
+		_ = dw.dm.ClearFileBlocks(nil, source, notebook, section, page)
 		// Drop the files row so a future startup scan doesn't think the
 		// deleted/renamed file is still "unchanged" and skip re-indexing the
 		// new occupant of that path.

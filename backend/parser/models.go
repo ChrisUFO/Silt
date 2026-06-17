@@ -82,6 +82,16 @@ type NavigationSection struct {
 type NavigationNotebook struct {
 	Name     string               `json:"name"`
 	Sections []NavigationSection  `json:"sections"`
+	// Source is 'vault' for an in-vault notebook or 'linked:<id>' for an
+	// external/linked notebook (#100). The frontend badges linked notebooks
+	// and the editor passes it back so writes resolve the correct root.
+	Source    string `json:"source,omitempty"`
+	// RootPath is the absolute content root (vault notebook dir or linked
+	// root); surfaced for tooltips. Empty for vault notebooks (derivable).
+	RootPath  string `json:"root_path,omitempty"`
+	// Disconnected is true when a linked notebook's root could not be read
+	// (offline mount); its last-synced index rows still show. Vault-only.
+	Disconnected bool `json:"disconnected,omitempty"`
 }
 
 type NavigationTree struct {

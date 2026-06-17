@@ -528,14 +528,20 @@ func ExtractTags(text string) []string {
 	return tags
 }
 
-// ClearFileBlocks deletes all blocks, tasks, and tags associated with a specific page on a given day.
-func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, notebook, section, page string) error {
-	query := "DELETE FROM blocks WHERE notebook = ? AND section = ? AND page = ?"
+// ClearFileBlocks deletes all blocks, tasks, and tags associated with a
+// specific page on a given day, scoped to the notebook's source so a linked
+// notebook sharing a display name with a vault notebook cannot clear the
+// vault's rows (#100).
+func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, source, notebook, section, page string) error {
+	if source == "" {
+		source = "vault"
+	}
+	query := "DELETE FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?"
 	var err error
 	if tx != nil {
-		_, err = tx.Exec(query, notebook, section, page)
+		_, err = tx.Exec(query, source, notebook, section, page)
 	} else {
-		_, err = dm.db.Exec(query, notebook, section, page)
+		_, err = dm.db.Exec(query, source, notebook, section, page)
 	}
 	return err
 }
@@ -543,11 +549,15 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, notebook, section, page s
 // BlockIDsForPage returns the IDs of every block currently indexed for a page,
 // without materializing the full ParsedBlock rows. Used by the eviction paths
 // (DeletePage, watcher Remove/Rename, SaveFileBlocks replacement) to release the
-// per-block mutex entries (#122) for blocks that no longer exist.
-func (dm *DatabaseManager) BlockIDsForPage(notebook, section, page string) ([]string, error) {
+// per-block mutex entries (#122) for blocks that no longer exist. Scoped by
+// source (#100).
+func (dm *DatabaseManager) BlockIDsForPage(source, notebook, section, page string) ([]string, error) {
+	if source == "" {
+		source = "vault"
+	}
 	rows, err := dm.db.Query(
-		"SELECT id FROM blocks WHERE notebook = ? AND section = ? AND page = ?",
-		notebook, section, page,
+		"SELECT id FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+		source, notebook, section, page,
 	)
 	if err != nil {
 		return nil, err
@@ -570,9 +580,12 @@ func (dm *DatabaseManager) BlockIDsForPage(notebook, section, page string) ([]st
 // (e.g. malformed YAML frontmatter). They are logged at warn level so a
 // maintainer can grep the output without changing the call signature or
 // the public API.
-func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, fileWarnings ...string) error {
+func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, fileWarnings ...string) error {
+	if source == "" {
+		source = "vault"
+	}
 	for _, w := range fileWarnings {
-		log.Printf("db.IndexFileBlocks(%s/%s/%s): %s", notebook, section, page, w)
+		log.Printf("db.IndexFileBlocks(%s/%s/%s/%s): %s", source, notebook, section, page, w)
 	}
 
 	tx, err := dm.db.Begin()
@@ -598,8 +611,10 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, block
 	}
 
 	// Also clear by metadata to catch blocks that the user removed from the
-	// file (their IDs are no longer in the new parse output).
-	if err := dm.ClearFileBlocks(tx, notebook, section, page); err != nil {
+	// file (their IDs are no longer in the new parse output). Scope by source
+	// so a linked notebook sharing a display name with a vault notebook cannot
+	// clear the vault's rows (#100).
+	if err := dm.ClearFileBlocks(tx, source, notebook, section, page); err != nil {
 		return fmt.Errorf("failed to clear old blocks: %w", err)
 	}
 
@@ -607,7 +622,7 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, block
 		return tx.Commit()
 	}
 
-	stmtBlock, err := tx.Prepare("INSERT INTO blocks (id, parent_id, notebook, section, page, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	stmtBlock, err := tx.Prepare("INSERT INTO blocks (id, parent_id, source, notebook, section, page, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
@@ -646,7 +661,7 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, block
 		if fileDate == "" {
 			fileDate = time.Now().Format("2006-01-02")
 		}
-		_, err = stmtBlock.Exec(block.ID, parentID, notebook, section, page, fileDate, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
+		_, err = stmtBlock.Exec(block.ID, parentID, source, notebook, section, page, fileDate, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
 		if err != nil {
 			return fmt.Errorf("failed to insert block %s: %w", block.ID, err)
 		}
@@ -792,7 +807,8 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 		}
 
 		// Also clear by metadata to catch blocks the user removed from the file.
-		if err := dm.ClearFileBlocks(tx, res.Notebook, res.Section, res.Page); err != nil {
+		// IndexScanResults is the vault startup scan, so source is always 'vault'.
+		if err := dm.ClearFileBlocks(tx, "vault", res.Notebook, res.Section, res.Page); err != nil {
 			return 0, skipped, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
 		}
 
@@ -894,6 +910,17 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	return indexedCount, skipped, nil
 }
 
+// ClearSourceBlocks deletes every block (and, via CASCADE, its tasks/tags)
+// for a given source. Used by UnlinkNotebook to drop a linked notebook's
+// local index rows without touching the external files (#100).
+func (dm *DatabaseManager) ClearSourceBlocks(source string) error {
+	if source == "" {
+		return nil
+	}
+	_, err := dm.db.Exec("DELETE FROM blocks WHERE source = ?", source)
+	return err
+}
+
 // BlockLocation holds the file-level coordinates of a block, used by write
 // paths (UpdateBlockState, MutateBlock, PluginUpdateTaskMeta) to resolve the
 // on-disk file path from a block UUID. Source ('vault' | 'linked:<id>') tells
@@ -924,16 +951,19 @@ func (dm *DatabaseManager) GetBlockLocation(blockID string) (BlockLocation, erro
 // FetchPageBlocks returns a flat ordered list of all blocks for a page.
 // A page is a single file; all blocks share the same (notebook, section,
 // page) and are ordered by line_number. Each block carries its own file_date.
-func (dm *DatabaseManager) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBlock, error) {
+func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page string) ([]parser.ParsedBlock, error) {
+	if source == "" {
+		source = "vault"
+	}
 	rows, err := dm.db.Query(`
 		SELECT b.id, b.parent_id, b.depth, b.type, b.raw_content, b.clean_content, b.line_number,
 		       b.file_date,
 		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0)
 		FROM blocks b
 		LEFT JOIN tasks t ON b.id = t.block_id
-		WHERE b.notebook = ? AND b.section = ? AND b.page = ?
+		WHERE b.source = ? AND b.notebook = ? AND b.section = ? AND b.page = ?
 		ORDER BY b.line_number ASC
-	`, notebook, section, page)
+	`, source, notebook, section, page)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query page blocks: %w", err)
 	}

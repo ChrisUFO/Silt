@@ -82,7 +82,7 @@ func TestUpdateBlockState_TransitionsTaskStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
-	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -133,7 +133,7 @@ func TestUpdateBlockState_RejectsTraversalMetadata(t *testing.T) {
 			LineNumber: 1,
 		},
 	}
-	if err := app.db.IndexFileBlocks("../../..", "etc", "passwd", blocks, nil); err != nil {
+	if err := app.db.IndexFileBlocks("vault", "../../..", "etc", "passwd", blocks, nil); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -160,7 +160,7 @@ func TestUpdateBlockState_RejectsNonTaskBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
-	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -216,7 +216,7 @@ func TestQueryTasks_FiltersByOwnerAndPriority(t *testing.T) {
 			LineNumber: 3,
 		},
 	}
-	if err := app.db.IndexFileBlocks("Work", "Journal", "Daily", blocks, nil); err != nil {
+	if err := app.db.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -314,7 +314,7 @@ func TestSaveFileBlocks_PreservesNonBlockLines(t *testing.T) {
 		updated = append(updated, block)
 	}
 
-	if err := app.SaveFileBlocks(notebook, section, page, updated); err != nil {
+	if err := app.SaveFileBlocks("vault", notebook, section, page, updated); err != nil {
 		t.Fatalf("SaveFileBlocks: %v", err)
 	}
 	writtenBytes, err := os.ReadFile(filePath)
@@ -352,7 +352,7 @@ func TestSearchBlocks_FuzzySearch(t *testing.T) {
 			LineNumber: 2,
 		},
 	}
-	if err := app.db.IndexFileBlocks("Work", "Journal", "Daily", blocks, nil); err != nil {
+	if err := app.db.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -456,7 +456,7 @@ func TestSaveFileBlocks_DeletesMiddleBlockPreservesNonBlockLines(t *testing.T) {
 		updated = append(updated, block)
 	}
 
-	if err := app.SaveFileBlocks(notebook, section, page, updated); err != nil {
+	if err := app.SaveFileBlocks("vault", notebook, section, page, updated); err != nil {
 		t.Fatalf("SaveFileBlocks: %v", err)
 	}
 	writtenBytes, err := os.ReadFile(filePath)
@@ -499,7 +499,7 @@ func TestSaveFileBlocks_PreservesUnknownUUIDLine(t *testing.T) {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
 
-	if err := app.SaveFileBlocks(notebook, section, page, blocks); err != nil {
+	if err := app.SaveFileBlocks("vault", notebook, section, page, blocks); err != nil {
 		t.Fatalf("SaveFileBlocks: %v", err)
 	}
 	writtenBytes, err := os.ReadFile(filePath)
@@ -556,7 +556,7 @@ func writeSamplePage(t *testing.T, app *App, notebook, section, page, fileDate, 
 	if err != nil {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
-	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 }
@@ -723,7 +723,7 @@ func TestPluginRawQuery_TruncationCapHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
-	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -947,7 +947,7 @@ func TestQueryBlocksByTag_PrefixSemantics(t *testing.T) {
 		sampleTaskBlockWithText("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 2, "mid #work/project"),
 		sampleTaskBlockWithText("cccccccc-cccc-cccc-cccc-cccccccccccc", 3, "root #work"),
 	}
-	if err := app.db.IndexFileBlocks("Work", "Journal", "Daily", blocks, nil); err != nil {
+	if err := app.db.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -1419,7 +1419,7 @@ func seedTaskFile(t *testing.T, app *App) (filePath, taskID, noteID string) {
 	if err != nil {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
-	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 	return filePath, taskID, noteID
@@ -1711,5 +1711,112 @@ func TestResolveNotebookDir(t *testing.T) {
 	}
 	if _, err := app.resolveNotebookDir("X", "bogus:1"); err == nil {
 		t.Error("expected error for unknown source prefix, got nil")
+	}
+}
+
+// --- #100 linked / external notebooks ---------------------------------------
+
+// TestLinkNotebook_IndexesAndUnlinkLeavesFiles covers the link → index → nav →
+// unlink lifecycle: a linked notebook is indexed under source='linked:<id>',
+// appears in ListNavigation with Source/RootPath, the registry persists, and
+// unlink drops the index rows while leaving the external file untouched.
+func TestLinkNotebook_IndexesAndUnlinkLeavesFiles(t *testing.T) {
+	app := newTestApp(t)
+
+	ext := t.TempDir()
+	pageFile := filepath.Join(ext, "Plan.md")
+	writeFile(t, pageFile, "---\nnotebook: Ext\nsection: \"\"\npage: Plan\ndate: 2026-06-16\ntags: []\n---\n# Plan\n- [ ] do a thing <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n")
+
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	if ln.ID == "" || !strings.HasPrefix(ln.Source(), "linked:") {
+		t.Fatalf("unexpected linked notebook: %+v", ln)
+	}
+	if ln.RootPath != filepath.Clean(ext) {
+		t.Errorf("RootPath = %q, want %q", ln.RootPath, filepath.Clean(ext))
+	}
+	src := ln.Source()
+
+	// Indexed under the linked source.
+	var n int
+	app.coordinator.WithDBRead(func() {
+		_ = app.db.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks WHERE source = ?", src).Scan(&n)
+	})
+	if n == 0 {
+		t.Errorf("expected linked blocks indexed under source=%q, got 0", src)
+	}
+
+	// Appears in navigation as a linked notebook with the right metadata.
+	tree, err := app.ListNavigation()
+	if err != nil {
+		t.Fatalf("ListNavigation: %v", err)
+	}
+	var found *parser.NavigationNotebook
+	for i := range tree.Notebooks {
+		if tree.Notebooks[i].Source == src {
+			found = &tree.Notebooks[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("linked notebook not in nav tree")
+	}
+	if found.Name != ln.DisplayName || found.RootPath != ln.RootPath {
+		t.Errorf("nav entry mismatch: %+v", found)
+	}
+
+	// Registry persisted to config.yaml.
+	loaded, _ := config.Load(app.vaultPath)
+	if len(loaded.LinkedNotebooks) != 1 || loaded.LinkedNotebooks[0].ID != ln.ID {
+		t.Errorf("registry not persisted: %+v", loaded.LinkedNotebooks)
+	}
+
+	// Unlink drops index rows and leaves the external file untouched.
+	if err := app.UnlinkNotebook(ln.ID); err != nil {
+		t.Fatalf("UnlinkNotebook: %v", err)
+	}
+	app.coordinator.WithDBRead(func() {
+		_ = app.db.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks WHERE source = ?", src).Scan(&n)
+	})
+	if n != 0 {
+		t.Errorf("expected linked index rows dropped after unlink, got %d", n)
+	}
+	if _, err := os.Stat(pageFile); err != nil {
+		t.Errorf("external file was touched by unlink: %v", err)
+	}
+	loaded2, _ := config.Load(app.vaultPath)
+	if len(loaded2.LinkedNotebooks) != 0 {
+		t.Errorf("registry not cleared after unlink: %+v", loaded2.LinkedNotebooks)
+	}
+}
+
+// TestLinkNotebook_RejectsCollisions verifies the fail-loud guards: a folder
+// inside the vault must use OpenNotebook (not link), and a name collision with
+// a vault notebook is rejected so the sidebar stays unambiguous.
+func TestLinkNotebook_RejectsCollisions(t *testing.T) {
+	app := newTestApp(t)
+	if err := os.MkdirAll(filepath.Join(app.vaultPath, "Work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Inside the vault → rejected (use OpenNotebook instead).
+	inside := filepath.Join(app.vaultPath, "Inside")
+	if err := os.MkdirAll(inside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.LinkNotebook(inside); err == nil {
+		t.Error("expected error linking a folder inside the vault, got nil")
+	}
+
+	// Name collision with a vault notebook → rejected.
+	parent := t.TempDir()
+	collision := filepath.Join(parent, "Work")
+	if err := os.MkdirAll(collision, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.LinkNotebook(collision); err == nil {
+		t.Error("expected error linking a folder whose name collides with a vault notebook, got nil")
 	}
 }

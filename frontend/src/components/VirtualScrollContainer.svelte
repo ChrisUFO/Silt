@@ -4,6 +4,7 @@
   import { EventsOn } from '../../wailsjs/runtime/runtime.js'
   import TipTapEditor from './TipTapEditor.svelte'
   import type { ParsedBlock } from '../lib/editor'
+  import { getSourceForNotebook } from '../plugins/location.svelte'
 
   interface Props {
     notebook: string
@@ -55,12 +56,17 @@
     // Read props at the top of the effect so it re-subscribes when the user
     // navigates to a different page (#64). Without this, the EventsOn closure
     // would filter against stale values after navigation.
-    const nb = notebook, sec = section, pg = page
-    const off = EventsOn('block:changed', (ev: { notebook: string; section: string; page: string }) => {
-      if (ev.notebook === nb && ev.section === sec && ev.page === pg) {
-        loadPage()
+    const nb = notebook,
+      sec = section,
+      pg = page
+    const off = EventsOn(
+      'block:changed',
+      (ev: { notebook: string; section: string; page: string }) => {
+        if (ev.notebook === nb && ev.section === sec && ev.page === pg) {
+          loadPage()
+        }
       }
-    })
+    )
     return () => off()
   })
 
@@ -71,7 +77,13 @@
     const reqSection = section
     const reqPage = page
     try {
-      const result = await FetchPageBlocks(reqNotebook, reqSection, reqPage)
+      const source = getSourceForNotebook(reqNotebook)
+      const result = await FetchPageBlocks(
+        source,
+        reqNotebook,
+        reqSection,
+        reqPage
+      )
       if (notebook !== reqNotebook || page !== reqPage) return
       blocks = result || []
     } catch (e) {
@@ -216,7 +228,9 @@
       class="font-headline-lg text-headline-lg text-text-primary tracking-tight mb-1 outline-none rounded-sm transition-colors"
       style="border-bottom: 1px solid transparent; padding-bottom: 1px;"
       aria-label="Page title"
-    >{page}</h1>
+    >
+      {page}
+    </h1>
     <p class="text-text-muted/60 text-sm font-body-sm">
       {formatDate(pageDate)}
     </p>
