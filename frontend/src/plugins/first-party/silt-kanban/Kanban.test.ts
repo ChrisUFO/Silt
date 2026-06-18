@@ -83,11 +83,23 @@ vi.mock('../../../settings/store.svelte', () => ({
   updatePluginSetting: mocks.updatePluginSetting
 }))
 
+// Mock the Wails runtime so EventsOn (used by the linked-config:changed
+// listener, #133) doesn't crash in jsdom (window.runtime is undefined).
+vi.mock('../../../../wailsjs/runtime/runtime.js', () => ({
+  EventsOn: vi.fn(() => () => {})
+}))
+
 import Kanban from './Kanban.svelte'
 import type { PluginContext, PluginManifest } from '../../sdk'
 import { reactiveCtx, setNav, resetNav } from './reactiveCtx.svelte'
 
 function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
+  // The default getPluginSettings returns the mock vault config's
+  // silt-kanban entry (columns + filters), mirroring how the real Go binding
+  // resolves the vault-scoped config for a vault notebook (#133). Individual
+  // tests override this to simulate linked-notebook merge behavior.
+  const defaultSettings =
+    mocks.settings.config.plugins.plugin_settings['silt-kanban'] ?? {}
   return {
     activeNotebook: 'Work',
     activeSection: 'Journal',
@@ -98,7 +110,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     updateBlockState: mocks.updateBlockState,
     mutateBlock: vi.fn(),
     updateTaskMeta: vi.fn(),
-    getPluginSettings: vi.fn(() => Promise.resolve({})),
+    getPluginSettings: vi.fn(() => Promise.resolve({ ...defaultSettings })),
     ...overrides
   }
 }
@@ -947,6 +959,79 @@ describe('Kanban plugin (#19)', () => {
       setNav({ section: '', page: '' })
       await flush()
       expect(checkedScope()).toBe('notebook')
+    })
+  })
+
+  describe('per-active-notebook settings (#133)', () => {
+    it('re-resolves columns from getPluginSettings on notebook switch', async () => {
+      // The vault notebook starts with TODO/DOING/DONE (from the synchronous
+      // vault-config init). A linked notebook "Ext" provides Backlog/Done
+      // via getPluginSettings. On mount the re-resolution is skipped (the
+      // synchronous init already set columns); on the notebook switch it
+      // fires and overrides columns from the resolved settings.
+      const linkedSettings = { columns: ['Backlog', 'Done'] }
+      const getPluginSettings = vi.fn().mockResolvedValue(linkedSettings)
+
+      setNav({ notebook: 'Work', section: '', page: '' })
+      render(Kanban, {
+        ctx: reactiveCtx(mocks.sqliteQuery, {
+          getPluginSettings
+        }),
+        manifest: MANIFEST
+      })
+      await flush()
+
+      // Vault notebook: standard columns from the vault config store.
+      expect(screen.getByRole('group', { name: 'To Do' })).toBeInTheDocument()
+      // getPluginSettings NOT called yet (mount skips the async resolution).
+      expect(getPluginSettings).not.toHaveBeenCalled()
+
+      // Navigate to the linked notebook — the re-resolution effect fires
+      // and overrides columns from getPluginSettings.
+      setNav({ notebook: 'Ext', section: '', page: '' })
+      await flush()
+
+      // The linked notebook's columns (Backlog/Done) replace the vault's.
+      expect(screen.getByRole('group', { name: 'Backlog' })).toBeInTheDocument()
+      expect(screen.getByRole('group', { name: 'Done' })).toBeInTheDocument()
+      expect(
+        screen.queryByRole('group', { name: 'To Do' })
+      ).not.toBeInTheDocument()
+
+      // getPluginSettings was called once (the re-resolution on switch).
+      expect(getPluginSettings).toHaveBeenCalledTimes(1)
+    })
+
+    it('writes still persist to the vault config via updatePluginSetting', async () => {
+      // The co-located config is READ-ONLY; user mutations persist to vault.
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+      mocks.updatePluginSetting.mockClear()
+      render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+
+      // Open the column actions menu on the first lane and remove it.
+      const menus = screen.getAllByRole('button', { name: 'Column actions' })
+      await fireEvent.click(menus[0]!)
+      await flush()
+
+      const removeBtn = screen.getByRole('menuitem', { name: /remove/i })
+      await fireEvent.click(removeBtn)
+      await flush()
+
+      // The mutation persists via updatePluginSetting (vault-scoped, #120),
+      // not via any co-located-config write path.
+      expect(confirmSpy).toHaveBeenCalled()
+      expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+        'silt-kanban',
+        'columns',
+        expect.arrayContaining(['DOING', 'DONE'])
+      )
+      // The removed column (To Do / TODO) is NOT in the persisted set.
+      const persistedCall = mocks.updatePluginSetting.mock.calls.find(
+        ([key]) => key === 'silt-kanban'
+      )
+      expect(persistedCall?.[2]).not.toContain('TODO')
+      confirmSpy.mockRestore()
     })
   })
 })

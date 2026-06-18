@@ -434,6 +434,31 @@ by the existing diff/lease machinery once both sides land. A vault index must
 stay on a local disk regardless (WAL does not work on NFS/SMB — §3), so only
 the markdown crosses the mount.
 
+Co-located per-notebook config (#133). Per the storage-of-truth model, data
+attached to a notebook travels with the notebook. For a linked (external)
+notebook, per-notebook plugin overrides live at
+`<linkedRoot>/.system/config.yaml`, so an external notebook on SharePoint
+carries its own config with it — not in the vault. The co-located file is
+READ-ONLY to Silt (user-authored); plugin settings continue to persist to the
+vault-scoped `config.yaml` via the atomic `UpdatePluginSetting` path. The
+co-located file is purely an override layer.
+
+Merge precedence: vault-scoped config.yaml is the baseline; a linked
+notebook's co-located file overlays it per-key (linked wins). Nested maps
+merge recursively; scalars and arrays from the co-located file replace the
+vault's. The merge is computed on every call from the live, mtime-cached
+co-located config (see `App.linkedConfigs`), so an external edit is reflected
+on the next call. The multi-root watcher observes `<linkedRoot>/.system/
+config.yaml` and emits `linked-config:changed` on external edit, driving
+reactive refreshes (e.g. Kanban columns/filters re-resolve on the switch).
+
+Resolution surface: `App.GetPluginSettingsForNotebook(pluginID, notebookName)`
+is the IPC binding that resolves a plugin's settings for the active notebook
+(vault → vault settings verbatim; linked → deep-merge). The SDK
+`PluginContext.getPluginSettings()` wraps it with the live `activeNotebook`
+reactive getter, so a plugin that calls it at render time always sees the
+merged settings for the current notebook.
+
 
 4. Wails Bridge & IPC API Contract
 

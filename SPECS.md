@@ -444,10 +444,21 @@ export interface PluginContext {
   activeNotebook: string;
   activeSection: string;
   activePage: string;
+  /** Today's date in the user's LOCAL timezone as YYYY-MM-DD (#118). */
+  today: string;
   // Read-only SQL against the in-memory index (SELECT / WITH only).
   sqliteQuery: (sql: string, params?: unknown[]) => Promise<Record<string, unknown>[]>;
   mutateBlock: (id: string, text: string) => Promise<boolean>;
   updateBlockState: (id: string, status: 'TODO' | 'DOING' | 'DONE') => Promise<boolean>;
+  /** Update per-task metadata (pin, progress) — file-resident user intent (#123). */
+  updateTaskMeta: (id: string, meta: { pinned?: boolean | null; progress?: number }) => Promise<boolean>;
+  /**
+   * Resolve this plugin's settings for the ACTIVE notebook, applying the
+   * co-located per-notebook override layer (#133). Vault → vault settings;
+   * linked → deep-merge of vault defaults with the linked notebook's
+   * co-located config (linked wins per-key). Re-read on every call.
+   */
+  getPluginSettings: () => Promise<Record<string, any>>;
 }
 
 export interface SiltPlugin {
@@ -456,7 +467,7 @@ export interface SiltPlugin {
 }
 ```
 
-The active `notebook/section/page` from the navigator is bound into the context; `sqliteQuery` is read-only (anything other than SELECT/WITH is rejected). See `docs/PLUGIN_DEVELOPMENT.md` for the full author guide.
+The active `notebook/section/page` from the navigator is bound into the context as LIVE reactive getters; reading them inside a Svelte reactive context (template, `$derived`, `$effect`) tracks navigation changes automatically. `sqliteQuery` is read-only (anything other than SELECT/WITH is rejected). `getPluginSettings` resolves per-active-notebook so a plugin rendering for a linked notebook sees the co-located overrides; writes still persist to the vault config via `updatePluginSetting`. See `docs/PLUGIN_DEVELOPMENT.md` for the full author guide.
 
 8.3 Core Feature Decoupling
 

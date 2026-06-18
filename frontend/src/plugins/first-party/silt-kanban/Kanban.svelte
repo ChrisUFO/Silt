@@ -6,6 +6,7 @@
   import { plusDaysISO } from '../../sdk'
   import { settings, updatePluginSetting } from '../../../settings/store.svelte'
   import { measureFrameBudget } from '../../../lib/perf/frame-budget'
+  import { EventsOn } from '../../../../wailsjs/runtime/runtime.js'
   import FilterBar, { type KanbanFilters } from './FilterBar.svelte'
   import CardDetailPanel, { type KanbanCard } from './CardDetailPanel.svelte'
 
@@ -102,11 +103,14 @@
   // instead of hard-coding a literal that can drift if the cap is tuned.
   let loadedCount = $state(0)
 
-  // Columns come from config.yaml (plugins.plugin_settings.silt-kanban.columns),
-  // falling back to the canonical TODO/DOING/DONE triple. Now mutable: the
-  // user can add / rename / remove / reorder lanes, and changes persist back
-  // to config via updatePluginSetting (atomic). Custom (non-status) lanes render as empty —
-  // cards are bucketed by status, so only TODO/DOING/DONE lanes fill.
+  // Columns are mutable (user can add / rename / remove / reorder lanes) and
+  // persist to vault config via updatePluginSetting (atomic, #120). The
+  // INITIAL value comes synchronously from the vault config store (the base-
+  // line for every notebook). The per-active-notebook re-resolution effect
+  // below overrides columns/filters on a vault ↔ linked switch, applying the
+  // co-located override layer (#133). Between resolutions the local state is
+  // the user's working copy; user mutations bypass the resolution sync and
+  // stick until the next notebook switch.
   function initialColumns(): string[] {
     const cfgCols = settings.config?.plugins?.plugin_settings?.['silt-kanban']
       ?.columns as string[] | undefined
@@ -114,8 +118,8 @@
   }
   let columns = $state<string[]>(initialColumns())
 
-  // Filter state — persisted (debounced) to config so a board reload
-  // restores the active filter selection.
+  // Filter state — persisted (debounced) to config so a board reload restores
+  // the active filter selection. Same resolution pattern as columns (#133).
   function initialFilters(): KanbanFilters {
     const f = settings.config?.plugins?.plugin_settings?.['silt-kanban']
       ?.filters as Partial<KanbanFilters> | undefined
@@ -127,6 +131,49 @@
     }
   }
   let filters = $state<KanbanFilters>(initialFilters())
+
+  // Per-active-notebook plugin settings re-resolution (#133): on a vault ↔
+  // linked switch (or a linked-config:changed event), re-read the merged set-
+  // tings from ctx.getPluginSettings() and sync columns + filters. The INIT-
+  // IAL mount skips this (the synchronous init above already populated from
+  // the vault config store, which is the baseline for every notebook), so
+  // the first board load is not delayed by an async IPC round-trip and does
+  // not trigger a spurious reload.
+  let settingsEpoch = $state(0)
+  let settingsFirstRun = true
+  $effect(() => {
+    void ctx.activeNotebook // track navigation
+    void settingsEpoch // track linked-config:changed
+    if (settingsFirstRun) {
+      settingsFirstRun = false
+      return // mount: synchronous init already set columns/filters
+    }
+    let cancelled = false
+    ctx.getPluginSettings().then((s) => {
+      if (cancelled) return
+      const cfgCols = s.columns as string[] | undefined
+      columns = cfgCols && cfgCols.length ? [...cfgCols] : [...ALL_STATUSES]
+      const f = s.filters as Partial<KanbanFilters> | undefined
+      filters = {
+        owners: f?.owners ?? [],
+        priorities: f?.priorities ?? [],
+        dueDate: f?.dueDate ?? '',
+        tags: f?.tags ?? []
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  })
+
+  // Re-resolve when a co-located linked config is edited externally (#133).
+  // The Go watcher emits linked-config:changed after invalidating the cache.
+  $effect(() => {
+    const off = EventsOn('linked-config:changed', () => {
+      settingsEpoch++
+    })
+    return off
+  })
 
   // Card selected for the slide-out detail panel (null = closed).
   let selectedCard = $state<KanbanCard | null>(null)
