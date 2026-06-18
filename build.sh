@@ -160,24 +160,24 @@ cp "$BINARY" "$BUILD_DIR/${APP_NAME}.exe"
 rm "$BUILD_DIR/${APP_NAME}.exe"
 log_info "  -> $BUILD_DIR/$ZIP_NAME"
 
-# --- 2) per-user NSIS installer (no admin required) ---
-log_info "Building per-user installer..."
-
-INSTALLER_NAME="${APP_NAME}-v${VERSION}-installer-peruser.exe"
-NSI_FILE="$ROOT/build/windows/installer/project.nsi"
+# --- 2) NSIS installer ---
+# `wails build --nsis` (above) already compiled the installer into
+# build/bin/<name>-amd64-installer.exe, passing makensis the binary path in
+# native Windows form. Re-running makensis here was both redundant and broken
+# under Git Bash: the MSYS-style path (/d/a/...) can't be resolved by native
+# makensis ("Error in macro wails.files"). Wails is the single source of truth
+# for the installer — copy its output with a versioned name.
+INSTALLER_NAME="${APP_NAME}-v${VERSION}-installer.exe"
 NSIS_OUTPUT="$ROOT/build/bin/${APP_NAME}-amd64-installer.exe"
 
-# makensis resolves relative paths (icon, webview2 bootstrapper) from the
-# directory containing the .nsi file, so we cd there.
-(cd "$(dirname "$NSI_FILE")" && makensis \
-    -DINFO_PROJECTNAME="$APP_NAME" \
-    -DINFO_PRODUCTNAME="$PRODUCT_NAME" \
-    -DINFO_PRODUCTVERSION="$VERSION" \
-    -DARG_WAILS_AMD64_BINARY="$BINARY" \
-    "$(basename "$NSI_FILE")")
+if [ ! -f "$NSIS_OUTPUT" ]; then
+    log_error "Wails did not produce an installer at $NSIS_OUTPUT."
+    log_error "Ensure 'wails build' was invoked with --nsis."
+    exit 1
+fi
 
+log_info "Copying installer..."
 cp "$NSIS_OUTPUT" "$BUILD_DIR/$INSTALLER_NAME"
-
 log_info "  -> $BUILD_DIR/$INSTALLER_NAME"
 
 # --- persist new version (only on success, and only if we bumped) ---
