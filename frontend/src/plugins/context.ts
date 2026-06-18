@@ -4,7 +4,8 @@ import {
   PluginRawQuery,
   PluginMutateBlock,
   PluginUpdateBlockState,
-  PluginUpdateTaskMeta
+  PluginUpdateTaskMeta,
+  GetPluginSettingsForNotebook
 } from '../../wailsjs/go/main/App.js'
 import { getActiveLocation } from './location.svelte'
 
@@ -20,8 +21,12 @@ import { getActiveLocation } from './location.svelte'
  * The `sqliteQuery` / `mutateBlock` / `updateBlockState` / `updateTaskMeta`
  * closures are stateless Wails bindings — they do not depend on the active
  * location (SQL queries include the location as explicit parameters).
+ *
+ * `pluginID` is captured in the `getPluginSettings` closure so a plugin does
+ * not need to pass its own id when resolving its per-active-notebook settings
+ * (#133); the loader passes the manifest id at context construction.
  */
-export function makePluginContext(): PluginContext {
+export function makePluginContext(pluginID: string): PluginContext {
   const loc = getActiveLocation()
   return {
     get activeNotebook() {
@@ -73,6 +78,14 @@ export function makePluginContext(): PluginContext {
               ? 1
               : 0,
         meta.progress === undefined ? -1 : meta.progress
+      ),
+    // Per-active-notebook settings resolution (#133). pluginID is captured
+    // at context construction; the live activeNotebook is read at call time
+    // so switching notebooks re-resolves on the next call. The Go side
+    // merges vault defaults with any co-located linked-notebook override.
+    getPluginSettings: () =>
+      GetPluginSettingsForNotebook(pluginID, loc.notebook).then(
+        (settings) => settings ?? {}
       )
   }
 }

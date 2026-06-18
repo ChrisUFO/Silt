@@ -55,6 +55,15 @@ type DirectoryWatcher struct {
 	rootMu   sync.RWMutex
 	roots    []string
 	rootInfo map[string]watchRoot
+
+	// linkedConfigHandler is invoked when a linked notebook's co-located
+	// <root>/.system/config.yaml changes (#133), so App can drop the cache
+	// entry and emit a linked-config:changed event. The argument is the
+	// source ('linked:<id>'). Optional: if nil, co-located config events are
+	// a no-op (the watcher still observes them but does not act). Set via
+	// SetLinkedConfigHandler. Guarded by linkedConfigHandlerMu.
+	linkedConfigHandlerMu sync.RWMutex
+	linkedConfigHandler   func(source string)
 }
 
 // watchRoot records how to interpret paths beneath a watched root.
@@ -293,6 +302,36 @@ func (dw *DirectoryWatcher) RemoveWatchRoot(rootPath string) {
 	})
 }
 
+// SetLinkedConfigHandler registers a callback invoked when a linked
+// notebook's co-located <root>/.system/config.yaml changes (#133). The
+// callback receives the source ('linked:<id>'). Pass nil to unregister.
+// The handler is called from the watcher goroutine; it MUST not block on
+// the watcher's own locks (the App-side handler only touches configMu and
+// the event emitter, both safe).
+func (dw *DirectoryWatcher) SetLinkedConfigHandler(fn func(source string)) {
+	dw.linkedConfigHandlerMu.Lock()
+	dw.linkedConfigHandler = fn
+	dw.linkedConfigHandlerMu.Unlock()
+}
+
+// linkedConfigSourceForPath returns the source ('linked:<id>') if path is a
+// linked root's co-located config.yaml (<root>/.system/config.yaml), or "" +
+// false otherwise. Used by the event loop to route co-located config edits
+// to the linkedConfigHandler without consulting the registry on every event.
+func (dw *DirectoryWatcher) linkedConfigSourceForPath(path string) (string, bool) {
+	dw.rootMu.RLock()
+	defer dw.rootMu.RUnlock()
+	for root, info := range dw.rootInfo {
+		if info.source == "vault" {
+			continue
+		}
+		if path == filepath.Join(root, ".system", "config.yaml") {
+			return info.source, true
+		}
+	}
+	return "", false
+}
+
 // resolveFileMetadata derives (notebook, section, page, date) for a markdown
 // file from its path relative to the vault root.
 //
@@ -426,6 +465,22 @@ func (dw *DirectoryWatcher) listenLoop() {
 					if err := dw.AddRecursive(path); err != nil {
 						log.Printf("DirectoryWatcher: failed to watch new directory %s: %v", path, err)
 					}
+				}
+				continue
+			}
+
+			// Co-located per-notebook config (#133): if the event is on a
+			// linked root's <root>/.system/config.yaml, route it to the
+			// linked-config handler (cache invalidation + event emit) and
+			// skip the markdown-indexing path below — it's a YAML file, not
+			// a page. This check runs BEFORE the .md filter so the event is
+			// not silently dropped.
+			if source, ok := dw.linkedConfigSourceForPath(path); ok {
+				dw.linkedConfigHandlerMu.RLock()
+				handler := dw.linkedConfigHandler
+				dw.linkedConfigHandlerMu.RUnlock()
+				if handler != nil {
+					handler(source)
 				}
 				continue
 			}

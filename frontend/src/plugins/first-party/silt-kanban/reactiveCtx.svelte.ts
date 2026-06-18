@@ -55,6 +55,7 @@ export function reactiveCtx(
     sqliteQuery,
     updateBlockState: extras.updateBlockState ?? (() => Promise.resolve(true)),
     mutateBlock: extras.mutateBlock ?? (() => Promise.resolve(true)),
-    updateTaskMeta: extras.updateTaskMeta ?? (() => Promise.resolve(true))
+    updateTaskMeta: extras.updateTaskMeta ?? (() => Promise.resolve(true)),
+    getPluginSettings: extras.getPluginSettings ?? (() => Promise.resolve({}))
   }
 }

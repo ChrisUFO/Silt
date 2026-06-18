@@ -349,6 +349,11 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.watcher = watcher
 	a.vaultPath = vaultPath
 
+	// Route co-located per-notebook config edits to the cache invalidator +
+	// linked-config:changed event (#133). The handler is called from the
+	// watcher goroutine; it only touches configMu + the event emitter.
+	watcher.SetLinkedConfigHandler(a.onLinkedConfigChange)
+
 	// Start hot-reload of .system/config.yaml. External edits re-parse and
 	// emit config:changed without a restart (SPECS.md §9.2). Silt's own
 	// SaveSystemWrite is ignored via the watcher's self-loop tracker.
@@ -2167,6 +2172,21 @@ func (a *App) invalidateLinkedConfigLocked(source string) {
 	delete(a.linkedConfigs, source)
 }
 
+// onLinkedConfigChange is the watcher hook for external edits to a linked
+// notebook's co-located <root>/.system/config.yaml (#133). It drops the
+// cached parsed config for the source (so the next GetPluginSettingsForNotebook
+// call re-reads from disk) and emits a linked-config:changed Wails event so
+// the frontend can refresh any per-active-notebook settings it derived from
+// the old config. Called from the watcher goroutine.
+func (a *App) onLinkedConfigChange(source string) {
+	a.configMu.Lock()
+	a.invalidateLinkedConfigLocked(source)
+	a.configMu.Unlock()
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "linked-config:changed", source)
+	}
+}
+
 // indexLinkedTree walks a linked root's markdown and indexes it under the
 // linked source in a SINGLE batched transaction (#134). The notebook name is
 // the link's DisplayName (the root IS one notebook); sections/pages are
@@ -3775,6 +3795,82 @@ func (a *App) UpdatePluginSetting(pluginID string, key string, value any) error 
 		a.configWatcher.RegisterSelfWrite()
 	}
 	return config.Save(a.vaultPath, a.cfg)
+}
+
+// GetPluginSettingsForNotebook resolves a plugin's settings map for the
+// ACTIVE notebook, applying the co-located per-notebook override layer (#133).
+//
+// Merge precedence: vault-scoped config.yaml is the baseline; a linked
+// notebook's co-located <root>/.system/config.yaml overlays it per-key
+// (linked wins). For a vault notebook (or no active notebook), the vault
+// settings are returned unchanged. For a linked notebook with no co-located
+// file, the vault settings are returned (the normal case). The merge is
+// computed on every call from the live, mtime-cached co-located config, so an
+// external edit to either file is reflected on the next call (the watcher
+// also emits linked-config:changed to drive reactive refreshes).
+//
+// pluginID selects which plugin's entry is returned (e.g. "silt-kanban"). An
+// unknown pluginID yields an empty map, not an error — a plugin with no
+// stored settings is the same as a plugin whose settings are all defaults.
+//
+// notebookName is the display name (the sidebar label); it is resolved to a
+// source via resolveSourceByName. An empty notebookName is treated as the
+// vault scope (no active notebook).
+func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[string]any, error) {
+	if a.vaultPath == "" {
+		return nil, fmt.Errorf("vault not loaded")
+	}
+	if pluginID == "" {
+		return nil, fmt.Errorf("pluginID is required")
+	}
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+
+	// Vault baseline: the plugin's entry in the vault-scoped config.yaml.
+	vaultEntry, _ := a.cfg.Plugins.PluginSettings[pluginID].(map[string]any)
+	if vaultEntry == nil {
+		vaultEntry = map[string]any{}
+	}
+
+	source := config.LinkedNotebooksVaultSource
+	if notebookName != "" {
+		source = a.resolveSourceByName(notebookName)
+	}
+	if source == config.LinkedNotebooksVaultSource {
+		// Vault notebook (or no active notebook): vault settings verbatim.
+		return vaultEntry, nil
+	}
+
+	// Linked notebook: find the registry entry and apply the co-located
+	// override layer.
+	var ln config.LinkedNotebook
+	found := false
+	for _, candidate := range a.cfg.LinkedNotebooks {
+		if candidate.Source() == source {
+			ln = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		// Registry out of sync (stale source) — degrade gracefully to the
+		// vault settings. Logged so the mismatch is discoverable.
+		log.Printf("GetPluginSettingsForNotebook(%s,%s): source %q not in registry; returning vault settings", pluginID, notebookName, source)
+		return vaultEntry, nil
+	}
+	linkedCfg, err := a.linkedConfigLocked(ln)
+	if err != nil {
+		// Fail-loud: an unparseable co-located config surfaces as an error
+		// rather than silently degrading to vault settings (the user must
+		// see their broken file). A MISSING file is not an error (LoadLinked
+		// returns Defaults + nil in that case).
+		return nil, fmt.Errorf("linked config for %s: %w", ln.DisplayName, err)
+	}
+	linkedEntry, _ := linkedCfg.Plugins.PluginSettings[pluginID].(map[string]any)
+	if linkedEntry == nil {
+		linkedEntry = map[string]any{}
+	}
+	return config.MergePluginSettings(vaultEntry, linkedEntry), nil
 }
 
 // ListPlugins enumerates plugin folders under .system/plugins/, surfacing

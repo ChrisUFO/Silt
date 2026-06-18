@@ -98,6 +98,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     updateBlockState: mocks.updateBlockState,
     mutateBlock: vi.fn(),
     updateTaskMeta: vi.fn(),
+    getPluginSettings: vi.fn(() => Promise.resolve({})),
     ...overrides
   }
 }

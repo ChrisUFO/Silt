@@ -2053,6 +2053,142 @@ func TestLinkedConfigFor_CacheAndInvalidation(t *testing.T) {
 	}
 }
 
+// TestGetPluginSettingsForNotebook_VaultReturnsVaultSettings covers the
+// baseline path of #133's per-active-notebook settings resolver: a vault
+// notebook (or no active notebook) returns the vault-scoped config.yaml entry
+// verbatim, with no co-located lookup.
+func TestGetPluginSettingsForNotebook_VaultReturnsVaultSettings(t *testing.T) {
+	app := newTestApp(t)
+	// Seed the vault config with a known plugin entry.
+	app.configMu.Lock()
+	app.cfg.Plugins.PluginSettings["silt-kanban"] = map[string]any{
+		"columns": []any{"TODO", "DOING", "DONE"},
+	}
+	app.configMu.Unlock()
+
+	got, err := app.GetPluginSettingsForNotebook("silt-kanban", "Work")
+	if err != nil {
+		t.Fatalf("vault path: %v", err)
+	}
+	cols, ok := got["columns"].([]any)
+	if !ok || len(cols) != 3 {
+		t.Errorf("expected vault columns [TODO DOING DONE], got %v", got["columns"])
+	}
+}
+
+// TestGetPluginSettingsForNotebook_VaultUnknownPluginReturnsEmpty confirms an
+// unknown pluginID yields an empty map (not an error) — a plugin with no
+// stored settings is equivalent to all-default settings.
+func TestGetPluginSettingsForNotebook_VaultUnknownPluginReturnsEmpty(t *testing.T) {
+	app := newTestApp(t)
+	got, err := app.GetPluginSettingsForNotebook("nonexistent-plugin", "Work")
+	if err != nil {
+		t.Fatalf("unknown plugin: %v", err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Errorf("expected empty map for unknown plugin, got %v", got)
+	}
+}
+
+// TestGetPluginSettingsForNotebook_LinkedMergesOverVault covers the override
+// path: a linked notebook with a co-located <root>/.system/config.yaml
+// returns the deep merge (linked wins per-key, vault-only keys preserved).
+func TestGetPluginSettingsForNotebook_LinkedMergesOverVault(t *testing.T) {
+	app := newTestApp(t)
+
+	// Vault baseline.
+	app.configMu.Lock()
+	app.cfg.Plugins.PluginSettings["silt-kanban"] = map[string]any{
+		"columns":    []any{"TODO", "DOING", "DONE"},
+		"vault_only": "keep",
+	}
+	app.configMu.Unlock()
+
+	// Linked notebook with a co-located override.
+	ext := t.TempDir()
+	cfgPath := config.LinkedConfigPath(ext)
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(
+		"plugins:\n  plugin_settings:\n    silt-kanban:\n      columns: [Backlog, Done]\n      linked_only: add\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app.configMu.Lock()
+	app.cfg.LinkedNotebooks = []config.LinkedNotebook{
+		{ID: "ext", RootPath: ext, DisplayName: "Ext"},
+	}
+	app.configMu.Unlock()
+
+	got, err := app.GetPluginSettingsForNotebook("silt-kanban", "Ext")
+	if err != nil {
+		t.Fatalf("linked path: %v", err)
+	}
+	// Linked overrides vault for `columns`.
+	cols, ok := got["columns"].([]any)
+	if !ok || len(cols) != 2 || cols[0] != "Backlog" {
+		t.Errorf("expected linked columns [Backlog Done], got %v", got["columns"])
+	}
+	// Vault-only key survives.
+	if got["vault_only"] != "keep" {
+		t.Errorf("expected vault_only preserved, got %v", got["vault_only"])
+	}
+	// Linked-only key added.
+	if got["linked_only"] != "add" {
+		t.Errorf("expected linked_only added, got %v", got["linked_only"])
+	}
+}
+
+// TestGetPluginSettingsForNotebook_LinkedMissingFileReturnsVault confirms the
+// normal case: a linked notebook WITHOUT a co-located config.yaml returns the
+// vault settings unchanged (no error).
+func TestGetPluginSettingsForNotebook_LinkedMissingFileReturnsVault(t *testing.T) {
+	app := newTestApp(t)
+	app.configMu.Lock()
+	app.cfg.Plugins.PluginSettings["silt-kanban"] = map[string]any{"theme": "light"}
+	app.cfg.LinkedNotebooks = []config.LinkedNotebook{
+		{ID: "ext", RootPath: t.TempDir(), DisplayName: "Ext"}, // no co-located file
+	}
+	app.configMu.Unlock()
+
+	got, err := app.GetPluginSettingsForNotebook("silt-kanban", "Ext")
+	if err != nil {
+		t.Fatalf("missing co-located file: %v", err)
+	}
+	if got["theme"] != "light" {
+		t.Errorf("expected vault setting to pass through, got %v", got["theme"])
+	}
+}
+
+// TestGetPluginSettingsForNotebook_LinkedUnparseableSurfacesError locks the
+// fail-loud contract: a present-but-broken co-located config yields an error
+// (the user must see their broken file), not a silent fall-through to vault.
+func TestGetPluginSettingsForNotebook_LinkedUnparseableSurfacesError(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	cfgPath := config.LinkedConfigPath(ext)
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte("plugins:\n  plugin_settings: [unterminated\n  : : :"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app.configMu.Lock()
+	app.cfg.LinkedNotebooks = []config.LinkedNotebook{
+		{ID: "ext", RootPath: ext, DisplayName: "Ext"},
+	}
+	app.configMu.Unlock()
+
+	_, err := app.GetPluginSettingsForNotebook("silt-kanban", "Ext")
+	if err == nil {
+		t.Fatal("expected error for unparseable co-located config, got nil")
+	}
+	if !strings.Contains(err.Error(), "linked config") {
+		t.Errorf("expected error to mention linked config, got %v", err)
+	}
+}
+
 // TestSaveFileBlocks_LinkedRootUnusable_ReturnsClearError locks the documented
 // offline/unusable-root contract (#100): a write to a linked notebook whose
 // root can't be used must return a clear error (no panic, no crash). We proxy

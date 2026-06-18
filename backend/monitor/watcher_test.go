@@ -507,3 +507,137 @@ func TestDirectoryWatcher_AddRemoveWatchRoot(t *testing.T) {
 		t.Error("expected governingRoot to drop the linked root after RemoveWatchRoot")
 	}
 }
+
+// TestDirectoryWatcher_LinkedConfigSourceForPath confirms the co-located
+// config path detector (#133): only a linked root's <root>/.system/config.yaml
+// matches; the vault config and unrelated linked YAMLs do not.
+func TestDirectoryWatcher_LinkedConfigSourceForPath(t *testing.T) {
+	vaultPath := t.TempDir()
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+
+	linked := t.TempDir()
+	if err := dw.AddWatchRoot(linked, "linked:ext", "Ext"); err != nil {
+		t.Fatalf("AddWatchRoot: %v", err)
+	}
+
+	cases := []struct {
+		name     string
+		path     string
+		wantOK   bool
+		wantSrc  string
+	}{
+		{
+			name:    "linked co-located config",
+			path:    filepath.Join(linked, ".system", "config.yaml"),
+			wantOK:  true,
+			wantSrc: "linked:ext",
+		},
+		{
+			name:    "vault co-located config (not linked, ignored)",
+			path:    filepath.Join(vaultPath, ".system", "config.yaml"),
+			wantOK:  false,
+			wantSrc: "",
+		},
+		{
+			name:    "unrelated linked YAML",
+			path:    filepath.Join(linked, ".system", "other.yaml"),
+			wantOK:  false,
+			wantSrc: "",
+		},
+		{
+			name:    "linked markdown page",
+			path:    filepath.Join(linked, "Plan.md"),
+			wantOK:  false,
+			wantSrc: "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotSrc, gotOK := dw.linkedConfigSourceForPath(c.path)
+			if gotOK != c.wantOK {
+				t.Errorf("linkedConfigSourceForPath(%q) ok = %v, want %v", c.path, gotOK, c.wantOK)
+			}
+			if gotSrc != c.wantSrc {
+				t.Errorf("linkedConfigSourceForPath(%q) src = %q, want %q", c.path, gotSrc, c.wantSrc)
+			}
+		})
+	}
+}
+
+// TestDirectoryWatcher_SetLinkedConfigHandler confirms the handler is invoked
+// when set and skipped when nil (the watcher must not panic on a co-located
+// config event if no handler is registered).
+func TestDirectoryWatcher_SetLinkedConfigHandler(t *testing.T) {
+	vaultPath := t.TempDir()
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+
+	// Register a linked root with a co-located config.
+	linked := t.TempDir()
+	if err := dw.AddWatchRoot(linked, "linked:ext", "Ext"); err != nil {
+		t.Fatalf("AddWatchRoot: %v", err)
+	}
+	cfgPath := filepath.Join(linked, ".system", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte("plugins: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// With no handler set, the detector still identifies the path; calling
+	// the dispatch path directly must be a no-op (handler is nil).
+	dw.linkedConfigHandlerMu.RLock()
+	h := dw.linkedConfigHandler
+	dw.linkedConfigHandlerMu.RUnlock()
+	if h != nil {
+		t.Fatal("expected nil handler before SetLinkedConfigHandler")
+	}
+
+	// Register a handler and confirm it is invoked with the source.
+	var (
+		gotSource string
+		calls     int
+		mu        sync.Mutex
+	)
+	dw.SetLinkedConfigHandler(func(source string) {
+		mu.Lock()
+		defer mu.Unlock()
+		gotSource = source
+		calls++
+	})
+	dw.linkedConfigHandlerMu.RLock()
+	h = dw.linkedConfigHandler
+	dw.linkedConfigHandlerMu.RUnlock()
+	if h == nil {
+		t.Fatal("expected non-nil handler after SetLinkedConfigHandler")
+	}
+	h("linked:ext")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 1 || gotSource != "linked:ext" {
+		t.Errorf("handler call: got calls=%d source=%q, want 1 / linked:ext", calls, gotSource)
+	}
+}
