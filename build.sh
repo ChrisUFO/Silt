@@ -154,7 +154,7 @@ mkdir -p "$BUILD_DIR"
 
 # --- 1) portable .zip ---
 log_info "Creating portable zip..."
-ZIP_NAME="${APP_NAME}-v${VERSION}-portable.zip"
+ZIP_NAME="${APP_NAME}-v${VERSION}-windows-portable.zip"
 cp "$BINARY" "$BUILD_DIR/${APP_NAME}.exe"
 (cd "$BUILD_DIR" && make_zip "$ZIP_NAME" "${APP_NAME}.exe")
 rm "$BUILD_DIR/${APP_NAME}.exe"
@@ -167,7 +167,7 @@ log_info "  -> $BUILD_DIR/$ZIP_NAME"
 # under Git Bash: the MSYS-style path (/d/a/...) can't be resolved by native
 # makensis ("Error in macro wails.files"). Wails is the single source of truth
 # for the installer — copy its output with a versioned name.
-INSTALLER_NAME="${APP_NAME}-v${VERSION}-installer.exe"
+INSTALLER_NAME="${APP_NAME}-v${VERSION}-windows-installer.exe"
 NSIS_OUTPUT="$ROOT/build/bin/${APP_NAME}-amd64-installer.exe"
 
 if [ ! -f "$NSIS_OUTPUT" ]; then

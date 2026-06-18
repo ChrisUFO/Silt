@@ -187,7 +187,7 @@ StartupWMClass=${PRODUCT_NAME}
 EOF
 
 # --- 1) AppImage (universal single-file) ------------------------------------
-APPIMAGE_NAME="${PRODUCT_NAME}-${VERSION}-x86_64.AppImage"
+APPIMAGE_NAME="${PRODUCT_NAME}-${VERSION}-linux-x86_64.AppImage"
 
 fetch_appimagetool() {
     if [[ -x "$APPIMAGETOOL_CACHE" ]]; then
@@ -254,7 +254,7 @@ else
 fi
 
 # --- 2) .deb (Debian/Ubuntu native) ----------------------------------------
-DEB_NAME="${APP_NAME}_${VERSION}_amd64.deb"
+DEB_NAME="${APP_NAME}_${VERSION}_debian_amd64.deb"
 
 log_info "Building .deb package..."
 DEB_TEMP_DIR="$(mktemp -d)"
