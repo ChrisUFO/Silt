@@ -154,7 +154,11 @@ body::before {
   display: var(--silt-texture-display, none);
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  /* Below the modal layer (scrims start at z-[150]) and the command palette
+     (z-[100]) so dimmed backdrops and elevated UI read crisp and untinted;
+     above all persistent app chrome (titlebar/sidebar/menus, <= z-[70]) so
+     the ambient paper grain textures the canvas the user actually works on. */
+  z-index: 80;
   pointer-events: none;
   background-image: var(--silt-texture-image, none);
   background-repeat: repeat;
