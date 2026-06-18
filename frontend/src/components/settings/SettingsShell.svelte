@@ -134,7 +134,7 @@
     aria-label="Close settings"
     title="Close settings"
     onclick={onClose}
-    class="absolute inset-0 h-full w-full bg-[#000]/60 backdrop-blur-sm border-none cursor-default p-0"
+    class="absolute inset-0 h-full w-full bg-[#000]/40 backdrop-blur-[2px] border-none cursor-default p-0"
   ></button>
   <div
     bind:this={dialogEl}

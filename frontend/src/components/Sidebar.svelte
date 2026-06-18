@@ -887,7 +887,7 @@
   <!-- Inline create/rename modal -->
   {#if createMode}
     <div
-      class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[160] flex items-start justify-center pt-32"
+      class="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[160] flex items-start justify-center pt-32"
     >
       <button
         tabindex="-1"
@@ -1043,7 +1043,7 @@
 <!-- Delete confirmation dialog (#62) -->
 {#if deleteTarget}
   <div
-    class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[190] flex items-center justify-center"
+    class="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[190] flex items-center justify-center"
   >
     <button
       tabindex="-1"
