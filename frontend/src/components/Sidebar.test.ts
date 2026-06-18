@@ -106,4 +106,31 @@ describe('Sidebar', () => {
     await fireEvent.click(changeVaultBtn)
     expect(handler).toHaveBeenCalledTimes(1)
   })
+
+  it('renders the active-notebook label in text-primary (not accent) per #138', async () => {
+    // The notebook-selector header label (Sidebar.svelte:680) used the accent
+    // token, which masked theme switches on the 3 cool-accent themes (#138).
+    // It now follows --text-primary so each theme's body-text hue shows up in
+    // the sidebar. The "No Notebook" fallback only appears in this label, so
+    // getByText uniquely targets it (independent of the nav tree load).
+    render(Sidebar, {
+      props: {
+        activeNotebook: '',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onSelectView: () => {},
+        onCloseVault: () => {}
+      }
+    })
+    await flush()
+
+    const label = screen.getByText('No Notebook')
+    expect(label).toHaveClass('text-text-primary')
+    expect(label).not.toHaveClass('text-accent-primary-start')
+  })
 })

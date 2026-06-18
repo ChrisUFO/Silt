@@ -321,6 +321,61 @@ func TestAccentDistinctness_AllFirstClassThemes(t *testing.T) {
 	}
 }
 
+// TestTextPrimaryDistinctFromDefault_AllFirstClassThemes guards the #138
+// regression: every first-class theme's body-text color must be perceptibly
+// distinct from the default's (Cyber Forest), so switching themes produces a
+// visibly different result. The issue tracked a state where Graphite and Linen
+// shipped Cyber-Forest-adjacent cool blue-grays (#e6e8eb / #e6e7ea, ~10 sRGB
+// units from the default's #dee3e6) and thus read near-identical.
+//
+// The guard is anchored to the DEFAULT theme rather than asserting all-pairs
+// distance because two themes are *intentionally* close: Linen (#e8e3d8) and
+// Terra Noir (#ece3d5) are both warm oatmeal/cream whites (~5 units apart) by
+// design. A global all-pairs threshold high enough to catch the cool-blue-gray
+// collapse would false-trip that legitimate warm-warm pair. Anchoring to the
+// default isolates the actual #138 concern (everything reading like Cyber
+// Forest) without coupling to the intentional warmth similarity.
+//
+// The threshold (13.0) cleanly separates the bug from intent: the buggy
+// Evidence B values sat at ~9.8-10.7 from the default, while every shipped
+// theme clears 16. The headroom keeps the guard from flapping on a future
+// minor palette retune.
+func TestTextPrimaryDistinctFromDefault_AllFirstClassThemes(t *testing.T) {
+	const minDist = 13.0
+	all, err := EmbeddedThemes()
+	if err != nil {
+		t.Fatalf("EmbeddedThemes: %v", err)
+	}
+	defaults, ok := findByID(all, DefaultThemeID)
+	if !ok {
+		t.Fatalf("default theme %q not in EmbeddedThemes", DefaultThemeID)
+	}
+	for _, mode := range []string{"dark", "light"} {
+		anchor := defaults.Flatten(mode)["--text-primary"]
+		for _, th := range all {
+			if th.ID == DefaultThemeID {
+				continue
+			}
+			got := th.Flatten(mode)["--text-primary"]
+			d := rgbDistance(t, anchor, got)
+			if d < minDist {
+				t.Errorf("%s [%s]: --text-primary %s is only %.1f sRGB units from default %s (%s), want >= %.1f (themes must read visibly distinct from Cyber Forest per #138)",
+					th.ID, mode, got, d, defaults.ID, anchor, minDist)
+			}
+		}
+	}
+}
+
+// findByID returns the theme with the given id from the slice, or ok=false.
+func findByID(all []*Theme, id string) (*Theme, bool) {
+	for _, th := range all {
+		if th.ID == id {
+			return th, true
+		}
+	}
+	return nil, false
+}
+
 // rgbDistance is the sRGB Euclidean distance between two colors. It is a crude
 // but adequate proxy for "perceptually different enough to distinguish" for the
 // accent-distinctness guard; a full ΔE is overkill for catching an accidental

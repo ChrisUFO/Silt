@@ -105,6 +105,28 @@ The canonical theme schema is modes-based (`modes.dark` / `modes.light`) with hu
 }
 
 
+**Token usage convention (when to reach for `--text-primary` vs `--accent-primary-*`).**
+The "Surgical Accents" doctrine above (accents are *signposts*, < 3% of the
+viewport) decides which token a given element binds to:
+
+- **`--text-primary`** → plain text chrome: wordmarks, headings, static labels,
+  and body copy. These must follow each theme's body-text hue so a theme switch
+  is visibly perceptible everywhere text appears.
+- **`--accent-primary-*`** → signposts and interactive/selected state only:
+  focusable icons, active-tab indicators, selected listbox rows, CTAs, links,
+  focus rings, and breadcrumb "you are here" markers.
+
+The split matters because three first-class themes share **cool** accents
+(Cyber Forest teal, Graphite blue, Linen slate-blue) — if a prominent label
+like the wordmark or the active-notebook header is bound to the accent token,
+switching between those themes barely shifts its hue and the theme change reads
+as inert even though the palette swapped correctly (#138). Binding such
+elements to `--text-primary` surfaces each theme's distinct body-text color
+(neutral white / warm oatmeal / cool blue-gray) in the most eye-catching chrome.
+The brand `<img>` logo (not the wordmark text) carries the brand identity; the
+accent token is never used as a decorative text color.
+
+
 2.2 First-Class Theme Palettes
 
 Silt ships a curated set of first-class themes alongside the default. Each is a plain JSON file embedded in the binary (so it is always selectable, even before a vault exists or when the themes directory is wiped) and written to `<vault>/.system/themes/` by `ScaffoldVault` so it is editable on disk. All consume the same canonical schema and semantic accents from §2.1 — **no per-theme component code exists**; switching themes only changes the injected CSS custom-property values.

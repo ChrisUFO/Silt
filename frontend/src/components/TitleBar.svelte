@@ -84,7 +84,7 @@
     >
       <img src={logo} alt="Silt" class="w-6 h-6 flex-shrink-0" />
       <span
-        class="font-headline-md text-headline-md text-accent-primary-start font-bold tracking-tight whitespace-nowrap"
+        class="font-headline-md text-headline-md text-text-primary font-bold tracking-tight whitespace-nowrap"
         >Silt</span
       >
     </div>

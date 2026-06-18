@@ -180,7 +180,17 @@ func TestFirstClassThemes_FlattenShape(t *testing.T) {
 	// less specifically).
 	tuned := map[string]map[string]string{
 		"silt-terra-noir": {"dark|--text-muted": "#a89478"},
-		"silt-linen":      {"dark|--text-muted": "#b9b0a1"},
+		// #138: pin Graphite/Linen dark text-primary at the distinct values
+		// #136 anchored (neutral-white / warm-oatmeal). The issue tracked a
+		// state where these collapsed to Cyber-Forest-adjacent cool blue-grays
+		// (#e6e8eb / #e6e7ea) and themes stopped reading differently. The
+		// distinctness guard in contrast_test.go covers the perceptual side;
+		// this pin catches an exact-value revert with a precise diff message.
+		"silt-graphite": {"dark|--text-primary": "#ebebeb"},
+		"silt-linen": {
+			"dark|--text-muted":   "#b9b0a1",
+			"dark|--text-primary": "#e8e3d8",
+		},
 	}
 	// Opt-in decorative texture overlay keys (superset; allowed, not required).
 	textureKeys := map[string]bool{

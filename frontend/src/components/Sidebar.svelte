@@ -677,7 +677,7 @@
         >
         <div class="flex flex-col min-w-0 flex-1">
           <span
-            class="text-accent-primary-start font-headline-md text-headline-md truncate"
+            class="text-text-primary font-headline-md text-headline-md truncate"
             >{activeNotebook || 'No Notebook'}</span
           >
           <span

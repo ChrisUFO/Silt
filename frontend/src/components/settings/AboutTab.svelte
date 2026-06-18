@@ -18,7 +18,7 @@
   <div class="flex items-center gap-4 mb-6">
     <img src={logo} alt="Silt" class="w-14 h-14" />
     <div>
-      <h3 class="font-headline-md text-headline-md text-accent-primary-start font-bold">Silt</h3>
+      <h3 class="font-headline-md text-headline-md text-text-primary font-bold">Silt</h3>
       <p class="text-text-muted text-[12px] font-label-sm">Version {version}</p>
     </div>
   </div>
