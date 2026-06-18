@@ -191,7 +191,79 @@ func validateMode(prefix string, m Mode) ValidationErrors {
 			})
 		}
 	}
+	// Texture is optional; validate it only when the mode declares a block.
+	if m.Texture != nil {
+		errs = append(errs, validateTexture(prefix+".texture", m.Texture)...)
+	}
 	return errs
+}
+
+// validBlendModes is the set of CSS mix-blend-mode keywords the texture
+// overlay may use. Restricting to this allowlist keeps the injected value
+// predictable and rules out arbitrary identifiers.
+var validBlendModes = map[string]bool{
+	"normal": true, "multiply": true, "screen": true, "overlay": true,
+	"darken": true, "lighten": true, "color-dodge": true, "color-burn": true,
+	"hard-light": true, "soft-light": true, "difference": true, "exclusion": true,
+	"hue": true, "saturation": true, "color": true, "luminosity": true,
+}
+
+// validateTexture sandbox-checks an optional texture block. The image value
+// flows verbatim into a CSS background-image (var --silt-texture-image), so it
+// must not contain characters that could break out of the :root{--name:value;}
+// injection context (;, {}, raw <, >, or a backslash CSS-escape). Opacity must
+// be a number in [0,1]; blend must be a recognized mix-blend-mode keyword.
+func validateTexture(prefix string, tx *Texture) ValidationErrors {
+	if tx == nil {
+		return nil
+	}
+	var errs ValidationErrors
+	img := strings.TrimSpace(tx.Image)
+	if img == "" {
+		errs = append(errs, ValidationError{
+			Field:   prefix + ".image",
+			Message: "texture.image is required when a texture block is present",
+		})
+	} else if !isValidTextureImage(img) {
+		errs = append(errs, ValidationError{
+			Field:   prefix + ".image",
+			Message: fmt.Sprintf("not a safe texture.image value: %q (must not contain ;, {, }, <, >, or \\)", img),
+		})
+	}
+	if op := strings.TrimSpace(tx.Opacity); op != "" {
+		v, err := strconv.ParseFloat(op, 64)
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 1 {
+			errs = append(errs, ValidationError{
+				Field:   prefix + ".opacity",
+				Message: fmt.Sprintf("texture.opacity must be a number in [0,1], got %q", tx.Opacity),
+			})
+		}
+	}
+	if b := strings.TrimSpace(tx.Blend); b != "" {
+		if !validBlendModes[b] {
+			errs = append(errs, ValidationError{
+				Field:   prefix + ".blend",
+				Message: fmt.Sprintf("texture.blend %q is not a recognized mix-blend-mode", tx.Blend),
+			})
+		}
+	}
+	return errs
+}
+
+// isValidTextureImage accepts background-image values that cannot escape the
+// CSS custom-property declaration context. It mirrors isValidFontFamily's
+// narrow denylist (the value is otherwise free-form: url(...) data URIs,
+// comma-separated CSS gradients). Raw <, > are rejected because an
+// unencoded <svg> tag could otherwise inject markup; legitimate data URIs
+// percent-encode them as %3C / %3E.
+func isValidTextureImage(s string) bool {
+	for _, c := range s {
+		switch c {
+		case ';', '{', '}', '<', '>', '\\':
+			return false
+		}
+	}
+	return true
 }
 
 // isValidColor accepts the color forms used by the canonical theme:

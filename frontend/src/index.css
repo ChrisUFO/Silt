@@ -139,6 +139,33 @@ body {
   flex-direction: column;
 }
 
+/* Optional decorative surface texture (e.g. Linen's woven paper grain).
+   A theme opts in by emitting --silt-texture-display + -image / -opacity /
+   -blend (see backend/themes Texture + Theme.Flatten). The overlay defaults
+   to display:none, so non-textured themes (Cyber Forest, Graphite, …) never
+   instantiate the full-screen layer at all — only a theme that declares a
+   texture flips it to block. The overlay is purely decorative: fixed,
+   covers the viewport, ignores pointer events, and blends with the page so
+   the canvas reads as textured paper without harming text legibility (a low
+   overall opacity multiplied by low-alpha weave threads keeps the effect
+   felt-not-seen; the WCAG harness tests token pairs, not this overlay). */
+body::before {
+  content: "";
+  display: var(--silt-texture-display, none);
+  position: fixed;
+  inset: 0;
+  /* Below the modal layer (scrims start at z-[150]) and the command palette
+     (z-[100]) so dimmed backdrops and elevated UI read crisp and untinted;
+     above all persistent app chrome (titlebar/sidebar/menus, <= z-[70]) so
+     the ambient paper grain textures the canvas the user actually works on. */
+  z-index: 80;
+  pointer-events: none;
+  background-image: var(--silt-texture-image, none);
+  background-repeat: repeat;
+  opacity: var(--silt-texture-opacity, 0);
+  mix-blend-mode: var(--silt-texture-blend, normal);
+}
+
 /* Global transitions for interactive states */
 * {
   box-sizing: border-box;

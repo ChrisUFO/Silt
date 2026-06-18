@@ -1,6 +1,7 @@
 package themes
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -158,10 +159,16 @@ var expectedFlattenKeys = []string{
 
 // TestFirstClassThemes_FlattenShape pins the structural contract for every
 // non-default first-class theme: both modes flatten to exactly the canonical
-// key set (no missing/extra tokens), the typography block is present, and the
-// specifically WCAG-tuned tokens hold their known-good values. The default has
-// a full value-level golden snapshot above; the new themes get shape + tuned-
-// token guards (the contrast harness covers WCAG drift on the rest).
+// color-token key set (no missing/extra color tokens), the typography block is
+// present, and the specifically WCAG-tuned tokens hold their known-good
+// values. The default has a full value-level golden snapshot above; the new
+// themes get shape + tuned-token guards (the contrast harness covers WCAG drift
+// on the rest).
+//
+// The optional decorative texture overlay (--silt-texture-image/opacity/blend,
+// used by Linen's woven-paper surface) is an opt-in superset on top of the
+// canonical token set: it is allowed here but never required, so a theme
+// without a texture block still passes.
 func TestFirstClassThemes_FlattenShape(t *testing.T) {
 	all, err := EmbeddedThemes()
 	if err != nil {
@@ -173,7 +180,14 @@ func TestFirstClassThemes_FlattenShape(t *testing.T) {
 	// less specifically).
 	tuned := map[string]map[string]string{
 		"silt-terra-noir": {"dark|--text-muted": "#a89478"},
-		"silt-linen":      {"dark|--text-muted": "#afb3bb"},
+		"silt-linen":      {"dark|--text-muted": "#b9b0a1"},
+	}
+	// Opt-in decorative texture overlay keys (superset; allowed, not required).
+	textureKeys := map[string]bool{
+		"--silt-texture-display": true,
+		"--silt-texture-image":   true,
+		"--silt-texture-opacity": true,
+		"--silt-texture-blend":   true,
 	}
 	for _, th := range all {
 		if th.ID == DefaultThemeID {
@@ -184,19 +198,17 @@ func TestFirstClassThemes_FlattenShape(t *testing.T) {
 		}
 		for _, mode := range []string{"dark", "light"} {
 			flat := th.Flatten(mode)
-			if len(flat) != len(expectedFlattenKeys) {
-				got := make([]string, 0, len(flat))
-				for k := range flat {
-					got = append(got, k)
-				}
-				sort.Strings(got)
-				t.Errorf("%s [%s]: flatten produced %d keys, want %d: %v",
-					th.ID, mode, len(flat), len(expectedFlattenKeys), got)
-				continue
-			}
+			// Every canonical color token must be present.
 			for _, k := range expectedFlattenKeys {
 				if _, ok := flat[k]; !ok {
 					t.Errorf("%s [%s]: missing token %s", th.ID, mode, k)
+				}
+			}
+			// Any extra key must be the opt-in texture overlay, not a stray token.
+			for k := range flat {
+				if !slices.Contains(expectedFlattenKeys, k) && !textureKeys[k] {
+					t.Errorf("%s [%s]: unexpected token %s (only --silt-texture-* overlays are allowed)",
+						th.ID, mode, k)
 				}
 			}
 			// Tuned-token pin.
@@ -210,6 +222,41 @@ func TestFirstClassThemes_FlattenShape(t *testing.T) {
 								th.ID, mode, tok, got, want)
 						}
 					}
+				}
+			}
+		}
+	}
+}
+
+// TestTextureDisplay_GatedByTextureBlock pins the --silt-texture-display
+// contract introduced for the render-gating optimization: a mode that
+// declares a texture block must flip the global overlay on (display:block),
+// and a mode without one must emit nothing (so the frontend's body::before
+// stays display:none and never instantiates a full-screen layer). This is
+// the exact behavior the overlay's display:var(--silt-texture-display,none)
+// relies on; a regression here would either hide Linen's texture or force a
+// composited layer onto every non-textured theme.
+func TestTextureDisplay_GatedByTextureBlock(t *testing.T) {
+	all, err := EmbeddedThemes()
+	if err != nil {
+		t.Fatalf("EmbeddedThemes: %v", err)
+	}
+	wantTextured := map[string]bool{"silt-linen": true} // the only first-class textured theme
+	for _, th := range all {
+		for _, mode := range []string{"dark", "light"} {
+			flat := th.Flatten(mode)
+			_, hasDisplay := flat["--silt-texture-display"]
+			if wantTextured[th.ID] {
+				if !hasDisplay {
+					t.Errorf("%s [%s]: textured theme must emit --silt-texture-display", th.ID, mode)
+				} else if flat["--silt-texture-display"] != "block" {
+					t.Errorf("%s [%s]: --silt-texture-display = %q, want \"block\"",
+						th.ID, mode, flat["--silt-texture-display"])
+				}
+			} else {
+				if hasDisplay {
+					t.Errorf("%s [%s]: non-textured theme must NOT emit --silt-texture-display (got %q)",
+						th.ID, mode, flat["--silt-texture-display"])
 				}
 			}
 		}

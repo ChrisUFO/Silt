@@ -164,7 +164,7 @@
 </script>
 
 <!-- Positioning wrapper (scrim + dialog as siblings per SettingsShell pattern) -->
-<div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150] flex items-start justify-center pt-28">
+  <div class="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[150] flex items-start justify-center pt-28">
   <button
     tabindex="-1"
     aria-label="Close search"

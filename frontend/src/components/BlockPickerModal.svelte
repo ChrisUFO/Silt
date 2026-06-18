@@ -65,7 +65,7 @@
   })
 </script>
 
-<div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[170] flex items-start justify-center pt-32">
+<div class="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[170] flex items-start justify-center pt-32">
   <button
     tabindex="-1"
     aria-label="Close block picker"

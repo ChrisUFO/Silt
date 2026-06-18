@@ -3,7 +3,7 @@
   "id": "silt-linen",
   "name": "Linen",
   "author": "System Designer",
-  "description": "Clean, easy-on-the-eyes paper palette with soft slate-blue and muted lilac accents.",
+  "description": "Easy-on-the-eyes linen paper: warm grey-taupe canvas with a woven grain texture, soft slate-blue and muted lilac accents.",
   "typography": {
     "font_family": "'Mulish', sans-serif",
     "mono_font_family": "'Fira Code', monospace",
@@ -12,51 +12,56 @@
   "modes": {
     "dark": {
       "bg": {
-        "void": "#1b1d20",
-        "surface": "#222529",
-        "panel": "#272a2e",
-        "hover": "#2f3337",
-        "active": "#373b40"
+        "void": "#242220",
+        "surface": "#2b2825",
+        "panel": "#312e2a",
+        "hover": "#383431",
+        "active": "#403c38"
       },
       "border": {
-        "muted": "#2f3337",
-        "zinc": "#3a3f44",
-        "active": "#52595f",
-        "focus": "#6b747b"
+        "muted": "#383431",
+        "zinc": "#443f3a",
+        "active": "#57504a",
+        "focus": "#6e655c"
       },
       "text": {
-        "primary": "#e6e7ea",
-        "muted": "#afb3bb",
-        "disabled": "#565a61"
+        "primary": "#e8e3d8",
+        "muted": "#b9b0a1",
+        "disabled": "#574f45"
       },
       "accent": {
         "primary": {
           "start": "#7fb3c4",
           "end": "#5d97ab",
-          "glow": "rgba(125,179,196,0.12)"
+          "glow": "rgba(125, 179, 196, 0.12)"
         },
         "secondary": {
-          "start": "#9a9ec9",
-          "end": "#7e83b5",
-          "glow": "rgba(154,158,201,0.10)"
+          "start": "#a8a3d4",
+          "end": "#847cb0",
+          "glow": "rgba(168, 163, 212, 0.10)"
         }
       },
       "status": {
         "warn": "#e0b566",
         "danger": "#d27878"
+      },
+      "texture": {
+        "image": "repeating-linear-gradient(0deg, rgba(236,229,216,0.8) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, rgba(236,229,216,0.8) 0 1px, transparent 1px 5px), url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+        "opacity": "0.08",
+        "blend": "overlay"
       }
     },
     "light": {
       "bg": {
-        "void": "#faf9f6",
+        "void": "#faf6ef",
         "surface": "#ffffff",
-        "panel": "#f3f1ec",
-        "hover": "#e9e6dd",
-        "active": "#d8d4c8"
+        "panel": "#f3efe6",
+        "hover": "#e9e4d8",
+        "active": "#ddd6c6"
       },
       "border": {
-        "muted": "#e9e6dd",
-        "zinc": "#d8d4c8",
+        "muted": "#e9e4d8",
+        "zinc": "#ddd6c6",
         "active": "#b0a99b",
         "focus": "#8a8270"
       },
@@ -69,17 +74,22 @@
         "primary": {
           "start": "#4a8a9c",
           "end": "#3a7383",
-          "glow": "rgba(74,138,156,0.10)"
+          "glow": "rgba(74, 138, 156, 0.10)"
         },
         "secondary": {
           "start": "#686da3",
           "end": "#565b8e",
-          "glow": "rgba(104,109,163,0.08)"
+          "glow": "rgba(104, 109, 163, 0.08)"
         }
       },
       "status": {
         "warn": "#b08428",
         "danger": "#b85555"
+      },
+      "texture": {
+        "image": "repeating-linear-gradient(0deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+        "opacity": "0.1",
+        "blend": "multiply"
       }
     }
   }

@@ -496,6 +496,92 @@ func TestValidate_TypographyRejectsCSSInjection(t *testing.T) {
 	}
 }
 
+// TestValidate_TextureRejectsCSSInjection covers the validateTexture
+// security barrier — the texture.image value flows verbatim into a CSS
+// background-image (var --silt-texture-image) inside the :root{--name:value;}
+// injection context, so it must reject declaration-breaking characters
+// (;, {, }, raw <, >, and a backslash CSS-escape), out-of-range opacity,
+// and unrecognized blend modes. Mirrors the sibling typography barrier
+// test above. Calls validateTexture directly for precise unit coverage of
+// every rejection path (including the backslash, which JSON-roundtripping
+// cannot express cleanly), then proves the full ParseAndValidate pipeline
+// rejects a crafted theme file end-to-end.
+func TestValidate_TextureRejectsCSSInjection(t *testing.T) {
+	// A valid texture block must pass.
+	valid := &Texture{
+		Image:   "url(data:image/svg+xml,%3Csvg%3E%3C/svg%3E)",
+		Opacity: "0.5",
+		Blend:   "overlay",
+	}
+	if err := validateTexture("modes.dark.texture", valid); err != nil {
+		t.Fatalf("valid texture should pass, got %v", err)
+	}
+	// An empty image is rejected: a texture block is meaningless without one.
+	if err := validateTexture("modes.dark.texture", &Texture{Opacity: "0.5", Blend: "overlay"}); err == nil {
+		t.Errorf("expected validation error for empty texture.image")
+	}
+	// Empty opacity/blend are allowed (they fall back in CSS); image is required.
+	if err := validateTexture("modes.dark.texture", &Texture{Image: "url(data:x)"}); err != nil {
+		t.Errorf("texture with only an image should pass, got %v", err)
+	}
+
+	// image: reject every CSS-injection character.
+	badImages := []string{
+		"url(data:); body{background:red}", // ; { }
+		"url(data:)}body{",                 // } {
+		"url(data:)<script>alert(1)</script>", // < >
+		"url(data:)>bad",                   // >
+		`url(data:)\escape`,                // backslash (CSS escape sequence)
+	}
+	for _, img := range badImages {
+		tx := &Texture{Image: img, Opacity: "0.5", Blend: "overlay"}
+		if err := validateTexture("modes.dark.texture", tx); err == nil {
+			t.Errorf("expected validation error for texture.image %q", img)
+		}
+	}
+
+	// opacity: must be a number in [0,1].
+	badOpacities := []string{"1.5", "-0.1", "NaN", "Inf", "abc"}
+	for _, op := range badOpacities {
+		tx := &Texture{Image: "url(data:x)", Opacity: op, Blend: "overlay"}
+		if err := validateTexture("modes.dark.texture", tx); err == nil {
+			t.Errorf("expected validation error for texture.opacity %q", op)
+		}
+	}
+	// In-range opacity values pass.
+	for _, op := range []string{"0", "0.06", "1"} {
+		tx := &Texture{Image: "url(data:x)", Opacity: op, Blend: "overlay"}
+		if err := validateTexture("modes.dark.texture", tx); err != nil {
+			t.Errorf("opacity %q should pass, got %v", op, err)
+		}
+	}
+
+	// blend: must be a recognized mix-blend-mode keyword.
+	tx := &Texture{Image: "url(data:x)", Opacity: "0.5", Blend: "bogus-blend"}
+	if err := validateTexture("modes.dark.texture", tx); err == nil {
+		t.Errorf("expected validation error for texture.blend %q", "bogus-blend")
+	}
+	for _, b := range []string{"overlay", "multiply", "normal", "soft-light"} {
+		tx := &Texture{Image: "url(data:x)", Opacity: "0.5", Blend: b}
+		if err := validateTexture("modes.dark.texture", tx); err != nil {
+			t.Errorf("blend %q should pass, got %v", b, err)
+		}
+	}
+
+	// End-to-end: a crafted theme JSON file with an injection image is
+	// rejected by the full ParseAndValidate pipeline (not just validateTexture).
+	darkStatus := `"status": {"warn":"#fbbf24","danger":"#f43f5e"}`
+	crafted := strings.Replace(
+		minimalValidJSON,
+		darkStatus,
+		`"texture": {"image": "url(x); body{background:red}", "opacity": "0.5", "blend": "overlay"}, `+darkStatus,
+		1,
+	)
+	if _, err := ParseAndValidate([]byte(crafted)); err == nil {
+		t.Errorf("expected ParseAndValidate to reject a crafted theme with an injection texture.image")
+	}
+}
+
 func TestValidate_TypographyPartial(t *testing.T) {
 	// Only headline_font defined — other fields are optional.
 	partial := strings.Replace(

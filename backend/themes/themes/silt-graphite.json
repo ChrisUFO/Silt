@@ -3,7 +3,7 @@
   "id": "silt-graphite",
   "name": "Graphite",
   "author": "System Designer",
-  "description": "A calm monochrome dark: cool near-black canvas with a single restrained blue accent.",
+  "description": "A calm monochrome dark: true neutral-gray canvas with a single restrained blue accent.",
   "typography": {
     "font_family": "'Geist', sans-serif",
     "mono_font_family": "'Geist Mono', monospace",
@@ -12,33 +12,33 @@
   "modes": {
     "dark": {
       "bg": {
-        "void": "#090a0c",
-        "surface": "#0e1013",
-        "panel": "#131619",
-        "hover": "#191d21",
-        "active": "#202429"
+        "void": "#0a0a0a",
+        "surface": "#101010",
+        "panel": "#161616",
+        "hover": "#1d1d1d",
+        "active": "#262626"
       },
       "border": {
-        "muted": "#181b1f",
-        "zinc": "#22262b",
-        "active": "#363b42",
-        "focus": "#5a6470"
+        "muted": "#1b1b1b",
+        "zinc": "#262626",
+        "active": "#3a3a3a",
+        "focus": "#5c5c5c"
       },
       "text": {
-        "primary": "#e6e8eb",
-        "muted": "#8b9097",
-        "disabled": "#4a5057"
+        "primary": "#ebebeb",
+        "muted": "#9a9a9a",
+        "disabled": "#4d4d4d"
       },
       "accent": {
         "primary": {
-          "start": "#7c93b8",
-          "end": "#5a7196",
-          "glow": "rgba(110,140,180,0.12)"
+          "start": "#6f9ad8",
+          "end": "#4d72a0",
+          "glow": "rgba(111, 154, 216, 0.12)"
         },
         "secondary": {
           "start": "#9aa3ad",
           "end": "#6f7882",
-          "glow": "rgba(140,150,160,0.10)"
+          "glow": "rgba(140, 150, 160, 0.10)"
         }
       },
       "status": {
@@ -48,33 +48,33 @@
     },
     "light": {
       "bg": {
-        "void": "#f7f8f9",
+        "void": "#f8f8f8",
         "surface": "#ffffff",
-        "panel": "#f0f2f4",
-        "hover": "#e6e9ec",
-        "active": "#d2d7dc"
+        "panel": "#f0f0f0",
+        "hover": "#e6e6e6",
+        "active": "#d8d8d8"
       },
       "border": {
-        "muted": "#e6e9ec",
-        "zinc": "#d2d7dc",
-        "active": "#a7afb8",
-        "focus": "#6b7480"
+        "muted": "#e6e6e6",
+        "zinc": "#d8d8d8",
+        "active": "#bababa",
+        "focus": "#6e6e6e"
       },
       "text": {
-        "primary": "#181b1f",
-        "muted": "#4f5660",
-        "disabled": "#9aa1a9"
+        "primary": "#1a1a1a",
+        "muted": "#585858",
+        "disabled": "#a3a3a3"
       },
       "accent": {
         "primary": {
-          "start": "#4a6184",
-          "end": "#374d6e",
-          "glow": "rgba(74,97,132,0.10)"
+          "start": "#4a6fa0",
+          "end": "#374f78",
+          "glow": "rgba(74, 111, 160, 0.10)"
         },
         "secondary": {
           "start": "#6a737d",
           "end": "#525a63",
-          "glow": "rgba(90,100,110,0.08)"
+          "glow": "rgba(90, 100, 110, 0.08)"
         }
       },
       "status": {

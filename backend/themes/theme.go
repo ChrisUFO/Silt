@@ -42,11 +42,27 @@ type Modes struct {
 
 // Mode is one appearance (dark or light) of a theme.
 type Mode struct {
-	BG     BG     `json:"bg"`
-	Border Border `json:"border"`
-	Text   Text   `json:"text"`
-	Accent Accent `json:"accent"`
-	Status Status `json:"status"`
+	BG      BG      `json:"bg"`
+	Border  Border  `json:"border"`
+	Text    Text    `json:"text"`
+	Accent  Accent  `json:"accent"`
+	Status  Status  `json:"status"`
+	Texture *Texture `json:"texture,omitempty"`
+}
+
+// Texture is an optional per-mode decorative surface overlay (e.g. the woven
+// linen + paper grain on the Linen theme). When present, Flatten emits three
+// CSS custom properties (--silt-texture-image / -opacity / -blend) that a
+// single global ::before overlay renders behind content. It is purely
+// decorative and never part of the canonical color-token contract: themes
+// without a texture block are unaffected, and the WCAG/contrast harness
+// ignores it (it tests token pairs, not the rendered overlay). The image is
+// sandboxed by validation (no CSS declaration-breaking characters) so it
+// cannot escape the :root{--name:value;} injection context.
+type Texture struct {
+	Image   string `json:"image"`   // background-image value: url(...) and/or CSS gradient(s), comma-separated
+	Opacity string `json:"opacity"` // overall overlay strength, e.g. "0.06"
+	Blend   string `json:"blend"`   // mix-blend-mode, e.g. "overlay" or "multiply"
 }
 
 // BG is the canvas/background scale.
@@ -129,6 +145,27 @@ func (t *Theme) Flatten(mode string) map[string]string {
 
 	out["--status-warn"] = m.Status.Warn
 	out["--status-danger"] = m.Status.Danger
+
+	// Optional decorative surface texture (e.g. Linen's woven paper grain).
+	// Emitted only when the mode declares a texture block; absent on the
+	// canonical color-token set, so themes without texture are unchanged.
+	// The frontend renders a single global ::before overlay from these vars.
+	// --silt-texture-display gates the overlay's very existence: the global
+	// body::before defaults to display:none, and only a theme that declares
+	// a texture flips it to block, so non-textured themes never pay for a
+	// full-screen composited layer at all.
+	if m.Texture != nil {
+		out["--silt-texture-display"] = "block"
+		if v := strings.TrimSpace(m.Texture.Image); v != "" {
+			out["--silt-texture-image"] = v
+		}
+		if v := strings.TrimSpace(m.Texture.Opacity); v != "" {
+			out["--silt-texture-opacity"] = v
+		}
+		if v := strings.TrimSpace(m.Texture.Blend); v != "" {
+			out["--silt-texture-blend"] = v
+		}
+	}
 
 	// Typography (theme-level, not per-mode). Emitted only when the
 	// theme defines them; the frontend CSS uses these with fallbacks

@@ -113,9 +113,9 @@ Silt ships a curated set of first-class themes alongside the default. Each is a 
 | :--- | :--- | :--- |
 | Cyber Forest *(default / primary)* | `cyber_forest` | Ink-rich dark slate, surgical teal primary, indigo secondary. |
 | Terra Noir | `silt-terra-noir` | Warm dark earth: clay primary, moss secondary. |
-| Linen | `silt-linen` | Clean, easy-on-the-eyes paper: desaturated slate-blue + muted lilac. |
+| Linen | `silt-linen` | Woven linen paper: warm grey-taupe canvas + woven-grain texture, slate-blue + muted lilac. |
 | Stark | `silt-stark` | High-contrast / accessibility (WCAG AAA): pure black/white extremes, gold + cyan. |
-| Graphite | `silt-graphite` | Calm monochrome dark: cool near-blacks, a single restrained blue accent, neutral-steel secondary. |
+| Graphite | `silt-graphite` | Calm true-neutral monochrome: pure gray canvas, single restrained blue accent, neutral-steel secondary. |
 
 Every first-class theme ships both dark and light variants and its own `typography` pairing: Cyber Forest (Plus Jakarta Sans / JetBrains Mono / Hanken Grotesk — the default), Terra Noir (Source Serif 4 / IBM Plex Mono / Newsreader — warm editorial), Linen (Mulish / Fira Code / Sora — soft clean), Stark (Atkinson Hyperlegible / Geist Mono — the Braille Institute low-vision font, for the AAA theme), Graphite (Geist / Geist Mono / Schibsted Grotesk — developer aesthetic). The palettes below document the color design intent; the authoritative source for each value is the JSON in `backend/themes/themes/` (the contrast harness in `backend/themes/contrast_test.go` guards WCAG for every mode variant).
 
@@ -127,13 +127,13 @@ A dark earth palette: warm near-black canvas with **clay/terracotta** primary (s
 - Light: `bg.void #f6efe4` (warm paper); `text.primary #2a2014`; `accent.primary #c2511f → #9a3a14`; `accent.secondary #5a7d2a → #44611d`.
 - Tuning: dark `text.muted #8a7860 → #a89478` to clear WCAG AA (4.5:1) on `bg.active` — the binding constraint in dark mode is muted text on the lightest dark surface.
 
-2.2.2 Linen — clean, easy-on-the-eyes paper
+2.2.2 Linen — woven linen paper
 
-A soft, low-chroma palette: warm paper neutrals in light mode and a gentle soft-charcoal dark. Every accent/status color is intentionally desaturated so the canvas never produces high-contrast chroma spikes. `primary` = muted **slate-blue**, `secondary` = muted **lilac**. Intent: long-session comfort — reduced glare vs. pure white, gentle dark mode that isn't the default's near-black.
+A soft, low-chroma palette modeled on natural linen: a warm grey-taupe canvas in dark mode (the authentic flax/oatmeal tone — grey-dominant with a whisper of warmth, never brown) and warm paper in light, both carrying a subtle **woven-thread + paper-grain texture** overlay (Linen is the only first-class theme that declares a `texture` block; see §2.1). `primary` = muted **slate-blue** (reads as faded fountain-pen ink on paper), `secondary` = muted **lilac**. Intent: long-session comfort — a calm, tactile "paper" surface distinct from Cyber Forest's cool slate and Graphite's flat monochrome.
 
-- Dark: `bg.void #1b1d20` (soft charcoal); `text.primary #e6e7ea`; `accent.primary #7fb3c4 → #5d97ab`; `accent.secondary #9a9ec9 → #7e83b5`.
-- Light: `bg.void #faf9f6` (warm paper, not pure white); `text.primary #2b2a27`; `accent.primary #4a8a9c → #3a7383`; `accent.secondary #686da3 → #565b8e`.
-- Tuning: dark `text.muted #82868d → #afb3bb` to clear AA on Linen's lighter dark surfaces.
+- Dark: `bg.void #242220` (warm grey-taupe); `text.primary #e8e3d8` (oatmeal-white); `accent.primary #7fb3c4 → #5d97ab`; `accent.secondary #a8a3d4 → #847cb0`; `texture` overlay = light-thread linen weave + grayscale grain, `overlay` blend, opacity 0.08.
+- Light: `bg.void #faf6ef` (warm paper, not pure white); `text.primary #2b2a27`; `accent.primary #4a8a9c → #3a7383`; `accent.secondary #686da3 → #565b8e`; `texture` overlay = dark-thread weave + grain, `multiply` blend, opacity 0.10.
+- Tuning: dark `text.muted → #b9b0a1` (warm grey) to clear AA on Linen's surfaces.
 
 2.2.3 Stark — high-contrast / accessibility (WCAG AAA)
 
@@ -145,11 +145,11 @@ A first-class accessibility theme targeting **WCAG 2.2 AAA** (≥7:1 body text).
 
 2.2.4 Graphite — calm monochrome / true-dark
 
-For users who find Cyber Forest *too colorful*. Graphite is **minimal-chroma dark**: cool near-blacks with a **single restrained blue** accent (the only color) and a **near-neutral steel** secondary that stays subdued yet visually distinct from primary. Intent: the "developer dark" / "dimmed" aesthetic — a calm, low-chroma surface. Comfortable AAA contrast, **not** the extreme contrast of Stark.
+For users who find Cyber Forest *too colorful*. Graphite is a **true neutral monochrome**: pure neutral-gray surfaces (zero blue tint, unlike Cyber Forest's blue slate) with a **single restrained blue** accent as the only color and a **neutral steel** secondary. Neutral-white text (`#ebebeb`) reads distinctly cleaner/warmer than Cyber Forest's cool `#dee3e6`. Intent: the "developer dark" / "dimmed" aesthetic — a calm, flat, low-chroma surface. Comfortable AAA contrast, **not** the extreme contrast of Stark.
 
-- Dark: `bg.void #090a0c` (cool near-black); `text.primary #e6e8eb`; `accent.primary #7c93b8 → #5a7196` (restrained blue); `accent.secondary #9aa3ad → #6f7882` (neutral steel).
-- Light: `bg.void #f7f8f9`; `text.primary #181b1f`; `accent.primary #4a6184 → #374d6e`; `accent.secondary #6a737d → #525a63`.
-- Distinctness: primary (blue) and secondary (neutral steel) differ in both hue and chroma so go/done and in-progress never blur, while the overall surface stays calm and low-chroma.
+- Dark: `bg.void #0a0a0a` (true near-black, neutral); `text.primary #ebebeb`; `accent.primary #6f9ad8 → #4d72a0` (restrained blue); `accent.secondary #9aa3ad → #6f7882` (neutral steel).
+- Light: `bg.void #f8f8f8`; `text.primary #1a1a1a`; `accent.primary #4a6fa0 → #374f78`; `accent.secondary #6a737d → #525a63`.
+- Distinctness: primary (blue) and secondary (neutral steel) differ in both hue and chroma so go/done and in-progress never blur, while the overall surface stays a calm flat monochrome.
 
 
 3. Typography & Spacing Rhythm
