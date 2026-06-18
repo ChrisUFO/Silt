@@ -40,6 +40,7 @@ Each concern has a single source of truth. Refer to the file that owns the topic
 | [**docs/PLUGIN_DEVELOPMENT.md**](docs/PLUGIN_DEVELOPMENT.md) | How to author, package (`.silt-plugin`), and install Silt plugins — with the full PluginContext SDK reference. |
 | [**docs/THEMING.md**](docs/THEMING.md) | How to author, import, and select Silt themes — the canonical token schema reference and a copy-pasteable blank template. |
 | [**TESTING.md**](TESTING.md) | Test coverage matrix, benchmarks, manual verification checklist, known gaps. |
+| [**CODE_SIGNING.md**](CODE_SIGNING.md) | Windows Authenticode signing policy (SignPath Foundation), verification, and one-time setup. |
 
 ---
 

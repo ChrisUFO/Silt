@@ -190,6 +190,48 @@ jobs:
           # The build scripts emit into distributions/v<version>/.
           echo "dir=distributions/v${{ needs.prepare.outputs.version }}" >> "$GITHUB_OUTPUT"
 
+      # --- SignPath code signing (Windows only) ---------------------------
+      # Signs the NSIS installer so it doesn't trigger Microsoft Defender
+      # SmartScreen's "Unknown publisher" warning. Free for OSS via
+      # SignPath Foundation (https://signpath.org). No-op until you add
+      # SIGNPATH_API_TOKEN (repo Secret) + SIGNPATH_ORGANIZATION_ID (repo
+      # Variable) — see CODE_SIGNING.md for the manual setup checklist
+      # (also tracked in the issue that prompted this change).
+      #
+      # Only the installer is signed here. To extend to the portable .zip,
+      # add a second entry under .signpath/artifact-configurations/ and
+      # mirror the upload→sign→replace block below for the zip artifact.
+      - name: Upload unsigned installer for SignPath
+        id: upload-unsigned-installer
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: silt-installer-unsigned
+          path: ${{ steps.path.outputs.dir }}/silt-v${{ needs.prepare.outputs.version }}-windows-installer.exe
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Sign installer with SignPath
+        id: sign-installer
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: 'Silt'
+          signing-policy-slug: 'release-signing'
+          github-artifact-id: ${{ steps.upload-unsigned-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: ${{ runner.temp }}/signed-installer
+
+      - name: Replace unsigned installer with signed
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != '' && steps.sign-installer.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # SignPath returns the signed file under the same basename.
+          cp -v "${{ runner.temp }}/signed-installer/"*.exe "${{ steps.path.outputs.dir }}/"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration — Silt NSIS installer.
+
+  This file is the SOURCE OF TRUTH. Upload its contents to your SignPath
+  project as the default artifact configuration when setting up code signing
+  (see CODE_SIGNING.md → Setup). SignPath does NOT read this file from the
+  repo directly; it lives here for version control and review.
+
+  The path uses a glob to match the versioned installer filename emitted by
+  build.sh (e.g. silt-v0.1.22-windows-installer.exe). If SignPath rejects the
+  pattern, upload a real build to the SignPath UI and copy the filename it
+  reports verbatim into the path attribute.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <pe-file path="silt-v*-windows-installer.exe">
+    <authenticode-sign />
+  </pe-file>
+</artifact-configuration>
