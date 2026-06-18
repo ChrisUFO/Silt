@@ -20,6 +20,11 @@ type ScanResult struct {
 	Section  string
 	Page     string
 	Date     string
+	// Source is the `blocks.source` discriminator ('vault' for the vault
+	// startup scan, or 'linked:<id>' for a batched linked-tree scan, #134).
+	// Empty defaults to 'vault' in IndexScanResults so the vault startup scan
+	// path (which does not set this field) is unchanged.
+	Source   string
 	Blocks   []ParsedBlock
 	Tags     []string
 	Warnings []string

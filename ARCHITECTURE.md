@@ -405,8 +405,12 @@ the notebook is the registered display name (the root IS one notebook).
 Lifecycle bindings. `LinkNotebook(folderPath)` validates, assigns a stable id,
 rejects collisions, folders already inside the vault, **and ancestors of the
 vault** (which would double-index the vault), persists the registry, watches +
-indexes the tree (forcing `notebook = DisplayName` so an external file's
-frontmatter can't drift it out of the nav). `UnlinkNotebook(id)` stops watching,
+indexes the tree in a SINGLE batched transaction (forcing `notebook =
+DisplayName` so an external file's frontmatter can't drift it out of the nav).
+The batched path threads `source` through `IndexScanResults` (the same
+function the vault startup scan uses) and does the `files`-table
+(`MarkFileIndexed`) pass after the index commit, so a large synced mount
+indexes without per-file WAL-checkpoint thrash (#134). `UnlinkNotebook(id)` stops watching,
 drops the source's index rows (`ClearSourceBlocks`), and leaves the external
 files COMPLETELY UNTOUCHED (safe default). `PickLinkedNotebook()` drives the
 native folder picker. Deleting a linked notebook from the sidebar UNLINKS it

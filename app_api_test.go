@@ -2019,3 +2019,133 @@ func TestSaveFileBlocks_LinkedRootUnusable_ReturnsClearError(t *testing.T) {
 		t.Error("expected a non-empty error message for an unusable linked root")
 	}
 }
+
+// TestLinkNotebook_BatchedIndexingMultipleFiles locks the #134 batched-indexing
+// behavior: a linked root with multiple files (including a nested section)
+// indexes under source='linked:<id>' with the link's DisplayName forced as the
+// notebook, and every successfully-parsed file gets a files-table row (warm
+// restart). A non-markdown file is pruned by WalkMarkdown and does not abort
+// the batch.
+func TestLinkNotebook_BatchedIndexingMultipleFiles(t *testing.T) {
+	app := newTestApp(t)
+
+	ext := t.TempDir()
+	mkPage := func(name, body string) {
+		full := filepath.Join(ext, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, full, body)
+	}
+	mkPage("Plan.md", "---\nnotebook: Ext\nsection: \"\"\npage: Plan\ndate: 2026-06-16\ntags: []\n---\n# Plan\n- [ ] do a thing <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n")
+	mkPage("Inbox.md", "---\nnotebook: Ext\nsection: \"\"\npage: Inbox\ndate: 2026-06-16\ntags: []\n---\n# Inbox\n- [ ] read <!-- id: bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->\n")
+	mkPage(filepath.Join("Projects", "Alpha.md"), "---\nnotebook: Ext\nsection: Projects\npage: Alpha\ndate: 2026-06-16\ntags: []\n---\n# Alpha\n- [ ] ship <!-- id: cccccccc-cccc-cccc-cccc-cccccccccccc -->\n")
+	// A non-markdown file that WalkMarkdown prunes — should not appear in the
+	// index nor abort the batch.
+	writeFile(t, filepath.Join(ext, "notes.txt"), "plain text, not indexed\n")
+
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	src := ln.Source()
+
+	// All three .md files indexed under the linked source (each file's body
+	// has a HEADER + TASK block, so the block count is 2-per-file; what
+	// matters is that all 3 distinct pages landed under the linked source).
+	var pageCount int
+	app.coordinator.WithDBRead(func() {
+		_ = app.db.SQLDB().QueryRow(
+			"SELECT COUNT(DISTINCT page) FROM blocks WHERE source = ?",
+			src,
+		).Scan(&pageCount)
+	})
+	if pageCount != 3 {
+		t.Errorf("expected 3 distinct linked pages (one per .md file), got %d", pageCount)
+	}
+
+	// The nested section's file is reachable via its (notebook, section, page).
+	var nested int
+	app.coordinator.WithDBRead(func() {
+		_ = app.db.SQLDB().QueryRow(
+			"SELECT COUNT(*) FROM blocks WHERE source = ? AND section = ? AND page = ?",
+			src, "Projects", "Alpha",
+		).Scan(&nested)
+	})
+	if nested == 0 {
+		t.Errorf("expected nested section block, got %d", nested)
+	}
+
+	// Every successfully-indexed file has a files-table row (warm restart).
+	for _, name := range []string{"Plan.md", "Inbox.md", filepath.Join("Projects", "Alpha.md")} {
+		path := filepath.Join(ext, name)
+		var n int
+		app.coordinator.WithDBRead(func() {
+			_ = app.db.SQLDB().QueryRow(
+				"SELECT COUNT(*) FROM files WHERE path = ?",
+				path,
+			).Scan(&n)
+		})
+		if n != 1 {
+			t.Errorf("expected files-table row for %s, got %d", name, n)
+		}
+	}
+
+	// The non-markdown file is NOT in the files table (WalkMarkdown pruned it).
+	var txtCount int
+	app.coordinator.WithDBRead(func() {
+		_ = app.db.SQLDB().QueryRow(
+			"SELECT COUNT(*) FROM files WHERE path = ?",
+			filepath.Join(ext, "notes.txt"),
+		).Scan(&txtCount)
+	})
+	if txtCount != 0 {
+		t.Errorf("non-markdown file should not be in files table, got %d", txtCount)
+	}
+}
+
+// TestLinkNotebook_IndexPopulatesFilesCacheForWarmRestart confirms #134's
+// batched path calls MarkFileIndexed for each successfully-indexed file (the
+// per-file path did this inline; the batched path does it post-commit). A
+// files-table row for the linked file means a subsequent vault STARTUP scan
+// would skip re-parsing it (mtime+size match).
+func TestLinkNotebook_IndexPopulatesFilesCacheForWarmRestart(t *testing.T) {
+	app := newTestApp(t)
+
+	ext := t.TempDir()
+	pageFile := filepath.Join(ext, "Plan.md")
+	writeFile(t, pageFile, "---\nnotebook: Ext\nsection: \"\"\npage: Plan\ndate: 2026-06-16\ntags: []\n---\n# Plan\n- [ ] do a thing <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n")
+
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+
+	// The linked file gets a files-table row carrying real mtime+size.
+	var (
+		gotPath string
+		gotSize int64
+		n       int
+	)
+	app.coordinator.WithDBRead(func() {
+		_ = app.db.SQLDB().QueryRow(
+			"SELECT path, size FROM files WHERE path = ?",
+			pageFile,
+		).Scan(&gotPath, &gotSize)
+		_ = app.db.SQLDB().QueryRow(
+			"SELECT COUNT(*) FROM files WHERE path = ?",
+			pageFile,
+		).Scan(&n)
+	})
+	if n != 1 {
+		t.Fatalf("expected files-table row for linked file, got %d", n)
+	}
+	if gotPath != pageFile {
+		t.Errorf("files.path = %q, want %q", gotPath, pageFile)
+	}
+	st, _ := os.Stat(pageFile)
+	if gotSize != st.Size() {
+		t.Errorf("files.size = %d, want %d (actual file size)", gotSize, st.Size())
+	}
+	_ = ln
+}

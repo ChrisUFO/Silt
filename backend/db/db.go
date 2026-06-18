@@ -758,7 +758,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	}
 	defer tx.Rollback()
 
-	stmtBlock, err := tx.Prepare("INSERT INTO blocks (id, parent_id, notebook, section, page, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	stmtBlock, err := tx.Prepare("INSERT INTO blocks (id, parent_id, source, notebook, section, page, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return 0, nil, err
 	}
@@ -815,8 +815,14 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 		}
 
 		// Also clear by metadata to catch blocks the user removed from the file.
-		// IndexScanResults is the vault startup scan, so source is always 'vault'.
-		if err := dm.ClearFileBlocks(tx, "vault", res.Notebook, res.Section, res.Page); err != nil {
+		// Source comes from the ScanResult so the batched linked-tree scan
+		// (#134) scopes its own rows; the vault startup scan leaves Source
+		// empty, defaulting to 'vault' (the historical behavior).
+		source := res.Source
+		if source == "" {
+			source = "vault"
+		}
+		if err := dm.ClearFileBlocks(tx, source, res.Notebook, res.Section, res.Page); err != nil {
 			return 0, skipped, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
 		}
 
@@ -832,7 +838,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 			if fileDate == "" {
 				fileDate = time.Now().Format("2006-01-02")
 			}
-			_, err = stmtBlock.Exec(block.ID, parentID, res.Notebook, res.Section, res.Page, fileDate, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
+			_, err = stmtBlock.Exec(block.ID, parentID, source, res.Notebook, res.Section, res.Page, fileDate, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
 			if err != nil {
 				return 0, skipped, fmt.Errorf("failed to insert block %s: %w", block.ID, err)
 			}

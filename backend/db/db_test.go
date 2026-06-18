@@ -748,6 +748,122 @@ func TestIndexScanResults_ReturnsSkippedFiles(t *testing.T) {
 	}
 }
 
+// TestIndexScanResults_SourceAwareBatch confirms #134's source-aware
+// IndexScanResults: a single batched call carrying both a vault-source result
+// and a linked-source result indexes each under its own source, and the
+// per-source ClearFileBlocks scoping means a same-named notebook across the
+// two sources does not collide (the linked result's clear does not wipe the
+// vault result's rows). This is the property that lets indexLinkedTree safely
+// batch a linked tree through the same function the vault startup scan uses.
+func TestIndexScanResults_SourceAwareBatch(t *testing.T) {
+	dm := newTestDB(t)
+
+	// Two files, same display notebook name "Work", different sources.
+	results := []parser.ScanResult{
+		{
+			Path:     "/vault/Work/Journal/Daily.md",
+			Notebook: "Work",
+			Section:  "Journal",
+			Page:     "Daily",
+			Source:   "", // empty -> defaults to 'vault'
+			Blocks:   []parser.ParsedBlock{sampleTaskBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)},
+		},
+		{
+			Path:     "/linked/Work.md",
+			Notebook: "Work",
+			Section:  "",
+			Page:     "Work",
+			Source:   "linked:abc",
+			Blocks:   []parser.ParsedBlock{sampleTaskBlock("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 1)},
+		},
+	}
+
+	count, skipped, err := dm.IndexScanResults(results)
+	if err != nil {
+		t.Fatalf("IndexScanResults: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected 2 indexed files, got %d (skipped=%v)", count, skipped)
+	}
+	if len(skipped) != 0 {
+		t.Errorf("expected no skipped files, got %v", skipped)
+	}
+
+	// Both rows present, each carrying its own source.
+	type row struct {
+		source, notebook, page string
+	}
+	got := []row{}
+	rows, err := dm.db.Query("SELECT source, notebook, page FROM blocks ORDER BY source")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.source, &r.notebook, &r.page); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, r)
+	}
+	want := []row{
+		{"linked:abc", "Work", "Work"},
+		{"vault", "Work", "Daily"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d rows, got %d (%+v)", len(want), len(got), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("row %d: got %+v, want %+v", i, got[i], w)
+		}
+	}
+}
+
+// TestIndexScanResults_LinkedSourceScopedClear verifies the source-aware
+// ClearFileBlocks in the batched indexer does not wipe a vault-source row
+// when re-indexing a same-named linked notebook (and vice versa). This is the
+// scoping guarantee that lets #134's batched linked-tree path coexist with
+// the vault scan.
+func TestIndexScanResults_LinkedSourceScopedClear(t *testing.T) {
+	dm := newTestDB(t)
+
+	// Index a vault row.
+	vaultRes := parser.ScanResult{
+		Notebook: "Work",
+		Section:  "Journal",
+		Page:     "Daily",
+		Blocks:   []parser.ParsedBlock{sampleTaskBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)},
+	}
+	if _, _, err := dm.IndexScanResults([]parser.ScanResult{vaultRes}); err != nil {
+		t.Fatalf("first vault index: %v", err)
+	}
+
+	// Index a linked row with the SAME (notebook, section, page) — the
+	// linked clear must NOT wipe the vault row.
+	linkedRes := parser.ScanResult{
+		Notebook: "Work",
+		Section:  "Journal",
+		Page:     "Daily",
+		Source:   "linked:abc",
+		Blocks:   []parser.ParsedBlock{sampleTaskBlock("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 1)},
+	}
+	if _, _, err := dm.IndexScanResults([]parser.ScanResult{linkedRes}); err != nil {
+		t.Fatalf("linked index: %v", err)
+	}
+
+	var n int
+	if err := dm.db.QueryRow(
+		"SELECT COUNT(*) FROM blocks WHERE notebook = ? AND section = ? AND page = ?",
+		"Work", "Journal", "Daily",
+	).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected both sources to coexist (2 rows), got %d (linked clear wiped vault?)", n)
+	}
+}
+
 func TestQueryTagHierarchy_DistinctCountsAtOrBeneath(t *testing.T) {
 	dm := newTestDB(t)
 

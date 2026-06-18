@@ -2097,9 +2097,20 @@ func (a *App) linkByRecordLocked(ln config.LinkedNotebook) (config.LinkedNoteboo
 }
 
 // indexLinkedTree walks a linked root's markdown and indexes it under the
-// linked source. The notebook name is the link's DisplayName (the root IS one
-// notebook); sections/pages are derived from the path relative to the root.
-// Returns the number of files indexed.
+// linked source in a SINGLE batched transaction (#134). The notebook name is
+// the link's DisplayName (the root IS one notebook); sections/pages are
+// derived from the path relative to the root. Returns the number of files
+// indexed.
+//
+// Batched (was per-file): the previous implementation called IndexFileBlocks
+// (which begins/commits its own transaction) plus MarkFileIndexed for every
+// file, producing N transactions for N files. On a large synced mount (the
+// headline #100 workload) that was WAL-checkpoint thrash and slow first-link
+// UX. The batched path threads `source` through IndexScanResults (the same
+// function the vault startup scan uses) and does the files-table
+// (MarkFileIndexed) pass after the index commit, preserving linked warm
+// restart. Per-file read/parse errors are surfaced in the skipped list
+// (IndexScanResults collects them) instead of logged inline.
 func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 	files, warnings, err := parser.WalkMarkdown(ln.RootPath)
 	for _, w := range warnings {
@@ -2109,10 +2120,19 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 		return 0, fmt.Errorf("walk linked root: %w", err)
 	}
 	source := ln.Source()
-	indexed := 0
+
+	// Build the per-file ScanResult set in one pass. Read/parse errors are
+	// recorded on the result (Err) so IndexScanReports reports them in the
+	// skipped list rather than aborting the whole batch — same visibility
+	// as the per-file path, one transaction instead of N.
+	results := make([]parser.ScanResult, 0, len(files))
 	for _, file := range files {
-		rel, err := filepath.Rel(ln.RootPath, file)
-		if err != nil {
+		rel, relErr := filepath.Rel(ln.RootPath, file)
+		if relErr != nil {
+			results = append(results, parser.ScanResult{
+				Path: file,
+				Err:  fmt.Errorf("resolve relative path: %w", relErr),
+			})
 			continue
 		}
 		parts := strings.Split(filepath.ToSlash(rel), "/")
@@ -2124,36 +2144,74 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 		if len(parts) > 1 {
 			section = strings.Join(parts[:len(parts)-1], "/")
 		}
-		contentBytes, err := os.ReadFile(file)
-		if err != nil {
-			log.Printf("LinkNotebook(%s): read %s failed: %v", ln.DisplayName, file, err)
+
+		st, statErr := os.Stat(file)
+		contentBytes, readErr := os.ReadFile(file)
+		if readErr != nil {
+			log.Printf("LinkNotebook(%s): read %s failed: %v", ln.DisplayName, file, readErr)
+			results = append(results, parser.ScanResult{Path: file, Err: readErr})
 			continue
 		}
+		// Force the linked notebook's display name: an external file's
+		// frontmatter may declare a different `notebook:`, which would
+		// make the row miss ListNavigation's DisplayName filter. The
+		// linked root IS this one notebook (#100).
 		blocks, meta, _, _, perr := parser.ParseFileContent(string(contentBytes), ln.DisplayName, section, pageName, fileOrDefaultDate(file), a.spacesPerTab)
 		if perr != nil {
 			log.Printf("LinkNotebook(%s): parse %s failed: %v", ln.DisplayName, file, perr)
+			results = append(results, parser.ScanResult{Path: file, Err: perr})
 			continue
 		}
-		var idxErr error
-		a.coordinator.WithDBWrite(func() {
-			// Force the linked notebook's display name: an external file's
-			// frontmatter may declare a different `notebook:`, which would
-			// make the row miss ListNavigation's DisplayName filter. The
-			// linked root IS this one notebook (#100).
-			idxErr = a.db.IndexFileBlocks(source, ln.DisplayName, section, pageName, blocks, meta.Tags, meta.Warnings...)
-			if idxErr == nil {
-				if st, serr := os.Stat(file); serr == nil {
-					_ = a.db.MarkFileIndexed(nil, file, st.ModTime().UnixNano(), st.Size())
-				}
-			}
-		})
-		if idxErr != nil {
-			log.Printf("LinkNotebook(%s): index %s failed: %v", ln.DisplayName, file, idxErr)
-			continue
+		res := parser.ScanResult{
+			Path:     file,
+			Notebook: ln.DisplayName,
+			Section:  section,
+			Page:     pageName,
+			Source:   source,
+			Blocks:   blocks,
+			Tags:     meta.Tags,
+			Warnings: meta.Warnings,
 		}
-		indexed++
+		if statErr == nil {
+			res.MTime = st.ModTime()
+			res.Size = st.Size()
+		}
+		results = append(results, res)
 	}
-	return indexed, nil
+
+	var (
+		indexedCount int
+		skipped      []string
+		idxErr       error
+	)
+	a.coordinator.WithDBWrite(func() {
+		indexedCount, skipped, idxErr = a.db.IndexScanResults(results)
+	})
+	if idxErr != nil {
+		return indexedCount, fmt.Errorf("index linked tree: %w", idxErr)
+	}
+	for _, s := range skipped {
+		log.Printf("LinkNotebook(%s): skipped %s", ln.DisplayName, s)
+	}
+
+	// Post-commit files-table pass: record mtime+size for each successfully
+	// indexed file so a warm restart skips re-parsing it. A file is
+	// considered indexed iff IndexScanResults counted it (Err == nil &&
+	// Notebook != ""). Mirrors the vault startup scan's MarkFileIndexed loop.
+	for _, res := range results {
+		if res.Err != nil || res.Notebook == "" {
+			continue
+		}
+		if res.MTime.IsZero() {
+			// No stat → can't record a skip key; leave it to be re-parsed
+			// next time rather than risk a false "unchanged".
+			continue
+		}
+		if err := a.db.MarkFileIndexed(nil, res.Path, res.MTime.UnixNano(), res.Size); err != nil {
+			log.Printf("LinkNotebook(%s): MarkFileIndexed(%s): %v", ln.DisplayName, res.Path, err)
+		}
+	}
+	return indexedCount, nil
 }
 
 // CreateSection creates a section folder inside a notebook. A section groups
