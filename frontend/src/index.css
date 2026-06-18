@@ -140,16 +140,18 @@ body {
 }
 
 /* Optional decorative surface texture (e.g. Linen's woven paper grain).
-   A theme opts in by emitting --silt-texture-image / -opacity / -blend
-   (see backend/themes Texture + Theme.Flatten). Empty/absent vars render
-   nothing, so non-textured themes (Cyber Forest, Graphite, …) are
-   unaffected. The overlay is purely decorative: fixed, covers the
-   viewport, ignores pointer events, and blends with the page so the
-   canvas reads as textured paper without harming text legibility (a low
+   A theme opts in by emitting --silt-texture-display + -image / -opacity /
+   -blend (see backend/themes Texture + Theme.Flatten). The overlay defaults
+   to display:none, so non-textured themes (Cyber Forest, Graphite, …) never
+   instantiate the full-screen layer at all — only a theme that declares a
+   texture flips it to block. The overlay is purely decorative: fixed,
+   covers the viewport, ignores pointer events, and blends with the page so
+   the canvas reads as textured paper without harming text legibility (a low
    overall opacity multiplied by low-alpha weave threads keeps the effect
    felt-not-seen; the WCAG harness tests token pairs, not this overlay). */
 body::before {
   content: "";
+  display: var(--silt-texture-display, none);
   position: fixed;
   inset: 0;
   z-index: 9999;

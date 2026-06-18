@@ -150,7 +150,12 @@ func (t *Theme) Flatten(mode string) map[string]string {
 	// Emitted only when the mode declares a texture block; absent on the
 	// canonical color-token set, so themes without texture are unchanged.
 	// The frontend renders a single global ::before overlay from these vars.
+	// --silt-texture-display gates the overlay's very existence: the global
+	// body::before defaults to display:none, and only a theme that declares
+	// a texture flips it to block, so non-textured themes never pay for a
+	// full-screen composited layer at all.
 	if m.Texture != nil {
+		out["--silt-texture-display"] = "block"
 		if v := strings.TrimSpace(m.Texture.Image); v != "" {
 			out["--silt-texture-image"] = v
 		}
