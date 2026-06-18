@@ -209,3 +209,187 @@ func TestValidateHotkeys(t *testing.T) {
 		})
 	}
 }
+
+// --- #133: co-located per-notebook config ---
+
+// TestLinkedConfigPath confirms the co-located path lives at
+// <linkedRoot>/.system/config.yaml, mirroring the vault config layout so the
+// same per-notebook-attached-state contract holds on both roots.
+func TestLinkedConfigPath(t *testing.T) {
+	got := LinkedConfigPath("/mnt/share/Ext")
+	want := filepath.ToSlash(filepath.Join("/mnt/share/Ext", ".system", "config.yaml"))
+	if filepath.ToSlash(got) != want {
+		t.Errorf("LinkedConfigPath = %q, want %q", got, want)
+	}
+}
+
+// TestLoadLinked_MissingFileReturnsDefaults verifies the normal case: a
+// linked notebook WITHOUT a co-located config.yaml is not an error — the
+// vault-scoped config.yaml provides the baseline, and Defaults fills any gap.
+func TestLoadLinked_MissingFileReturnsDefaults(t *testing.T) {
+	tmp := t.TempDir() // no .system/config.yaml
+	cfg, err := LoadLinked(tmp)
+	if err != nil {
+		t.Fatalf("missing co-located file should not error, got %v", err)
+	}
+	// Defaults() shape — the default active notebook proves we got the
+	// canonical defaults rather than a zero struct.
+	if cfg.Notebooks.DefaultActive != Defaults().Notebooks.DefaultActive {
+		t.Errorf("expected Defaults(), got DefaultActive=%q", cfg.Notebooks.DefaultActive)
+	}
+	if cfg.Plugins.PluginSettings == nil {
+		t.Error("expected non-nil PluginSettings from Defaults()")
+	}
+}
+
+// TestLoadLinked_ParsesAndOverrides confirms a present co-located config.yaml
+// is parsed and its plugin_settings surface (the merge-with-vault happens at
+// the App layer, not here — LoadLinked returns the parsed linked config
+// verbatim).
+func TestLoadLinked_ParsesAndOverrides(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, LinkedConfigPath(tmp), ""+
+		"plugins:\n"+
+		"  plugin_settings:\n"+
+		"    silt-kanban:\n"+
+		"      columns: [Backlog, In Progress, Done]\n"+
+		"      theme: dark\n")
+	cfg, err := LoadLinked(tmp)
+	if err != nil {
+		t.Fatalf("LoadLinked: %v", err)
+	}
+	kanban, ok := cfg.Plugins.PluginSettings["silt-kanban"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected silt-kanban settings map, got %T", cfg.Plugins.PluginSettings["silt-kanban"])
+	}
+	if kanban["theme"] != "dark" {
+		t.Errorf("theme override: got %v, want dark", kanban["theme"])
+	}
+	cols, ok := kanban["columns"].([]any)
+	if !ok || len(cols) != 3 {
+		t.Errorf("columns override: got %v", kanban["columns"])
+	}
+}
+
+// TestLoadLinked_UnparseableReturnsError locks the fail-loud contract: a
+// present-but-broken co-located config must NOT silently fall through to
+// Defaults (that would hide a user's broken file from them).
+func TestLoadLinked_UnparseableReturnsError(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, LinkedConfigPath(tmp), "plugins:\n  plugin_settings: [unterminated\n  : : :")
+	_, err := LoadLinked(tmp)
+	if err == nil {
+		t.Fatalf("unparseable co-located config must return an error")
+	}
+	if !strings.Contains(err.Error(), "parse linked config.yaml") {
+		t.Errorf("error should mention parse, got %v", err)
+	}
+}
+
+// TestMergePluginSettings_LinkedOverridesVaultPerKey covers the merge contract:
+// linked keys win per-key; nested maps merge recursively; scalars and arrays
+// from linked REPLACE vault's; vault-only keys survive; neither input is
+// mutated.
+func TestMergePluginSettings_LinkedOverridesVaultPerKey(t *testing.T) {
+	vault := map[string]any{
+		"columns": []any{"TODO", "DOING", "DONE"},
+		"filters": map[string]any{
+			"owners":     []any{"Alice"},
+			"priorities": []any{1, 2},
+		},
+		"vault_only": "keep",
+	}
+	linked := map[string]any{
+		"columns": []any{"Backlog", "Done"},
+		"filters": map[string]any{
+			"priorities": []any{3},
+			"tags":       []any{"work"},
+		},
+		"linked_only": "add",
+	}
+
+	// Snapshot inputs to prove MergePluginSettings does not mutate them.
+	vaultBefore := deepCopy(vault)
+	linkedBefore := deepCopy(linked)
+
+	got := MergePluginSettings(vault, linked)
+
+	// Scalar/array: linked replaces vault.
+	if cols, ok := got["columns"].([]any); !ok || len(cols) != 2 || cols[0] != "Backlog" {
+		t.Errorf("columns: expected linked to replace vault, got %v", got["columns"])
+	}
+	// Nested map: recursive per-key merge.
+	filters, ok := got["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("filters missing or wrong type: %T", got["filters"])
+	}
+	// vault-only sub-key preserved.
+	if owners, ok := filters["owners"].([]any); !ok || len(owners) != 1 || owners[0] != "Alice" {
+		t.Errorf("filters.owners: expected vault preserved, got %v", filters["owners"])
+	}
+	// linked sub-key replaces vault's (array replacement, same as top-level).
+	if pri, ok := filters["priorities"].([]any); !ok || len(pri) != 1 || pri[0] != int64(3) && pri[0] != 3 {
+		t.Errorf("filters.priorities: expected linked to replace vault, got %v", filters["priorities"])
+	}
+	// linked-only sub-key added.
+	if tags, ok := filters["tags"].([]any); !ok || len(tags) != 1 || tags[0] != "work" {
+		t.Errorf("filters.tags: expected linked-only addition, got %v", filters["tags"])
+	}
+	// vault-only top-level key preserved.
+	if got["vault_only"] != "keep" {
+		t.Errorf("vault_only: expected preserved, got %v", got["vault_only"])
+	}
+	// linked-only top-level key added.
+	if got["linked_only"] != "add" {
+		t.Errorf("linked_only: expected added, got %v", got["linked_only"])
+	}
+
+	// Inputs not mutated.
+	if !reflect.DeepEqual(vault, vaultBefore) {
+		t.Errorf("MergePluginSettings mutated vault input:\n before=%v\n after =%v", vaultBefore, vault)
+	}
+	if !reflect.DeepEqual(linked, linkedBefore) {
+		t.Errorf("MergePluginSettings mutated linked input:\n before=%v\n after =%v", linkedBefore, linked)
+	}
+}
+
+// TestMergePluginSettings_NilInputsAreEmpty confirms both nil inputs are
+// tolerated and the result is always a non-nil map.
+func TestMergePluginSettings_NilInputsAreEmpty(t *testing.T) {
+	got := MergePluginSettings(nil, nil)
+	if got == nil {
+		t.Fatal("expected non-nil result for nil inputs")
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty merge of two nils, got %v", got)
+	}
+
+	got = MergePluginSettings(map[string]any{"a": 1}, nil)
+	if got["a"] != 1 {
+		t.Errorf("vault-only merge lost key, got %v", got)
+	}
+	got = MergePluginSettings(nil, map[string]any{"b": 2})
+	if got["b"] != 2 {
+		t.Errorf("linked-only merge lost key, got %v", got)
+	}
+}
+
+// deepCopy is a test-only helper that clones a map[string]any snapshot for
+// mutation-comparison. It does not need to handle every YAML type — only the
+// types used in the merge tests above.
+func deepCopy(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		switch x := v.(type) {
+		case map[string]any:
+			out[k] = deepCopy(x)
+		case []any:
+			cp := make([]any, len(x))
+			copy(cp, x)
+			out[k] = cp
+		default:
+			out[k] = v
+		}
+	}
+	return out
+}

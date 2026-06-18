@@ -73,11 +73,26 @@ type App struct {
 	// (mirrors configWatcher).
 	templateWatcher *templates.TemplateWatcher
 
+	// linkedConfigs is an mtime-aware cache of each linked notebook's
+	// co-located <root>/.system/config.yaml (#133). Keyed by source
+	// ('linked:<id>'). linkedConfigFor refreshes an entry when the on-disk
+	// mtime advances; the watcher invalidates an entry on external edit so
+	// the next read re-loads. Guarded by configMu (read or write).
+	linkedConfigs map[string]linkedConfigEntry
+
 	// pluginRODB is a lazy read-only handle to the in-memory index, used
 	// exclusively by PluginRawQuery so a plugin can never mutate the index
 	// or schema even if a prefix check or comment-stripping is bypassed.
 	pluginRODBMu sync.Mutex
 	pluginRODB   *sql.DB
+}
+
+// linkedConfigEntry is one slot in App.linkedConfigs. mtime is the on-disk
+// modification time of the co-located config.yaml at the moment cfg was
+// parsed; a later mtime triggers a re-read.
+type linkedConfigEntry struct {
+	cfg   config.SystemConfig
+	mtime time.Time
 }
 
 func NewApp() *App {
@@ -1993,6 +2008,9 @@ func (a *App) UnlinkNotebook(id string) error {
 	var saveErr error
 	if removed {
 		a.cfg.LinkedNotebooks = kept
+		// Drop the co-located config cache entry for this source (#133);
+		// a re-link of the same root will re-populate it lazily.
+		a.invalidateLinkedConfigLocked("linked:" + id)
 		if a.configWatcher != nil {
 			a.configWatcher.RegisterSelfWrite()
 		}
@@ -2094,6 +2112,59 @@ func (a *App) linkByRecordLocked(ln config.LinkedNotebook) (config.LinkedNoteboo
 		}
 	}
 	return config.LinkedNotebook{}, false
+}
+
+// linkedConfigFor returns the linked notebook's co-located config.yaml
+// (<linkedRoot>/.system/config.yaml, #133), mtime-cached. If the on-disk
+// mtime is unchanged since the last load, the cached parsed config is
+// returned; otherwise the file is re-read and the cache is updated. The
+// caller MUST hold configMu (read or write); the cache map is owned by this
+// lock. A missing co-located file yields config.Defaults() with no error
+// (the normal case — the vault-scoped config.yaml is the baseline). An
+// unparseable file yields a real error so the user can fix it; the cache is
+// not populated with garbage on error.
+func (a *App) linkedConfigLocked(ln config.LinkedNotebook) (config.SystemConfig, error) {
+	if a.linkedConfigs == nil {
+		a.linkedConfigs = make(map[string]linkedConfigEntry)
+	}
+	source := ln.Source()
+	path := config.LinkedConfigPath(ln.RootPath)
+	st, statErr := os.Stat(path)
+	if statErr != nil {
+		if !os.IsNotExist(statErr) {
+			return config.Defaults(), fmt.Errorf("stat linked config: %w", statErr)
+		}
+		// Missing file:Defaults, no error. Cache an empty entry so repeated
+		// reads don't re-stat, but remember mtime is "absent" (zero) so a
+		// future file appearance (mtime > zero) triggers a re-load.
+		if cached, ok := a.linkedConfigs[source]; ok && cached.mtime.IsZero() {
+			return cached.cfg, nil
+		}
+		cfg := config.Defaults()
+		a.linkedConfigs[source] = linkedConfigEntry{cfg: cfg}
+		return cfg, nil
+	}
+	mtime := st.ModTime()
+	if cached, ok := a.linkedConfigs[source]; ok && cached.mtime.Equal(mtime) {
+		return cached.cfg, nil
+	}
+	cfg, err := config.LoadLinked(ln.RootPath)
+	if err != nil {
+		return config.Defaults(), err
+	}
+	a.linkedConfigs[source] = linkedConfigEntry{cfg: cfg, mtime: mtime}
+	return cfg, nil
+}
+
+// invalidateLinkedConfig drops the cached co-located config for a source so
+// the next read re-loads from disk. Called by the watcher hook on an external
+// edit of <linkedRoot>/.system/config.yaml and by UnlinkNotebook. The caller
+// MUST hold configMu (write).
+func (a *App) invalidateLinkedConfigLocked(source string) {
+	if a.linkedConfigs == nil {
+		return
+	}
+	delete(a.linkedConfigs, source)
 }
 
 // indexLinkedTree walks a linked root's markdown and indexes it under the

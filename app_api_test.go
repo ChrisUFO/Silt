@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"silt/backend/config"
 	"silt/backend/core"
@@ -1985,6 +1986,70 @@ func TestResolveSourceByName(t *testing.T) {
 	}
 	if got := app.resolveSourceByName("Other"); got != config.LinkedNotebooksVaultSource {
 		t.Errorf("unrelated name: got %q, want vault", got)
+	}
+}
+
+// TestLinkedConfigFor_CacheAndInvalidation locks #133's mtime-aware cache for
+// the co-located per-notebook config: a missing file yields Defaults; a
+// present file is parsed; a second call with the same mtime hits the cache; a
+// rewritten file (newer mtime) re-loads; an unlinked notebook drops the cache
+// entry.
+func TestLinkedConfigFor_CacheAndInvalidation(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	ln := config.LinkedNotebook{ID: "cfg", RootPath: ext, DisplayName: "Ext"}
+
+	// 1. Missing co-located file -> Defaults, no error.
+	app.configMu.Lock()
+	cfg, err := app.linkedConfigLocked(ln)
+	app.configMu.Unlock()
+	if err != nil {
+		t.Fatalf("missing file: %v", err)
+	}
+	if cfg.Plugins.PluginSettings == nil {
+		t.Error("expected Defaults (non-nil PluginSettings) for missing co-located file")
+	}
+	// Cache entry exists (keyed by source).
+	app.configMu.RLock()
+	_, cached := app.linkedConfigs["linked:cfg"]
+	app.configMu.RUnlock()
+	if !cached {
+		t.Error("expected cache entry after first load")
+	}
+
+	// 2. Write a co-located config and bump mtime; next load should re-parse.
+	cfgPath := config.LinkedConfigPath(ext)
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte("plugins:\n  plugin_settings:\n    silt-kanban:\n      theme: dark\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Ensure mtime advances past the cache's zero mtime (the missing-file
+	// case). On fast CI, the write may land in the same mtime tick as the
+	// stat above, so force a future mtime.
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(cfgPath, future, future); err != nil {
+		t.Fatal(err)
+	}
+	app.configMu.Lock()
+	cfg, err = app.linkedConfigLocked(ln)
+	app.configMu.Unlock()
+	if err != nil {
+		t.Fatalf("present file: %v", err)
+	}
+	kanban, ok := cfg.Plugins.PluginSettings["silt-kanban"].(map[string]any)
+	if !ok || kanban["theme"] != "dark" {
+		t.Errorf("expected linked override (theme=dark), got %v", cfg.Plugins.PluginSettings["silt-kanban"])
+	}
+
+	// 3. Invalidate (as UnlinkNotebook does); next load re-reads.
+	app.configMu.Lock()
+	app.invalidateLinkedConfigLocked("linked:cfg")
+	_, cached = app.linkedConfigs["linked:cfg"]
+	app.configMu.Unlock()
+	if cached {
+		t.Error("expected cache entry dropped after invalidate")
 	}
 }
 
