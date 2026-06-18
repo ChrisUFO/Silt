@@ -253,11 +253,15 @@ syntax (for per-block metadata) or in YAML/JSON (for per-vault / per-user
 preferences). The `pinned`/`progress` columns in the `tasks` table are the
 exception that proves the rule: they are re-derived projections cached for
 the Kanban query, rebuilt from markdown on every re-index, and never
-written to by user action directly. New features that need persistent
-per-task state must extend the markdown inline task syntax (`[pin:: true]`,
-`[progress:: N]`, etc.) and round-trip through the parser + renderer; if
-the data is per-user/per-vault, it goes in YAML config. This is what
-"local-first" means: the user's files on disk *are* the product.
+written to by user action directly. `pinned` is a **tri-state cache
+(`NULL`/`0`/`1` for `[pin:: absent|false|true]`, #135)** so the projection
+preserves the explicit-unpinned state the parser/renderer round-trip
+(#123); `progress` is a plain `0-100` projection. New features that need
+persistent per-task state must extend the markdown inline task syntax
+(`[pin:: true]`, `[progress:: N]`, etc.) and round-trip through the parser
++ renderer; if the data is per-user/per-vault, it goes in YAML config.
+This is what "local-first" means: the user's files on disk *are* the
+product.
 
 The on-disk SQLite lives in WAL mode at `<vault>/.system/index.sqlite`
 (+ `.sqlite-wal` + `.sqlite-shm`). On restart only files whose
@@ -317,7 +321,7 @@ CREATE TABLE tasks (
     start_date TEXT,         -- YYYY-MM-DD or NULL
     due_date TEXT,           -- YYYY-MM-DD or NULL
     priority INTEGER,        -- 1, 2, 3
-    pinned INTEGER DEFAULT 0,         -- 0/1; cached from [pin:: true] markdown token
+    pinned INTEGER DEFAULT 0,         -- NULL/0/1 tri-state cache (#135): NULL=no [pin::] token, 0=[pin:: false], 1=[pin:: true]; reproducible from markdown
     progress INTEGER DEFAULT 0,       -- 0-100; cached from [progress:: N] markdown token
     comments_count INTEGER DEFAULT 0, -- derived: child NOTE blocks
     links_count INTEGER DEFAULT 0,    -- derived: ((uuid)) references in body

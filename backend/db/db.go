@@ -235,7 +235,7 @@ func (dm *DatabaseManager) initSchema() error {
 		start_date TEXT,         -- YYYY-MM-DD or NULL
 		due_date TEXT,           -- YYYY-MM-DD or NULL
 		priority INTEGER,        -- 1, 2, 3
-		pinned INTEGER DEFAULT 0,           -- 0/1; file-resident user intent (cached for query speed)
+		pinned INTEGER DEFAULT 0,           -- NULL/0/1 tri-state cache: NULL=absent, 0=[pin:: false], 1=[pin:: true]; reproducible from markdown on re-index (#135)
 		progress INTEGER DEFAULT 0,         -- 0-100; file-resident user intent (cached for query speed)
 		comments_count INTEGER DEFAULT 0,   -- count of child NOTE blocks (derived cache)
 		links_count INTEGER DEFAULT 0,      -- count of ((uuid)) refs in raw_content (derived cache)
@@ -678,9 +678,17 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 			if block.DueDate != "" {
 				dueDate = block.DueDate
 			}
-			pinnedVal := 0
-			if block.Pinned != nil && *block.Pinned {
-				pinnedVal = 1
+			// Pin projection (#135): the column accepts NULL/0/1 so the
+			// cache can represent the parser's tri-state — NULL when no
+			// [pin::] token is present (nil), 0 for an explicit [pin::
+			// false] (&false), 1 for [pin:: true] (&true). The column is
+			// reproducible cache; the markdown is the source of truth.
+			var pinnedVal sql.NullInt64
+			if block.Pinned != nil {
+				pinnedVal = sql.NullInt64{Int64: 0, Valid: true}
+				if *block.Pinned {
+					pinnedVal = sql.NullInt64{Int64: 1, Valid: true}
+				}
 			}
 			linksCount := len(parser.BlockRefRegex.FindAllString(block.RawText, -1))
 			_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, block.Progress, childNotesByParent[block.ID], linksCount)
@@ -840,9 +848,15 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 				if block.DueDate != "" {
 					dueDate = block.DueDate
 				}
-				pinnedVal := 0
-				if block.Pinned != nil && *block.Pinned {
-					pinnedVal = 1
+				// Pin projection (#135): tri-state NULL/0/1 mirroring
+				// IndexFileBlocks — NULL=absent, 0=[pin:: false], 1=[pin::
+				// true]. Reproducible cache; markdown is source of truth.
+				var pinnedVal sql.NullInt64
+				if block.Pinned != nil {
+					pinnedVal = sql.NullInt64{Int64: 0, Valid: true}
+					if *block.Pinned {
+						pinnedVal = sql.NullInt64{Int64: 1, Valid: true}
+					}
 				}
 				// Compute comments_count (child NOTE blocks) and links_count
 				// ((uuid) refs) for this task — same derived-cache approach
@@ -1002,7 +1016,7 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) ([]parser.TaskResult, error) {
 	baseQuery := `
 		SELECT b.id, b.parent_id, b.notebook, b.section, b.page, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
-		       t.status, t.owner, t.start_date, t.due_date, t.priority
+		       t.status, t.owner, t.start_date, t.due_date, t.priority, t.pinned
 		FROM blocks b
 		INNER JOIN tasks t ON b.id = t.block_id
 		WHERE 1=1
@@ -1059,10 +1073,11 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		var parentID sql.NullString
 		var status, owner, start, due interface{}
 		var priority int
+		var pinned sql.NullInt64
 
 		err := rows.Scan(
 			&r.ID, &parentID, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
-			&status, &owner, &start, &due, &priority,
+			&status, &owner, &start, &due, &priority, &pinned,
 		)
 		if err != nil {
 			return nil, err
@@ -1084,6 +1099,13 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 			r.DueDate = dueStr
 		}
 		r.Priority = priority
+		// Hydrate the tri-state pin from the cache column (#135): NULL
+		// stays nil (no [pin::] token), 0 -> &false ([pin:: false]), 1 ->
+		// &true ([pin:: true]). Mirrors the IndexFileBlocks projection.
+		if pinned.Valid {
+			b := pinned.Int64 != 0
+			r.Pinned = &b
+		}
 
 		results = append(results, r)
 		blockIDs = append(blockIDs, r.ID)

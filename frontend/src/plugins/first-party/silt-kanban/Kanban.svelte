@@ -173,6 +173,12 @@
     s: Scope,
     f: KanbanFilters
   ): { sql: string; params: unknown[] } {
+    // t.pinned is a tri-state cache column (#135): NULL (no [pin::] token),
+    // 0 ([pin:: false]), or 1 ([pin:: true]). The Kanban chrome treats only
+    // `1` as "pinned"; NULL and 0 are both not-pinned, so the lossy null/0
+    // merge is intentional here (the board does not need to distinguish
+    // explicit-unpinned from no-token). The parser/renderer preserve the full
+    // tri-state round-trip regardless.
     const baseSelect = `SELECT b.id, b.notebook, b.section, b.page, b.file_date, b.line_number,
            b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority,
            t.pinned, t.progress, t.comments_count, t.links_count,
