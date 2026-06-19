@@ -28,6 +28,18 @@
   --color-surface-container: #1b2122;
   --color-panel: #161619;
   --color-surface: #121215;
+  /*
+   * Aliases so the bg-bg-* utility classes resolve (#142). Components use
+   * `bg-bg-panel`, `bg-bg-surface`, etc. throughout; in Tailwind v4 these need
+   * --color-bg-* theme variables to generate real CSS. Each alias references
+   * the runtime --bg-* custom property (set by :root below + overwritten by the
+   * theme injector), so a theme change flows through automatically.
+   */
+  --color-bg-panel: var(--bg-panel);
+  --color-bg-surface: var(--bg-surface);
+  --color-bg-void: var(--bg-void);
+  --color-bg-hover: var(--bg-hover);
+  --color-bg-active: var(--bg-active);
   --color-tertiary-fixed-dim: #ffb873;
   --color-on-error: #690005;
   --color-inverse-surface: #dee3e6;
@@ -150,7 +162,7 @@ body {
    overall opacity multiplied by low-alpha weave threads keeps the effect
    felt-not-seen; the WCAG harness tests token pairs, not this overlay). */
 body::before {
-  content: "";
+  content: '';
   display: var(--silt-texture-display, none);
   position: fixed;
   inset: 0;
