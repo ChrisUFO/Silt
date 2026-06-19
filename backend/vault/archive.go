@@ -452,3 +452,219 @@ func copyFileToZip(zw *zip.Writer, wf walkedFile) (ArchiveEntry, error) {
 		SHA256: hex.EncodeToString(perEntry.Sum(nil)),
 	}, nil
 }
+
+// ImportVaultTree validates a .silt-vault archive and extracts it into destDir,
+// an empty local folder. It follows the validate-before-extract posture of the
+// .silt-plugin installer (SPECS §8.4 / backend/plugins/installer.go): nothing
+// is written to destDir until the manifest is parsed, the version is accepted,
+// every entry passes the zip-slip / absolute / size-cap guards, AND the
+// whole-archive root digest is recomputed + asserted. Extraction then streams
+// into a sibling temp dir, verifying each entry's SHA-256 during the copy, and
+// the temp dir is atomically renamed into destDir only after every entry
+// verifies — a corrupt entry aborts before cutover and leaves destDir untouched.
+//
+// The caller (App.ImportVault) is expected to call SwitchVault(destDir)
+// afterwards to open the extracted vault (which rebuilds the SQLite index from
+// markdown, exactly like CopyVaultTree/MoveVault).
+func ImportVaultTree(archivePath, destDir string, onProgress ProgressFn) (ImportResult, error) {
+	if archivePath == "" || destDir == "" {
+		return ImportResult{}, fmt.Errorf("%w: archive and destination paths must not be empty", ErrArchiveRejected)
+	}
+	// Validate the destination FIRST (empty, local, not already a vault). On
+	// rejection destDir is never created, so a bad archive + bad dest fails
+	// fast without leaving artifacts. validateEmptyDestination needs the abs
+	// path; resolve it the same way validateDestination does.
+	destAbs, err := absClean(destDir)
+	if err != nil {
+		return ImportResult{}, fmt.Errorf("%w: cannot resolve destination: %v", ErrArchiveRejected, err)
+	}
+	if err := validateEmptyDestination(destAbs, destDir); err != nil {
+		return ImportResult{}, err
+	}
+
+	// --- Pass 1: validate, do NOT extract (mirrors plugins.Validate). ---
+	zr, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return ImportResult{}, fmt.Errorf("%w: failed to open archive: %v", ErrArchiveRejected, err)
+	}
+	// Locate + parse the manifest WITHOUT extracting (read straight from the
+	// entry reader). zip-slip / absolute guards run against every entry name
+	// first so a hostile archive is rejected before any byte is copied.
+	manifest, err := readArchiveManifest(&zr.Reader)
+	if err != nil {
+		zr.Close()
+		return ImportResult{}, err
+	}
+	if manifest.ArchiveVersion != SupportedArchiveVersion {
+		zr.Close()
+		return ImportResult{}, fmt.Errorf("%w: archive version %q is not supported (this build accepts %q)", ErrArchiveRejected, manifest.ArchiveVersion, SupportedArchiveVersion)
+	}
+	// Whole-archive integrity root: recompute over the declared entries and
+	// assert equality. Detects manifest/entry-list tampering BEFORE extraction.
+	if got := rootDigest(manifest.Entries); got != manifest.ArchiveSHA256 {
+		zr.Close()
+		return ImportResult{}, fmt.Errorf("%w: archive integrity check failed (manifest digest mismatch)", ErrArchiveRejected)
+	}
+	// Build an entry-by-path index for the extract pass + run the safety guards
+	// (zip-slip, absolute paths, size cap) against every content entry.
+	entryByName := make(map[string]*zip.File, len(zr.File))
+	var totalUncompressed uint64
+	for _, f := range zr.File {
+		name := filepath.ToSlash(f.Name)
+		if strings.HasPrefix(name, "/") || filepath.IsAbs(name) {
+			zr.Close()
+			return ImportResult{}, fmt.Errorf("%w: archive entry %q is absolute; refusing", ErrArchiveRejected, name)
+		}
+		if strings.Contains(name, "..") {
+			zr.Close()
+			return ImportResult{}, fmt.Errorf("%w: archive entry %q escapes the archive root (zip-slip); refusing", ErrArchiveRejected, name)
+		}
+		totalUncompressed += f.UncompressedSize64
+		if f.Name != ArchiveManifestPath {
+			entryByName[f.Name] = f
+		}
+	}
+	if totalUncompressed > maxArchiveUncompressedSize {
+		zr.Close()
+		return ImportResult{}, fmt.Errorf("%w: archive uncompressed size %d bytes exceeds the %d-byte limit", ErrArchiveRejected, totalUncompressed, maxArchiveUncompressedSize)
+	}
+	// Every manifest entry must be present in the archive; an extra/missing
+	// entry signals tampering or a truncated archive.
+	if len(manifest.Entries) != len(entryByName) {
+		zr.Close()
+		return ImportResult{}, fmt.Errorf("%w: manifest declares %d entries but the archive has %d", ErrArchiveRejected, len(manifest.Entries), len(entryByName))
+	}
+	for _, e := range manifest.Entries {
+		if _, ok := entryByName[e.Path]; !ok {
+			zr.Close()
+			return ImportResult{}, fmt.Errorf("%w: manifest entry %q is missing from the archive", ErrArchiveRejected, e.Path)
+		}
+	}
+
+	// --- Pass 2: extract + verify each entry into a sibling temp dir. ---
+	// os.MkdirTemp next to destDir keeps the final rename on the same volume
+	// (rename across volumes fails); the temp dir name is hidden (leading dot).
+	tmp, err := os.MkdirTemp(filepath.Dir(destAbs), ".silt-import-*")
+	if err != nil {
+		zr.Close()
+		return ImportResult{}, fmt.Errorf("create staging dir: %w", err)
+	}
+	// Best-effort cleanup on any failure path. On success the rename consumes
+	// tmp, so RemoveAll is a no-op.
+	cleanupTmp := func() { _ = os.RemoveAll(tmp) }
+	success := false
+	defer func() {
+		zr.Close()
+		if !success {
+			cleanupTmp()
+		}
+	}()
+
+	result := ImportResult{Manifest: manifest}
+	total := len(manifest.Entries)
+	extracted := 0
+	for _, e := range manifest.Entries {
+		f := entryByName[e.Path]
+		// Final containment check on the joined path (defense in depth,
+		// mirrors plugins.Install).
+		target := filepath.Join(tmp, filepath.FromSlash(e.Path))
+		if !isWithinMover(target, tmp) {
+			return ImportResult{}, fmt.Errorf("%w: archive entry %q escapes the staging dir", ErrArchiveRejected, e.Path)
+		}
+		if err := extractAndVerify(f, target, e); err != nil {
+			return ImportResult{}, fmt.Errorf("entry %q failed verification: %w", e.Path, err)
+		}
+		extracted++
+		result.FilesExtracted++
+		result.BytesExtracted += e.Size
+		if isPageFile(e.Path) {
+			result.PageFileCount++
+		}
+		if onProgress != nil {
+			onProgress("extract", extracted, total)
+		}
+	}
+
+	// Atomic cutover: rename the verified temp tree into the (empty) destDir.
+	if err := os.Rename(tmp, destAbs); err != nil {
+		return ImportResult{}, fmt.Errorf("finalize import (rename into destination): %w", err)
+	}
+	success = true
+	return result, nil
+}
+
+// readArchiveManifest locates + parses manifest.json from an opened archive
+// WITHOUT extracting (it reads straight from the entry reader). Rejects a
+// missing or malformed manifest. The caller skips the manifest during
+// extraction by iterating the manifest's declared Entries (which never include
+// the manifest path), so no zip entry pointer needs to be returned.
+func readArchiveManifest(zr *zip.Reader) (ArchiveManifest, error) {
+	for _, f := range zr.File {
+		if filepath.ToSlash(f.Name) != ArchiveManifestPath {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return ArchiveManifest{}, fmt.Errorf("%w: failed to read manifest: %v", ErrArchiveRejected, err)
+		}
+		var m ArchiveManifest
+		decErr := json.NewDecoder(rc).Decode(&m)
+		rc.Close()
+		if decErr != nil {
+			return ArchiveManifest{}, fmt.Errorf("%w: invalid manifest.json: %v", ErrArchiveRejected, decErr)
+		}
+		return m, nil
+	}
+	return ArchiveManifest{}, fmt.Errorf("%w: archive is missing %s", ErrArchiveRejected, ArchiveManifestPath)
+}
+
+// extractAndVerify copies a single zip entry to target, bounding the
+// decompressed stream (io.LimitReader over the declared size, defense-in-depth
+// against forged-header zip bombs — mirrors plugins.copyZipEntry) and hashing
+// the bytes during the copy. The recomputed digest MUST equal the manifest
+// entry's declared SHA-256 and the byte count MUST equal the declared size, or
+// the entry is rejected as corrupt/tampered.
+func extractAndVerify(f *zip.File, target string, want ArchiveEntry) error {
+	rc, err := f.Open()
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return err
+	}
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	// Bound the decompressed stream to the declared size + a 1 KB margin. A
+	// forged-header zip-bomb claiming 1 KB but decompressing to 10 GB is cut
+	// off here; the per-entry cap is a separate backstop.
+	limit := want.Size + 1024
+	if limit > maxArchiveEntrySize+1024 {
+		return fmt.Errorf("entry %q exceeds the %d-byte per-entry limit", want.Path, maxArchiveEntrySize)
+	}
+	h := sha256.New()
+	n, err := io.Copy(out, io.LimitReader(io.TeeReader(rc, h), limit))
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	if n != want.Size {
+		return fmt.Errorf("size %d does not match manifest %d", n, want.Size)
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); got != want.SHA256 {
+		return fmt.Errorf("checksum mismatch (declared %s, recomputed %s)", want.SHA256, got)
+	}
+	return nil
+}
+
+// isWithinMover is a thin alias for the unexported isWithin in mover.go, used
+// by the import extractor's containment check so the safety predicate stays
+// single-source. (Kept under an import-local name to read naturally at the
+// call site without implying a second implementation.)
+func isWithinMover(target, base string) bool {
+	return isWithin(target, base)
+}

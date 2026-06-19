@@ -90,7 +90,18 @@ func validateDestination(src, dest string) error {
 	if isWithin(srcAbs, destAbs) {
 		return fmt.Errorf("%w: destination contains the current vault (would copy recursively)", ErrDestinationRejected)
 	}
+	return validateEmptyDestination(destAbs, dest)
+}
 
+// validateEmptyDestination enforces the destination rules that don't depend on
+// a source path: the folder must be local (not a network FS — WAL requires
+// shared memory), must not already look like a Silt vault (no .system/), and
+// must be empty or non-existent (no silent merge with unrelated content).
+// Shared by Move/Copy (via validateDestination) and Import (#143), so the
+// import destination meets the identical contract a move destination does.
+// destAbs is the resolved absolute path; destDisplay is the original argument
+// used in user-facing error messages.
+func validateEmptyDestination(destAbs, destDisplay string) error {
 	// Network-FS guard reuses the index-opener's per-platform detector so the
 	// user sees the same clear "move to a local folder" message (#79, #141).
 	if err := networkFSCheck(destAbs); err != nil {
@@ -101,10 +112,10 @@ func validateDestination(src, dest string) error {
 	// destination (no silent merge with unrelated content).
 	systemDir := filepath.Join(destAbs, ".system")
 	if _, err := os.Stat(systemDir); err == nil {
-		return fmt.Errorf("%w: %s already contains a .system folder (already a Silt vault); choose an empty folder", ErrDestinationRejected, dest)
+		return fmt.Errorf("%w: %s already contains a .system folder (already a Silt vault); choose an empty folder", ErrDestinationRejected, destDisplay)
 	}
 	if existing, err := os.ReadDir(destAbs); err == nil && len(existing) > 0 {
-		return fmt.Errorf("%w: %s is not empty; choose an empty folder", ErrDestinationRejected, dest)
+		return fmt.Errorf("%w: %s is not empty; choose an empty folder", ErrDestinationRejected, destDisplay)
 	}
 	return nil
 }
