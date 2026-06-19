@@ -805,12 +805,46 @@ resolve each id:
         │
         ▼
 plugin.init(ctx: PluginContext)   ←   sqliteQuery (SELECT/WITH-only),
-                                      mutateBlock, updateBlockState
-        │
-        ▼
+                                      mutateBlock, updateBlockState,
+                                      updateTaskMeta, ctx.on (typed event bus)
+plugin.onVaultOpen(ctx)             ←   v2 lifecycle hook (#106)
+         │
+         ▼
 App view router renders plugin:<id> via PluginView (or Agenda/Calendar slots)
 
 Per-plugin load failures are collected and surfaced (PluginView shows a load-error notice) without aborting boot. The `plugins:changed` Wails event (emitted after install/uninstall/enable/disable) re-runs discovery.
+
+7.2 v2 SDK Capability & Permission Model (#113)
+
+Every privileged v2 SDK binding (file I/O, network, OS integration, editor
+schema, rendered UI) is gated server-side by `App.requireGrant(pluginID,
+capability)`. Grants are per-vault, stored in `config.yaml` under
+`plugins.grants` (pluginID → capability → qualifier). First-use prompts the
+user (contextual, low-fatigue); Settings → Plugins shows requested vs.
+granted with revoke. First-party plugins are implicitly granted. `exec` is
+deferred until the trust/signing model matures.
+
+7.3 v2 SDK Extended APIs
+
+- Content API (#104): query helpers (queryByTag/queryByDateRange/
+  fullTextSearch/getBacklinks/getEmbeds) + block CRUD (createBlock/
+  deleteBlock/moveBlock) + page/section/notebook CRUD + bulk ops.
+- File I/O (#108): readFile/writeFile/deleteFile/listDir (notebook-scoped,
+  traversal-guarded, atomic-write path); scratch space at
+  <notebook>/.system/plugins/<id>/data/.
+- OS integration (#114): openInNativeHandler, openUrl (scheme-restricted),
+  pickers, clipboard, notify — all capability-gated.
+- Network/fetch (#115): ctx.fetch via Go net/http proxy (timeout/size/
+  redirect caps); audit-logged.
+- Editor extension points (#110): slash-command registry; generic embedBlock
+  node (round-trips through <!-- silt-embed: {json} --> markers).
+- Rendered UI surfaces (#117): sandboxed <iframe srcdoc> + postMessage bridge;
+  sidebar panel / modal / status-bar surfaces; theme tokens injected.
+- Settings schema (#103): declarative SettingSchema[] on the manifest;
+  generic form renderer replaces bespoke panels.
+
+See `frontend/src/plugins/sdk.ts` for the full typed contract and
+`docs/PLUGIN_DEVELOPMENT.md` §8 for the author guide.
 
 7.2 PluginContext → Go Bindings
 

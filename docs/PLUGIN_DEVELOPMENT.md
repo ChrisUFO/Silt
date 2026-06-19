@@ -216,3 +216,183 @@ These components receive `{ ctx, manifest }` as props — the same `PluginContex
 - All block mutations (`mutateBlock`, `updateBlockState`, `updateTaskMeta`) route through the Go backend's atomic-write + concurrency-coordinator path; plugins never write files directly.
 - `.silt-plugin` archives are validated against zip-slip, absolute paths, and `..` traversal before extraction, and the install path is checked to stay within `.system/plugins/`.
 - Plugins run in the same webview as the app (no sandbox). Install only plugins you trust, as with any browser-extension-style model.
+
+---
+
+## 8. v2 SDK — Capabilities, Lifecycle, and Extended APIs
+
+The v2 SDK (milestone #11) expands the plugin surface with capabilities,
+lifecycle hooks, a typed event bus, content CRUD, file I/O, OS integration,
+network/fetch, editor extension points, rendered UI surfaces, and a
+declarative settings schema. Every privileged binding is gated by the
+capability model (#113).
+
+### 8.1 Capabilities & permissions (#113)
+
+Plugins that need privileged access declare `capabilities` in the manifest:
+
+```json
+{
+  "id": "my-sync",
+  "name": "Sync",
+  "version": "1.0.0",
+  "main": "index.js",
+  "capabilities": {
+    "network": true,
+    "write-files": "notebook",
+    "os-open": true
+  }
+}
+```
+
+Recognized capabilities: `read-files`, `write-files`, `network`, `os-open`,
+`os-clipboard`, `os-notify`, `ui-surface`, `editor-schema`. (`exec` is
+intentionally deferred.)
+
+Grants are per-vault, stored in `config.yaml` under `plugins.grants`. The user
+is prompted on first use (contextual, low-fatigue) and can review/revoke in
+**Settings → Plugins**. Enforcement is server-side — the Go backend checks
+every privileged call and returns a structured `CapabilityDeniedError`.
+
+### 8.2 Lifecycle hooks & event bus (#106)
+
+```ts
+export default {
+  manifest,
+  onVaultOpen(ctx) { /* vault is open, ctx is fully usable */ },
+  onVaultClose()   { /* release watchers/timers */ },
+  onShutdown()     { /* app is exiting */ }
+}
+```
+
+Typed event subscription:
+
+```ts
+const off = ctx.on('block:changed', (e) => {
+  console.log(e.id, e.notebook, e.section, e.page)
+})
+// Events: 'block:changed', 'config:changed', 'active-notebook:changed', 'selection:changed'
+// Returns an unsubscribe; auto-cleaned on disable/uninstall/vault-close.
+```
+
+### 8.3 Content API (#104)
+
+Beyond `sqliteQuery` + the base mutators:
+
+```ts
+// Typed query helpers
+ctx.queryByTag('work/sprint-4')
+ctx.queryByDateRange('2026-06-01', '2026-06-30')
+ctx.fullTextSearch('meeting notes')
+ctx.getBacklinks(uuid)
+ctx.getEmbeds(uuid)
+
+// Block CRUD (same atomic-write path as mutateBlock)
+const newId = await ctx.createBlock({ type: 'TASK', text: 'New task', after: parentUuid })
+await ctx.deleteBlock(uuid)
+await ctx.moveBlock(uuid, { after: targetUuid })
+
+// Page / section / notebook CRUD
+await ctx.createPage('Work', 'Projects', 'NewPage', '2026-06-19')
+await ctx.createSection('Work', 'NewSection')
+await ctx.createNotebook('Personal')
+await ctx.deletePage('Work', 'Projects', 'OldPage')
+await ctx.renamePage('Work', 'Projects', 'OldName', 'NewName')
+```
+
+### 8.4 File I/O (#108)
+
+Read/write non-markdown files within a notebook (attachments, assets, caches).
+Gated by `read-files` / `write-files`.
+
+```ts
+const bytes = await ctx.readFile('Work', 'attachments/report.pdf')
+await ctx.writeFile('Work', 'attachments/export.json', new Uint8Array([...]))
+await ctx.deleteFile('Work', 'attachments/old.pdf')
+const entries = await ctx.listDir('Work', 'attachments')
+const root = await ctx.notebookRoot('Work')
+const scratch = await ctx.scratchDir('Work')  // <notebook>/.system/plugins/<id>/data/
+```
+
+Writes are restricted to `attachments/` + the plugin's own scratch dir.
+
+### 8.5 OS integration (#114)
+
+```ts
+await ctx.openInNativeHandler('Work', 'attachments/report.pdf')  // gated: os-open
+await ctx.openUrl('https://example.com')                         // gated: os-open
+const path = await ctx.pickOpenFile('*.pdf')                      // user-driven
+const savePath = await ctx.pickSaveFile('export.json')
+const text = await ctx.clipboardRead()                            // gated: os-clipboard
+await ctx.clipboardWrite('copied text')                           // gated: os-clipboard
+await ctx.notify({ title: 'Sync', body: 'Done!' })               // gated: os-notify
+```
+
+### 8.6 Network / fetch (#115)
+
+```ts
+const res = await ctx.fetch('https://api.example.com/data', {
+  method: 'POST',
+  headers: { Authorization: 'Bearer ...' },
+  body: JSON.stringify({ query: '...' }),
+  timeoutMs: 10000
+})
+// res = { status, headers, body, ok }
+```
+
+CORS-free (Go-side proxy), with timeout/size/redirect caps. Host + status are
+audit-logged in Settings → Plugins (never the body).
+
+### 8.7 Editor extension points (#110)
+
+Register slash commands:
+
+```ts
+const off = ctx.registerSlashCommand({
+  id: 'my-cmd',
+  label: 'Do Something',
+  description: 'Inserts a special block',
+  icon: 'bolt',
+  onSelect: (editor, pos) => {
+    editor.commands.insertContent('Hello!')
+  }
+})
+```
+
+Custom embed blocks via the generic `embedBlock` node (round-trips through
+`<!-- silt-embed: {json} -->` markers).
+
+### 8.8 Rendered UI surfaces (#117)
+
+Third-party plugins render UI in a sandboxed iframe:
+
+```ts
+const off = ctx.registerSurface({
+  id: 'my-panel',
+  kind: 'sidebar-panel',
+  label: 'My Panel',
+  html: '<div id="app">Loading...</div>'
+})
+```
+
+The iframe's `window.__siltCtx` is a postMessage proxy for the full
+PluginContext. Theme tokens are injected as CSS custom properties.
+
+### 8.9 Settings schema (#103)
+
+```json
+{
+  "id": "my-plugin",
+  "settings": [
+    { "key": "apiKey", "label": "API Key", "type": "string" },
+    { "key": "theme", "label": "Color", "type": "select", "options": ["dark", "light"], "default": "dark" },
+    { "key": "autosync", "label": "Auto-sync", "type": "bool", "default": false }
+  ]
+}
+```
+
+Settings → Plugins renders the form generically. Read merged values:
+
+```ts
+const key = await ctx.getSetting('apiKey')  // schema-default-aware
+```
