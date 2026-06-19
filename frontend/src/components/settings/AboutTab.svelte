@@ -24,8 +24,8 @@
   </div>
 
   <p class="text-text-primary text-[13px] font-body-md mb-6">
-    A local-first hybrid journal and task manager. Plain-text Markdown on your
-    drive, real-time index in memory.
+    Capture ideas. Connect them. Get work done. A fast, private workspace for
+    your notes and tasks.
   </p>
 
   <section>

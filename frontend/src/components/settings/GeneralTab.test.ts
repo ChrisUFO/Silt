@@ -60,15 +60,26 @@ vi.mock('../../../wailsjs/runtime/runtime.js', () => ({
   EventsEmit: vi.fn()
 }))
 
-// VaultActionModal (rendered as a child when a relocate action is chosen)
-// imports the wailsjs binding module, so it must be mocked here too.
+// VaultActionModal + VaultArchiveModal (rendered as children when a relocate
+// or archive action is chosen) import the wailsjs binding module, so it must
+// be mocked here too. VaultArchiveModal also subscribes to the
+// vault:archive:progress event, so the runtime module is mocked as well.
 const appMocks = vi.hoisted(() => ({
   PickVaultDestination: vi.fn(),
   MoveVault: vi.fn(),
   CopyVault: vi.fn(),
-  SwitchVault: vi.fn()
+  SwitchVault: vi.fn(),
+  PickVaultExportPath: vi.fn(),
+  ExportVault: vi.fn(),
+  PickVaultArchive: vi.fn(),
+  ImportVault: vi.fn()
 }))
 vi.mock('../../../wailsjs/go/main/App.js', () => appMocks)
+vi.mock('../../../wailsjs/runtime/runtime.js', () => ({
+  EventsOn: vi.fn(() => () => {}),
+  EventsOff: vi.fn(),
+  EventsEmit: vi.fn()
+}))
 
 vi.mock('../../settings/store.svelte', () => ({
   settings: mocks.settings,
@@ -147,6 +158,10 @@ describe('GeneralTab vault relocate menu (#141)', () => {
     appMocks.MoveVault.mockClear()
     appMocks.CopyVault.mockClear()
     appMocks.SwitchVault.mockClear()
+    appMocks.PickVaultExportPath.mockClear()
+    appMocks.ExportVault.mockClear()
+    appMocks.PickVaultArchive.mockClear()
+    appMocks.ImportVault.mockClear()
   })
   afterEach(() => cleanup())
 
@@ -158,7 +173,7 @@ describe('GeneralTab vault relocate menu (#141)', () => {
     ).toBeInTheDocument()
   })
 
-  it('opening the menu reveals Move and Copy actions', async () => {
+  it('opening the menu reveals Move, Copy, Export, and Import actions', async () => {
     render(GeneralTab)
     await tick()
     await fireEvent.click(
@@ -170,6 +185,12 @@ describe('GeneralTab vault relocate menu (#141)', () => {
     ).toBeInTheDocument()
     expect(
       screen.getByRole('menuitem', { name: /Copy vault/ })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: /Export vault/ })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: /Import vault/ })
     ).toBeInTheDocument()
   })
 
@@ -187,6 +208,40 @@ describe('GeneralTab vault relocate menu (#141)', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: 'Move vault' })
+    ).toBeInTheDocument()
+  })
+
+  it('selecting Export opens the VaultArchiveModal in export mode', async () => {
+    render(GeneralTab)
+    await tick()
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Vault actions' })
+    )
+    await tick()
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: /Export vault/ })
+    )
+    await tick()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Export vault' })
+    ).toBeInTheDocument()
+  })
+
+  it('selecting Import opens the VaultArchiveModal in import mode', async () => {
+    render(GeneralTab)
+    await tick()
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Vault actions' })
+    )
+    await tick()
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: /Import vault/ })
+    )
+    await tick()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Import vault' })
     ).toBeInTheDocument()
   })
 

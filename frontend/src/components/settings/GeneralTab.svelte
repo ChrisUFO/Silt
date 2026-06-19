@@ -11,11 +11,13 @@
   import { themeState } from '../../theme/store.svelte'
   import FontSelect from './FontSelect.svelte'
   import VaultActionModal from './VaultActionModal.svelte'
+  import VaultArchiveModal from './VaultArchiveModal.svelte'
 
-  // Vault relocation menu (#141). A kebab next to the vault path offers
-  // "Move vault…" and "Copy vault…"; each opens the shared modal.
+  // Vault relocation + portable-archive menu (#141, #143). A kebab next to the
+  // vault path offers "Move vault…", "Copy vault…", "Export vault…", and
+  // "Import vault…"; each opens the matching modal.
   let vaultMenuOpen = $state(false)
-  let vaultAction = $state<'move' | 'copy' | null>(null)
+  let vaultAction = $state<'move' | 'copy' | 'export' | 'import' | null>(null)
   let menuItemRefs: HTMLButtonElement[] = $state([])
   let menuWrapper = $state<HTMLDivElement | null>(null)
   let triggerBtn = $state<HTMLButtonElement | null>(null)
@@ -24,7 +26,7 @@
     vaultMenuOpen = !vaultMenuOpen
   }
 
-  function openAction(action: 'move' | 'copy') {
+  function openAction(action: 'move' | 'copy' | 'export' | 'import') {
     vaultAction = action
     vaultMenuOpen = false
   }
@@ -259,12 +261,35 @@
                 <span class="material-symbols-outlined text-[18px] text-text-muted">content_copy</span>
                 Copy vault…
               </button>
+              <div class="my-1 border-t border-border-muted"></div>
+              <button
+                type="button"
+                bind:this={menuItemRefs[2]}
+                role="menuitem"
+                onclick={() => openAction('export')}
+                onkeydown={(e) => handleMenuItemKeydown(e, 2)}
+                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-bg-hover border-none bg-transparent cursor-pointer"
+              >
+                <span class="material-symbols-outlined text-[18px] text-text-muted">archive</span>
+                Export vault…
+              </button>
+              <button
+                type="button"
+                bind:this={menuItemRefs[3]}
+                role="menuitem"
+                onclick={() => openAction('import')}
+                onkeydown={(e) => handleMenuItemKeydown(e, 3)}
+                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-bg-hover border-none bg-transparent cursor-pointer"
+              >
+                <span class="material-symbols-outlined text-[18px] text-text-muted">unarchive</span>
+                Import vault…
+              </button>
             </div>
           {/if}
         </div>
       </div>
       <p class="text-text-muted text-[11px] font-label-sm mt-1.5">
-        Move or duplicate this workspace from the actions menu.
+        Move, copy, back up, or migrate this workspace from the actions menu.
       </p>
     </section>
 
@@ -461,9 +486,17 @@
 {/if}
 
 {#if vaultAction && draft}
-  <VaultActionModal
-    mode={vaultAction}
-    currentPath={draft.notebooks.path || ''}
-    onClose={() => (vaultAction = null)}
-  />
+  {#if vaultAction === 'move' || vaultAction === 'copy'}
+    <VaultActionModal
+      mode={vaultAction}
+      currentPath={draft.notebooks.path || ''}
+      onClose={() => (vaultAction = null)}
+    />
+  {:else}
+    <VaultArchiveModal
+      mode={vaultAction}
+      currentPath={draft.notebooks.path || ''}
+      onClose={() => (vaultAction = null)}
+    />
+  {/if}
 {/if}

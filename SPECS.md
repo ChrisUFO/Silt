@@ -153,6 +153,17 @@ The destination must be an empty, local folder (a network mount is refused —
 WAL requires shared memory). Linked notebooks are external folders and are
 never moved or rewritten by a vault relocation.
 
+**Portable archive / backup (#143).** The same Settings → General workspace
+kebab also exposes **"Export vault…"** and **"Import vault…"** for backup and
+machine-to-machine migration. Export bundles the entire vault tree (notes +
+`.system/` — config, themes, templates, plugins) into a single self-contained
+`.silt-vault` archive (a ZIP with a custom extension) carrying a `manifest.json`
++ per-entry and whole-archive SHA-256 digests; the reproducible SQLite index is
+excluded (rebuilt on import, same §0 rule 4 contract as Move/Copy). Import
+validates the manifest + checksums and rejects zip-slip / absolute paths / a
+missing manifest before extracting into a user-chosen empty local folder, then
+opens it via the #141 `SwitchVault` path. See §3.4 for the format.
+
 
 3.3 File Boundary Specification & Frontmatter Standard
 
@@ -171,6 +182,73 @@ tags: [systems/specs, wails/go]
 ## Daily Standup Logging
 - [ ] Implement parser tests [owner:: Chris] [start:: 2026-06-13] [due:: 2026-06-20] [priority:: 1] <!-- id: f1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d -->
 ```
+
+
+3.4 Portable Vault Archive (`.silt-vault`)
+
+A `.silt-vault` archive is the portable, self-contained form of a vault,
+produced by **Export** and consumed by **Import** (Settings → General →
+workspace kebab, #143). It is the local-first contract (§0) made portable: a
+single file that carries the entire vault tree and is checksummed so
+tampering/corruption is detectable before a single byte is extracted.
+
+**Container.** A ZIP with a custom `.silt-vault` extension. The vault contents
+live at the archive root (e.g. `Work/Inbox.md`, `.system/config.yaml`,
+`.system/themes/...`) in their on-disk layout, using forward-slash paths for
+cross-platform portability. Entries are stored uncompressed (`Method=Store`) so
+the archive is trivially inspectable with any unzip tool and per-entry digests
+are computed over a stable byte stream; compression is a documented future
+enhancement.
+
+**Exclusion.** The reproducible SQLite index (`.system/index.sqlite*`) is NEVER
+archived — identical to Move/Copy (#141) and for the same reason (§0 rule 4):
+it is reproducible working memory, rebuilt from markdown when the imported
+vault is first opened. Linked notebooks are external folders and are never
+included in the archive.
+
+**`manifest.json` (written last).** Carries the archive's self-description and
+integrity records:
+
+| Field | Meaning |
+|---|---|
+| `archive_version` | Format version (this build produces + accepts `1.0.0`; a differing version is refused on import). |
+| `silt_version` | Silt version that produced the archive (diagnostic). |
+| `vault_name` | Optional display name; derived from the source folder name when empty on export. |
+| `created_at` | Archive creation time, RFC3339 UTC. |
+| `page_file_count` | Count of `.md` page files (under notebooks, NOT `.system/` — so templates/README are excluded). The honest, cheap proxy for the issue's "block count" (a true count would require parsing every file). |
+| `file_count` / `total_bytes` | Total regular files archived + their uncompressed byte sum. |
+| `archive_sha256` | Whole-archive integrity root: SHA-256 over the canonical serialization of every entry record (path + size + per-entry digest). A Merkle-root-style digest (the manifest cannot hash its own raw bytes). |
+| `entries[]` | Per-file records: `{path, size, sha256}` (lowercase-hex SHA-256 over the entry's uncompressed bytes). |
+
+**Integrity model (two layers, validated before extraction).** Import mirrors
+the `.silt-plugin` installer posture (§8.4):
+
+1. **Manifest self-consistency:** recompute the root digest over the declared
+   `entries[]` and assert equality with `archive_sha256` — detects manifest /
+   entry-list tampering BEFORE any file is written. The archive version must
+   match `1.0.0`.
+2. **Per-entry verification during extraction:** stream each entry into a
+   sibling temp dir through a SHA-256 hasher; the recomputed digest MUST equal
+   the manifest's declared `sha256` and the byte count MUST equal the declared
+   `size`, or the entry is rejected as corrupt/tampered.
+
+Only after every entry verifies is the temp dir atomically renamed into the
+user-chosen empty destination folder; a corrupt or hostile archive leaves the
+destination untouched. Import then opens the vault via `SwitchVault` (#141),
+which rebuilds the index from markdown and emits `vault:moved`.
+
+**Safety guards (defense in depth, shared with §8.4).** Rejects zip-slip
+(`..` segments) and absolute entry paths, bounds the total uncompressed size
+and per-entry size (zip-bomb defense via `io.LimitReader` over the declared
+size), and runs a final containment check on each joined extraction path.
+Hostile archives never write outside the staging directory.
+
+**IPC surface.** `App.PickVaultExportPath` / `App.ExportVault` (export, native
+save-file picker, active vault read-only) and `App.PickVaultArchive` /
+`App.ImportVault` (import, native open-file picker + empty-destination picker).
+Both stream determinate progress via the `vault:archive:progress` Wails event
+(`{phase: "export"|"extract", current, total}`) so the UI renders a progress
+bar for large vaults. See ARCHITECTURE.md §4.3.
 
 
 4. Custom AST Parser & Task Shorthand Grammar

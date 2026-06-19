@@ -1,7 +1,7 @@
 <script lang="ts">
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
-  import { untrack } from 'svelte'
+  import { untrack, onDestroy } from 'svelte'
   import type { PluginContext, PluginManifest, TaskStatus } from '../../sdk'
   import { plusDaysISO } from '../../sdk'
   import { settings, updatePluginSetting } from '../../../settings/store.svelte'
@@ -390,6 +390,13 @@
   // Apply immediately to the board, but defer the config write so rapid
   // checkbox toggles don't hammer the plugin-setting write. 500ms of quiet commits.
   let saveFiltersTimer: ReturnType<typeof setTimeout> | null = null
+  // Clear the pending debounce on unmount so a board torn down within the
+  // 500ms window never fires a stale persistFilters against a dead component
+  // (which would otherwise leak a write into the next-mounted board's test /
+  // race a real freshly-opened notebook).
+  onDestroy(() => {
+    if (saveFiltersTimer) clearTimeout(saveFiltersTimer)
+  })
   function handleFiltersChange(f: KanbanFilters) {
     filters = f
     if (saveFiltersTimer) clearTimeout(saveFiltersTimer)

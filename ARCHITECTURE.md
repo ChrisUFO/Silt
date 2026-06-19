@@ -534,6 +534,23 @@ func (a *App) CopyVault(destPath string) (vault.CopyResult, error)
 func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult, error)
 func (a *App) SwitchVault(path string) error
 
+// Portable vault archive / backup (#143). Export bundles the active vault
+// tree (notes + .system/, EXCLUDING the reproducible .system/index.sqlite*)
+// into a single .silt-vault archive (ZIP + custom extension) carrying a
+// manifest.json with per-entry + whole-archive-root SHA-256 digests. Import
+// validates-before-extract (mirrors the .silt-plugin installer, SPECS §8.4:
+// manifest self-consistency + per-entry checksum verification + zip-slip /
+// absolute / size-cap guards), streams into a sibling temp dir, atomically
+// renames into the empty destination, then calls SwitchVault to open it
+// (rebuilding the index from markdown). Both stream determinate progress via
+// the vault:archive:progress event ({phase: "export"|"extract", current,
+// total}) so the UI renders a progress bar for large vaults. Format detail:
+// SPECS §3.4.
+func (a *App) PickVaultExportPath(defaultFilename string) (string, error)   // *.silt-vault save dialog
+func (a *App) ExportVault(destPath string) (vault.ExportResult, error)      // active vault read-only
+func (a *App) PickVaultArchive() (string, error)                            // *.silt-vault open dialog
+func (a *App) ImportVault(archivePath, destPath string) (vault.ImportResult, error) // validate → extract → SwitchVault
+
 
 // ListNavigation returns the Notebook > Section > Page tree for the sidebar,
 // enumerated from the on-disk folder structure (source of truth) with block
