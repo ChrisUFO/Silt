@@ -1993,16 +1993,16 @@ func TestResolveSourceByName(t *testing.T) {
 // the co-located per-notebook config: a missing file yields Defaults; a
 // present file is parsed; a second call with the same mtime hits the cache; a
 // rewritten file (newer mtime) re-loads; an unlinked notebook drops the cache
-// entry.
+// entry. The cache is guarded by linkedConfigsMu (a dedicated mutex, NOT
+// configMu), so linkedConfigFor manages its own locking — the test does NOT
+// hold configMu around the calls.
 func TestLinkedConfigFor_CacheAndInvalidation(t *testing.T) {
 	app := newTestApp(t)
 	ext := t.TempDir()
 	ln := config.LinkedNotebook{ID: "cfg", RootPath: ext, DisplayName: "Ext"}
 
 	// 1. Missing co-located file -> Defaults, no error.
-	app.configMu.Lock()
-	cfg, err := app.linkedConfigLocked(ln)
-	app.configMu.Unlock()
+	cfg, err := app.linkedConfigFor(ln)
 	if err != nil {
 		t.Fatalf("missing file: %v", err)
 	}
@@ -2010,9 +2010,9 @@ func TestLinkedConfigFor_CacheAndInvalidation(t *testing.T) {
 		t.Error("expected Defaults (non-nil PluginSettings) for missing co-located file")
 	}
 	// Cache entry exists (keyed by source).
-	app.configMu.RLock()
+	app.linkedConfigsMu.Lock()
 	_, cached := app.linkedConfigs["linked:cfg"]
-	app.configMu.RUnlock()
+	app.linkedConfigsMu.Unlock()
 	if !cached {
 		t.Error("expected cache entry after first load")
 	}
@@ -2032,9 +2032,7 @@ func TestLinkedConfigFor_CacheAndInvalidation(t *testing.T) {
 	if err := os.Chtimes(cfgPath, future, future); err != nil {
 		t.Fatal(err)
 	}
-	app.configMu.Lock()
-	cfg, err = app.linkedConfigLocked(ln)
-	app.configMu.Unlock()
+	cfg, err = app.linkedConfigFor(ln)
 	if err != nil {
 		t.Fatalf("present file: %v", err)
 	}
@@ -2044,10 +2042,10 @@ func TestLinkedConfigFor_CacheAndInvalidation(t *testing.T) {
 	}
 
 	// 3. Invalidate (as UnlinkNotebook does); next load re-reads.
-	app.configMu.Lock()
-	app.invalidateLinkedConfigLocked("linked:cfg")
+	app.invalidateLinkedConfig("linked:cfg")
+	app.linkedConfigsMu.Lock()
 	_, cached = app.linkedConfigs["linked:cfg"]
-	app.configMu.Unlock()
+	app.linkedConfigsMu.Unlock()
 	if cached {
 		t.Error("expected cache entry dropped after invalidate")
 	}
@@ -2187,6 +2185,55 @@ func TestGetPluginSettingsForNotebook_LinkedUnparseableSurfacesError(t *testing.
 	if !strings.Contains(err.Error(), "linked config") {
 		t.Errorf("expected error to mention linked config, got %v", err)
 	}
+}
+
+// TestGetPluginSettingsForNotebook_ConcurrentCallersNoPanic exercises the
+// concurrent-access safety of the linkedConfigs cache: multiple goroutines
+// resolving settings for DIFFERENT linked notebooks (each on a cache miss)
+// must not trigger a "concurrent map writes" fatal panic. Before the
+// linkedConfigsMu fix, two RLock holders writing to the plain map
+// simultaneously would crash the runtime. Run under -race.
+func TestGetPluginSettingsForNotebook_ConcurrentCallersNoPanic(t *testing.T) {
+	app := newTestApp(t)
+
+	// Register N linked notebooks, each with a co-located config so every
+	// call is a cache miss on the first round.
+	const n = 8
+	app.configMu.Lock()
+	for i := 0; i < n; i++ {
+		root := t.TempDir()
+		cfgPath := config.LinkedConfigPath(root)
+		if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := fmt.Sprintf("plugins:\n  plugin_settings:\n    silt-kanban:\n      idx: %d\n", i)
+		if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		app.cfg.LinkedNotebooks = append(app.cfg.LinkedNotebooks, config.LinkedNotebook{
+			ID:          fmt.Sprintf("ln%d", i),
+			RootPath:    root,
+			DisplayName: fmt.Sprintf("Linked%d", i),
+		})
+	}
+	app.configMu.Unlock()
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			name := fmt.Sprintf("Linked%d", idx)
+			<-start // release all goroutines simultaneously
+			_, err := app.GetPluginSettingsForNotebook("silt-kanban", name)
+			if err != nil {
+				t.Errorf("goroutine %d: %v", idx, err)
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
 }
 
 // TestSaveFileBlocks_LinkedRootUnusable_ReturnsClearError locks the documented

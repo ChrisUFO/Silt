@@ -13,6 +13,7 @@ correctness regression, not a style choice.
 |---|---|---|---|---|
 | **Content** | Markdown (`.md`) | Vault root + per-page files | Block bodies, task markers, per-task metadata, block identity (`<!-- id: uuid @ YYYY-MM-DD -->`) | `[/] DOING TASK [Alice] (2026-06-15) #2 !pin [p:50] Implement search <!-- id: 7c2a… @ 2026-06-15 -->` |
 | **Per-vault UI preferences** | YAML | `<vault>/.system/config.yaml` | Per-vault, per-plugin settings: active/disabled plugin list, Kanban columns, Kanban filter state, hotkey bindings, editor font sizes, theme typography overrides | `plugins.plugin_settings.silt-kanban.columns: [Backlog, In Progress, Review, Done]` |
+| **Per-linked-notebook overrides** | YAML | `<linkedRoot>/.system/config.yaml` | Per-notebook plugin setting overrides for a linked (external) notebook (#133). Read-only to Silt (user-authored); deep-merged over the vault defaults (linked wins per-key). See §3.1. | `plugins.plugin_settings.silt-kanban.columns: [Backlog, Done]` |
 | **User-global, pre-vault** | JSON | `<config>/silt/settings.json` | Settings that must be known before any vault is open: active theme id, dark/light/system mode, non-vault font preferences | `{"active_theme": "silt-graphite", "mode": "dark"}` |
 | **Working memory** | SQLite (WAL) | `<vault>/.system/index.sqlite*` | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (comments/links counts, pin, progress — all re-derived from markdown on re-index), file mtime/size for incremental re-index | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache |
 
@@ -521,6 +522,17 @@ func (a *App) ListNavigation() (NavigationTree, error)
 // config:changed. GetAppVersion returns the embedded VERSION.
 func (a *App) GetSystemConfig() (config.SystemConfig, error)
 func (a *App) SaveSystemConfig(cfg config.SystemConfig) error
+
+// Per-plugin settings — UpdatePluginSetting is the atomic read-modify-write
+// for a single key in the vault-scoped config.yaml (#120).
+// GetPluginSettingsForNotebook resolves a plugin's settings for the ACTIVE
+// notebook, applying the co-located per-notebook override layer (#133): vault
+// notebooks return the vault-scoped entry; linked notebooks return the deep-
+// merge of vault defaults with the co-located <root>/.system/config.yaml
+// (linked wins per-key). Emits linked-config:changed on external edit of a
+// co-located file so reactive consumers (e.g. Kanban) refresh.
+func (a *App) UpdatePluginSetting(pluginID, key string, value any) error
+func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[string]any, error)
 func (a *App) GetAppVersion() string
 
 

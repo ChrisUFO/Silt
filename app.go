@@ -77,8 +77,14 @@ type App struct {
 	// co-located <root>/.system/config.yaml (#133). Keyed by source
 	// ('linked:<id>'). linkedConfigFor refreshes an entry when the on-disk
 	// mtime advances; the watcher invalidates an entry on external edit so
-	// the next read re-loads. Guarded by configMu (read or write).
-	linkedConfigs map[string]linkedConfigEntry
+	// the next read re-loads. Guarded by linkedConfigsMu (a dedicated mutex,
+	// NOT configMu) so concurrent GetPluginSettingsForNotebook callers can
+	// safely read/write the cache without holding configMu's write lock
+	// (which would serialize all config access) and without risking a
+	// concurrent-map-write panic under configMu.RLock (a read lock cannot
+	// protect map writes).
+	linkedConfigsMu sync.Mutex
+	linkedConfigs   map[string]linkedConfigEntry
 
 	// pluginRODB is a lazy read-only handle to the in-memory index, used
 	// exclusively by PluginRawQuery so a plugin can never mutate the index
@@ -2025,9 +2031,6 @@ func (a *App) UnlinkNotebook(id string) error {
 	var saveErr error
 	if removed {
 		a.cfg.LinkedNotebooks = kept
-		// Drop the co-located config cache entry for this source (#133);
-		// a re-link of the same root will re-populate it lazily.
-		a.invalidateLinkedConfigLocked("linked:" + id)
 		if a.configWatcher != nil {
 			a.configWatcher.RegisterSelfWrite()
 		}
@@ -2040,6 +2043,12 @@ func (a *App) UnlinkNotebook(id string) error {
 	if !removed {
 		return nil // idempotent: unknown id is a no-op
 	}
+
+	// Drop the co-located config cache entry for this source (#133);
+	// a re-link of the same root will re-populate it lazily. Done AFTER
+	// releasing configMu so the dedicated linkedConfigsMu is the only lock
+	// held (no nested locking).
+	a.invalidateLinkedConfig("linked:" + id)
 
 	if a.watcher != nil && rootPath != "" {
 		a.watcher.RemoveWatchRoot(rootPath)
@@ -2134,14 +2143,23 @@ func (a *App) linkByRecordLocked(ln config.LinkedNotebook) (config.LinkedNoteboo
 // linkedConfigFor returns the linked notebook's co-located config.yaml
 // (<linkedRoot>/.system/config.yaml, #133), mtime-cached. If the on-disk
 // mtime is unchanged since the last load, the cached parsed config is
-// returned; otherwise the file is re-read and the cache is updated. The
-// caller MUST hold configMu in WRITE mode: this function mutates the
-// linkedConfigs map on a cache miss / invalidation, and Go maps cannot be
-// written under an RLock. A missing co-located file yields config.Defaults() with no error
-// (the normal case — the vault-scoped config.yaml is the baseline). An
-// unparseable file yields a real error so the user can fix it; the cache is
-// not populated with garbage on error.
-func (a *App) linkedConfigLocked(ln config.LinkedNotebook) (config.SystemConfig, error) {
+// returned; otherwise the file is re-read and the cache is updated. Thread-
+// safe via linkedConfigsMu (a dedicated mutex, NOT configMu) so concurrent
+// callers resolving different linked notebooks cannot trigger a
+// concurrent-map-write panic. A missing co-located file yields
+// config.Defaults() with no error (the normal case — the vault-scoped
+// config.yaml is the baseline). An unparseable file yields a real error so
+// the user can fix it; the cache is not populated with garbage on error.
+//
+// The PLAN (Phase 5) called for pre-populating the cache in
+// initializeVaultServices; the implementation uses lazy population instead
+// (the cache fills on the first GetPluginSettingsForNotebook call for each
+// source). This avoids blocking startup on N co-located-config reads for N
+// linked notebooks and is functionally equivalent: the mtime check on every
+// call guarantees freshness, and a cache miss is a single stat + read.
+func (a *App) linkedConfigFor(ln config.LinkedNotebook) (config.SystemConfig, error) {
+	a.linkedConfigsMu.Lock()
+	defer a.linkedConfigsMu.Unlock()
 	if a.linkedConfigs == nil {
 		a.linkedConfigs = make(map[string]linkedConfigEntry)
 	}
@@ -2176,9 +2194,11 @@ func (a *App) linkedConfigLocked(ln config.LinkedNotebook) (config.SystemConfig,
 
 // invalidateLinkedConfig drops the cached co-located config for a source so
 // the next read re-loads from disk. Called by the watcher hook on an external
-// edit of <linkedRoot>/.system/config.yaml and by UnlinkNotebook. The caller
-// MUST hold configMu (write).
-func (a *App) invalidateLinkedConfigLocked(source string) {
+// edit of <linkedRoot>/.system/config.yaml and by UnlinkNotebook. Thread-safe
+// via linkedConfigsMu.
+func (a *App) invalidateLinkedConfig(source string) {
+	a.linkedConfigsMu.Lock()
+	defer a.linkedConfigsMu.Unlock()
 	if a.linkedConfigs == nil {
 		return
 	}
@@ -2192,9 +2212,7 @@ func (a *App) invalidateLinkedConfigLocked(source string) {
 // the frontend can refresh any per-active-notebook settings it derived from
 // the old config. Called from the watcher goroutine.
 func (a *App) onLinkedConfigChange(source string) {
-	a.configMu.Lock()
-	a.invalidateLinkedConfigLocked(source)
-	a.configMu.Unlock()
+	a.invalidateLinkedConfig(source)
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "linked-config:changed", source)
 	}
@@ -3852,48 +3870,45 @@ func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[s
 	if pluginID == "" {
 		return nil, fmt.Errorf("pluginID is required")
 	}
-	// Write lock: linkedConfigLocked may populate/invalidate the linkedConfigs
-	// cache map on a cache miss, and Go maps cannot be written under an RLock
-	// even by a single goroutine if another RLock holder could be reading
-	// concurrently — that is a fatal "concurrent map writes" panic.
-	a.configMu.Lock()
-	defer a.configMu.Unlock()
 
-	// Vault baseline: the plugin's entry in the vault-scoped config.yaml.
+	// Snapshot the vault entry + resolve the source under the config read
+	// lock. linkedConfigFor uses its OWN mutex (linkedConfigsMu) for the
+	// co-located cache, so we release configMu before calling it — this
+	// avoids holding configMu during disk I/O on a cache miss and avoids
+	// the concurrent-map-write panic that would arise if linkedConfigFor
+	// wrote to linkedConfigs under an RLock.
+	a.configMu.RLock()
 	vaultEntry, _ := a.cfg.Plugins.PluginSettings[pluginID].(map[string]any)
 	if vaultEntry == nil {
 		vaultEntry = map[string]any{}
 	}
-
 	source := config.LinkedNotebooksVaultSource
+	var ln config.LinkedNotebook
 	if notebookName != "" {
-		// Lock-free variant: we already hold configMu in write mode above,
-		// and resolveSourceByName would self-deadlock re-acquiring RLock.
 		source = a.resolveSourceByNameLocked(notebookName)
+		if source != config.LinkedNotebooksVaultSource {
+			for _, candidate := range a.cfg.LinkedNotebooks {
+				if candidate.Source() == source {
+					ln = candidate
+					break
+				}
+			}
+		}
 	}
+	a.configMu.RUnlock()
+
 	if source == config.LinkedNotebooksVaultSource {
 		// Vault notebook (or no active notebook): vault settings verbatim.
 		return vaultEntry, nil
 	}
 
-	// Linked notebook: find the registry entry and apply the co-located
-	// override layer.
-	var ln config.LinkedNotebook
-	found := false
-	for _, candidate := range a.cfg.LinkedNotebooks {
-		if candidate.Source() == source {
-			ln = candidate
-			found = true
-			break
-		}
-	}
-	if !found {
-		// Registry out of sync (stale source) — degrade gracefully to the
-		// vault settings. Logged so the mismatch is discoverable.
+	// Linked notebook: if the registry didn't find the source (stale),
+	// degrade gracefully to vault settings.
+	if ln.ID == "" {
 		log.Printf("GetPluginSettingsForNotebook(%s,%s): source %q not in registry; returning vault settings", pluginID, notebookName, source)
 		return vaultEntry, nil
 	}
-	linkedCfg, err := a.linkedConfigLocked(ln)
+	linkedCfg, err := a.linkedConfigFor(ln)
 	if err != nil {
 		// Fail-loud: an unparseable co-located config surfaces as an error
 		// rather than silently degrading to vault settings (the user must

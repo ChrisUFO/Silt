@@ -103,14 +103,14 @@
   // instead of hard-coding a literal that can drift if the cap is tuned.
   let loadedCount = $state(0)
 
-  // Columns are mutable (user can add / rename / remove / reorder lanes) and
-  // persist to vault config via updatePluginSetting (atomic, #120). The
-  // INITIAL value comes synchronously from the vault config store (the base-
-  // line for every notebook). The per-active-notebook re-resolution effect
-  // below overrides columns/filters on a vault ↔ linked switch, applying the
-  // co-located override layer (#133). Between resolutions the local state is
-  // the user's working copy; user mutations bypass the resolution sync and
-  // stick until the next notebook switch.
+  // --- Plugin settings: read vs write paths (#133) ---
+  // READ path: ctx.getPluginSettings() resolves per-active-notebook — vault
+  // notebooks get the vault-scoped config verbatim; linked notebooks get the
+  // deep-merge of vault defaults + the co-located <root>/.system/config.yaml
+  // (linked wins per-key). The initial mount reads synchronously from the
+  // vault config store (below); the re-resolution effect handles switches.
+  // WRITE path: always vault-scoped via updatePluginSetting (#120). Silt
+  // NEVER writes the co-located file (it is read-only / user-authored).
   function initialColumns(): string[] {
     const cfgCols = settings.config?.plugins?.plugin_settings?.['silt-kanban']
       ?.columns as string[] | undefined
