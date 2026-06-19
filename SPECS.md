@@ -137,6 +137,22 @@ indexing it and leaves its files completely untouched (vs. deleting a vault
 notebook, which trashes it). See ARCHITECTURE.md §3.1 for the full model
 (identity, path resolution, multi-root watcher, failure modes).
 
+**Relocating / duplicating a vault (#141).** The vault path set during
+onboarding is not permanent: Settings → General exposes a "Move vault…" /
+"Copy vault…" action on the workspace row. Both copy the entire tree (notes +
+`.system/` — config, themes, templates, plugins, trash) to a destination
+folder, EXCEPT the reproducible SQLite index (`.system/index.sqlite*`), which
+is rebuilt from markdown when the destination is first opened (the documented
+recovery op, §0 rule 4 — this is what makes a move safe across volumes and
+avoids stale absolute paths in the index). **Move** then switches the active
+workspace: it tears down services, repoints `settings.json` `vault_path` at
+the new location (theme/mode preserved), and reinitializes — with a verbatim
+rollback to the original path if reinit fails. **Copy** leaves the active
+vault live and produces a separate workspace the user can switch into later.
+The destination must be an empty, local folder (a network mount is refused —
+WAL requires shared memory). Linked notebooks are external folders and are
+never moved or rewritten by a vault relocation.
+
 
 3.3 File Boundary Specification & Frontmatter Standard
 

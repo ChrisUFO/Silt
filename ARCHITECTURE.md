@@ -511,6 +511,30 @@ func (a *App) PickNotebookFolder() (string, error)
 func (a *App) CreateSection(notebook, section string) error
 func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error) // section may be ""
 
+// Vault relocation (#141). The active vault can be moved or duplicated to a
+// new folder from Settings → General. CopyVaultTree + verifyCopy (in
+// backend/vault/mover.go) are the shared core; the SQLite index is NEVER
+// copied — it is reproducible working memory (§0 rule 4) and is rebuilt from
+// markdown when the destination is first opened, which sidesteps every stale
+// absolute-path concern a move would otherwise raise.
+//   - CopyVault duplicates the tree; the active vault stays live (no settings
+//     change, no event).
+//   - MoveVault = copy + verify → cutover: teardownVaultServices → patch the
+//     dest config.yaml notebooks.path → persist settings.json (theme/mode
+//     preserved) → initializeVaultServices at the new path, with a verbatim
+//     rollback to the original path if reinit fails. removeOld deletes the
+//     original folder AFTER a successful cutover (non-fatal on failure).
+//   - SwitchVault points Silt at an existing vault folder with no picker or
+//     scaffold (the Copy flow's "Switch to this vault" affordance).
+// Both MoveVault and SwitchVault emit `vault:moved` ({from, to}) so the
+// frontend resets navigation and reloads its stores. Linked notebooks are
+// external folders and are never moved by any of these.
+func (a *App) PickVaultDestination() (string, error)
+func (a *App) CopyVault(destPath string) (vault.CopyResult, error)
+func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult, error)
+func (a *App) SwitchVault(path string) error
+
+
 // ListNavigation returns the Notebook > Section > Page tree for the sidebar,
 // enumerated from the on-disk folder structure (source of truth) with block
 // counts merged from the index. Section-less pages group under section "".
