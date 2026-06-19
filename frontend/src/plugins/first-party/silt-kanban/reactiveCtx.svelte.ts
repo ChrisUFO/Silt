@@ -7,6 +7,7 @@
 // This file MUST be .svelte.ts so the `$state` rune compiles.
 
 import type { PluginContext } from '../../sdk'
+import { v2CtxStubs } from '../../test-helpers'
 
 interface NavState {
   notebook: string
@@ -57,6 +58,7 @@ export function reactiveCtx(
     mutateBlock: extras.mutateBlock ?? (() => Promise.resolve(true)),
     updateTaskMeta: extras.updateTaskMeta ?? (() => Promise.resolve(true)),
     getPluginSettings: extras.getPluginSettings ?? (() => Promise.resolve({})),
-    on: extras.on ?? (() => () => {})
+    on: extras.on ?? (() => () => {}),
+    ...v2CtxStubs
   }
 }

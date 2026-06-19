@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
 
 import Agenda from './Agenda.svelte'
 import type { PluginContext, PluginManifest } from '../../sdk'
+import { v2CtxStubs } from '../../test-helpers'
 
 function makeCtx(): PluginContext {
   return {
@@ -21,7 +22,8 @@ function makeCtx(): PluginContext {
     mutateBlock: vi.fn(),
     updateTaskMeta: vi.fn(),
     getPluginSettings: vi.fn(() => Promise.resolve({})),
-    on: () => () => {}
+    on: () => () => {},
+    ...v2CtxStubs
   }
 }
 

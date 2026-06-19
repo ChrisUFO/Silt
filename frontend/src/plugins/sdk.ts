@@ -126,6 +126,98 @@ export interface PluginContext {
     event: E,
     cb: (payload: PluginEventPayload<E>) => void
   ) => () => void
+
+  // --- Expanded content API (#104) --------------------------------------
+
+  /** Query helpers: typed wrappers over sqliteQuery (read-only, no grant). */
+  queryByTag: (path: string) => Promise<SqliteQueryResult>
+  queryByDateRange: (start: string, end: string) => Promise<SqliteQueryResult>
+  fullTextSearch: (query: string) => Promise<SqliteQueryResult>
+  getBacklinks: (uuid: string) => Promise<SqliteQueryResult>
+  getEmbeds: (uuid: string) => Promise<SqliteQueryResult>
+
+  /**
+   * Block CRUD (#104). These reuse the same atomic-write + re-index path as
+   * the core editor (no capability grant — consistent with mutateBlock).
+   * createBlock returns the new block's UUID.
+   */
+  createBlock: (opts: {
+    type: 'TASK' | 'NOTE' | 'HEADER'
+    text: string
+    after?: string
+    notebook?: string
+    section?: string
+    page?: string
+  }) => Promise<string>
+  deleteBlock: (uuid: string) => Promise<boolean>
+  moveBlock: (
+    uuid: string,
+    opts: { after?: string; notebook?: string; section?: string; page?: string }
+  ) => Promise<boolean>
+
+  /** Page / section / notebook CRUD (sandboxed wrappers over App methods). */
+  createPage: (
+    notebook: string,
+    section: string,
+    page: string,
+    date?: string
+  ) => Promise<string>
+  createSection: (notebook: string, section: string) => Promise<boolean>
+  createNotebook: (name: string) => Promise<boolean>
+  deletePage: (
+    notebook: string,
+    section: string,
+    page: string
+  ) => Promise<boolean>
+  renamePage: (
+    notebook: string,
+    section: string,
+    oldName: string,
+    newName: string
+  ) => Promise<boolean>
+
+  // --- Plugin file I/O (#108) — capability-gated (read-files / write-files) ---
+
+  /**
+   * Read a file within a notebook (relative path, traversal-guarded). Returns
+   * the file bytes as a Uint8Array. Gated by read-files.
+   */
+  readFile: (notebook: string, relPath: string) => Promise<Uint8Array>
+  /**
+   * Write a file within a notebook atomically (temp+fsync+rename, same lock
+   * path as note writes). Restricted to attachments/ + plugin scratch dirs.
+   * Gated by write-files.
+   */
+  writeFile: (
+    notebook: string,
+    relPath: string,
+    data: Uint8Array
+  ) => Promise<boolean>
+  /** Delete a file within a notebook. Gated by write-files. */
+  deleteFile: (notebook: string, relPath: string) => Promise<boolean>
+  /** List the immediate children of a directory within a notebook. Gated by read-files. */
+  listDir: (notebook: string, relPath: string) => Promise<string[]>
+  /** Resolve a notebook's absolute root dir (in-vault or linked per #100). Gated by read-files. */
+  notebookRoot: (notebook: string) => Promise<string>
+  /** Get (and lazily create) this plugin's per-notebook scratch dir. Gated by write-files. */
+  scratchDir: (notebook: string) => Promise<string>
+
+  // --- OS integration (#114) — capability-gated ---------------------------
+
+  /** Open a notebook file in the OS native handler. Gated by os-open. */
+  openInNativeHandler: (notebook: string, relPath: string) => Promise<boolean>
+  /** Open a URL (http/https/mailto only) in the system browser. Gated by os-open. */
+  openUrl: (url: string) => Promise<boolean>
+  /** Native open-file picker (user-driven; returns the chosen path or ""). */
+  pickOpenFile: (filterPattern?: string) => Promise<string>
+  /** Native save-file picker (user-driven; returns the chosen path or ""). */
+  pickSaveFile: (defaultFilename?: string) => Promise<string>
+  /** Read the system clipboard (text). Gated by os-clipboard. */
+  clipboardRead: () => Promise<string>
+  /** Write text to the system clipboard. Gated by os-clipboard. */
+  clipboardWrite: (text: string) => Promise<boolean>
+  /** Show a desktop notification. Gated by os-notify. */
+  notify: (opts: { title: string; body: string }) => Promise<boolean>
 }
 
 // --- v2 SDK typed event bus (#106) ---------------------------------------
