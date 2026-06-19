@@ -472,7 +472,13 @@ func TestSourceModifiedAfter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Snapshot NOW; everything written so far predates the cutoff.
+	// Allow the filesystem clock to advance past the file writes BEFORE
+	// capturing the cutoff. SourceModifiedAfter uses !Before (>=) for safety
+	// (a borderline file is never deleted from its owner), so the cutoff must
+	// be strictly after the writes — otherwise a same-instant mtime triggers
+	// a false "modified" on filesystems with coarse timestamp resolution
+	// (notably NTFS on Windows).
+	time.Sleep(200 * time.Millisecond)
 	cutoff := time.Now()
 	// Allow the filesystem clock to advance (mtimes have second resolution
 	// on some filesystems).
