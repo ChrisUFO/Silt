@@ -24,8 +24,8 @@
   </div>
 
   <p class="text-text-primary text-[13px] font-body-md mb-6">
-    Capture ideas and get work done. A fast, organized workspace for your notes,
-    tasks, and projects — always yours.
+    Capture ideas and get work done. A fast, organized workspace for your notes
+    and tasks — always yours.
   </p>
 
   <section>
