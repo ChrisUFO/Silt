@@ -110,10 +110,11 @@ func TestIndexFileBlocks_InsertsBlocksTasksAndTags(t *testing.T) {
 }
 
 // TestIndexFileBlocks_PinnedProjection verifies the markdown *bool pin state
-// (nil / &false / &true) projects onto the INTEGER 0/1 tasks.pinned cache
-// column. The tri-state lives only in the parse→render cycle; SQLite caches a
-// plain 0/1 for query speed (nil and &false both project to 0). Covers a
-// previously-missing assertion (#123).
+// (nil / &false / &true) projects onto the tri-state tasks.pinned cache column
+// (#135): NULL for no [pin::] token, 0 for [pin:: false], 1 for [pin:: true].
+// The column is reproducible cache; the markdown is the source of truth. The
+// previous 0/1 projection collapsed nil and &false to 0, losing the explicit
+// unpinned state that the parser/renderer already round-trip (#123).
 func TestIndexFileBlocks_PinnedProjection(t *testing.T) {
 	dm := newTestDB(t)
 
@@ -126,28 +127,188 @@ func TestIndexFileBlocks_PinnedProjection(t *testing.T) {
 	blocks := []parser.ParsedBlock{
 		mk("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", boolPtr(true)),  // -> 1
 		mk("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", boolPtr(false)), // -> 0
-		mk("cccccccc-cccc-cccc-cccc-cccccccccccc", nil),            // -> 0
+		mk("cccccccc-cccc-cccc-cccc-cccccccccccc", nil),            // -> NULL
 	}
 	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
 		t.Fatalf("IndexFileBlocks failed: %v", err)
 	}
 
 	cases := []struct {
-		id   string
-		want int
+		id       string
+		valid    bool
+		intVal   int64 // only meaningful when valid
 	}{
-		{"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1},
-		{"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 0},
-		{"cccccccc-cccc-cccc-cccc-cccccccccccc", 0},
+		{"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", true, 1},
+		{"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", true, 0},
+		{"cccccccc-cccc-cccc-cccc-cccccccccccc", false, 0}, // NULL (no [pin::] token)
 	}
 	for _, c := range cases {
-		var got int
+		var got sql.NullInt64
 		if err := dm.db.QueryRow("SELECT pinned FROM tasks WHERE block_id = ?", c.id).Scan(&got); err != nil {
 			t.Fatalf("select pinned for %s: %v", c.id, err)
 		}
-		if got != c.want {
-			t.Errorf("%s: expected pinned=%d, got %d", c.id, c.want, got)
+		if got.Valid != c.valid {
+			t.Errorf("%s: expected valid=%v (tri-state), got valid=%v int=%d", c.id, c.valid, got.Valid, got.Int64)
+			continue
 		}
+		if got.Valid && got.Int64 != c.intVal {
+			t.Errorf("%s: expected pinned=%d, got %d", c.id, c.intVal, got.Int64)
+		}
+	}
+}
+
+// TestIndexScanResults_PinnedProjection mirrors TestIndexFileBlocks_PinnedProjection
+// for the batched vault-startup indexer, confirming the tri-state NULL/0/1
+// cache is consistent across both indexer entry points (#135).
+func TestIndexScanResults_PinnedProjection(t *testing.T) {
+	dm := newTestDB(t)
+
+	boolPtr := func(b bool) *bool { return &b }
+	mk := func(id string, pinned *bool, ln int) parser.ParsedBlock {
+		b := sampleTaskBlock(id, ln)
+		b.Pinned = pinned
+		return b
+	}
+	results := []parser.ScanResult{{
+		Notebook: "Work",
+		Section:  "Journal",
+		Page:     "Daily",
+		Blocks: []parser.ParsedBlock{
+			mk("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", boolPtr(true), 1),  // -> 1
+			mk("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", boolPtr(false), 2), // -> 0
+			mk("cccccccc-cccc-cccc-cccc-cccccccccccc", nil, 3),            // -> NULL
+		},
+	}}
+	count, _, err := dm.IndexScanResults(results)
+	if err != nil {
+		t.Fatalf("IndexScanResults: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 file indexed, got %d", count)
+	}
+
+	cases := []struct {
+		id     string
+		valid  bool
+		intVal int64
+	}{
+		{"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", true, 1},
+		{"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", true, 0},
+		{"cccccccc-cccc-cccc-cccc-cccccccccccc", false, 0}, // NULL
+	}
+	for _, c := range cases {
+		var got sql.NullInt64
+		if err := dm.db.QueryRow("SELECT pinned FROM tasks WHERE block_id = ?", c.id).Scan(&got); err != nil {
+			t.Fatalf("select pinned for %s: %v", c.id, err)
+		}
+		if got.Valid != c.valid {
+			t.Errorf("%s: expected valid=%v, got valid=%v int=%d", c.id, c.valid, got.Valid, got.Int64)
+			continue
+		}
+		if got.Valid && got.Int64 != c.intVal {
+			t.Errorf("%s: expected pinned=%d, got %d", c.id, c.intVal, got.Int64)
+		}
+	}
+}
+
+// TestQueryTasksWithFilters_HydratesPinnedTriState verifies the reader
+// hydrates the tri-state cache back into TaskResult.Pinned *bool: NULL→nil,
+// 0→&false, 1→&true (#135). Closes the lossy-projection gap left by the #123
+// delivery: the renderer round-tripped [pin:: false] but the cache could not
+// represent it.
+func TestQueryTasksWithFilters_HydratesPinnedTriState(t *testing.T) {
+	dm := newTestDB(t)
+
+	boolPtr := func(b bool) *bool { return &b }
+	mk := func(id string, pinned *bool) parser.ParsedBlock {
+		b := sampleTaskBlock(id, 1)
+		b.Pinned = pinned
+		return b
+	}
+	blocks := []parser.ParsedBlock{
+		mk("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", boolPtr(true)),  // &true
+		mk("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", boolPtr(false)), // &false
+		mk("cccccccc-cccc-cccc-cccc-cccccccccccc", nil),            // nil
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	results, err := dm.QueryTasksWithFilters(parser.TaskQueryFilter{})
+	if err != nil {
+		t.Fatalf("QueryTasksWithFilters: %v", err)
+	}
+
+	want := map[string]*bool{
+		"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa": boolPtr(true),
+		"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb": boolPtr(false),
+		"cccccccc-cccc-cccc-cccc-cccccccccccc": nil,
+	}
+	got := make(map[string]*bool, len(results))
+	for _, r := range results {
+		got[r.ID] = r.Pinned
+	}
+	for id, wantPin := range want {
+		gotPin, ok := got[id]
+		if !ok {
+			t.Errorf("task %s missing from query results", id)
+			continue
+		}
+		if (gotPin == nil) != (wantPin == nil) {
+			t.Errorf("task %s: expected pinned nil=%v, got nil=%v", id, wantPin == nil, gotPin == nil)
+			continue
+		}
+		if gotPin != nil && *gotPin != *wantPin {
+			t.Errorf("task %s: expected *pinned=%v, got %v", id, *wantPin, *gotPin)
+		}
+	}
+}
+
+// TestPluginRawQuery_PinnedFilterRegression confirms the Kanban-style raw SQL
+// path (`WHERE t.pinned = 1`) still returns exactly the explicitly-pinned
+// task now that the cache column is tri-state (NULL/0/1). NULL (no token) and
+// 0 ([pin:: false]) must both be excluded from a `= 1` filter. This is the
+// property the Kanban board depends on for its pinned-only lanes.
+func TestPluginRawQuery_PinnedFilterRegression(t *testing.T) {
+	dm := newTestDB(t)
+
+	boolPtr := func(b bool) *bool { return &b }
+	mk := func(id string, pinned *bool) parser.ParsedBlock {
+		b := sampleTaskBlock(id, 1)
+		b.Pinned = pinned
+		return b
+	}
+	blocks := []parser.ParsedBlock{
+		mk("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", boolPtr(true)),  // included
+		mk("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", boolPtr(false)), // excluded
+		mk("cccccccc-cccc-cccc-cccc-cccccccccccc", nil),            // excluded
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	rows, err := dm.db.Query(
+		"SELECT b.id FROM blocks b JOIN tasks t ON b.id = t.block_id WHERE t.pinned = 1",
+	)
+	if err != nil {
+		t.Fatalf("query pinned=1: %v", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows err: %v", err)
+	}
+
+	if len(ids) != 1 || ids[0] != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
+		t.Errorf("expected exactly the [pin:: true] task, got %v", ids)
 	}
 }
 
@@ -584,6 +745,122 @@ func TestIndexScanResults_ReturnsSkippedFiles(t *testing.T) {
 	}
 	if !strings.Contains(skipped[0], "bad.md") || !strings.Contains(skipped[0], "simulated parse failure") {
 		t.Errorf("expected skip message to mention bad.md and the error, got: %s", skipped[0])
+	}
+}
+
+// TestIndexScanResults_SourceAwareBatch confirms #134's source-aware
+// IndexScanResults: a single batched call carrying both a vault-source result
+// and a linked-source result indexes each under its own source, and the
+// per-source ClearFileBlocks scoping means a same-named notebook across the
+// two sources does not collide (the linked result's clear does not wipe the
+// vault result's rows). This is the property that lets indexLinkedTree safely
+// batch a linked tree through the same function the vault startup scan uses.
+func TestIndexScanResults_SourceAwareBatch(t *testing.T) {
+	dm := newTestDB(t)
+
+	// Two files, same display notebook name "Work", different sources.
+	results := []parser.ScanResult{
+		{
+			Path:     "/vault/Work/Journal/Daily.md",
+			Notebook: "Work",
+			Section:  "Journal",
+			Page:     "Daily",
+			Source:   "", // empty -> defaults to 'vault'
+			Blocks:   []parser.ParsedBlock{sampleTaskBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)},
+		},
+		{
+			Path:     "/linked/Work.md",
+			Notebook: "Work",
+			Section:  "",
+			Page:     "Work",
+			Source:   "linked:abc",
+			Blocks:   []parser.ParsedBlock{sampleTaskBlock("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 1)},
+		},
+	}
+
+	count, skipped, err := dm.IndexScanResults(results)
+	if err != nil {
+		t.Fatalf("IndexScanResults: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected 2 indexed files, got %d (skipped=%v)", count, skipped)
+	}
+	if len(skipped) != 0 {
+		t.Errorf("expected no skipped files, got %v", skipped)
+	}
+
+	// Both rows present, each carrying its own source.
+	type row struct {
+		source, notebook, page string
+	}
+	got := []row{}
+	rows, err := dm.db.Query("SELECT source, notebook, page FROM blocks ORDER BY source")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.source, &r.notebook, &r.page); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, r)
+	}
+	want := []row{
+		{"linked:abc", "Work", "Work"},
+		{"vault", "Work", "Daily"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d rows, got %d (%+v)", len(want), len(got), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("row %d: got %+v, want %+v", i, got[i], w)
+		}
+	}
+}
+
+// TestIndexScanResults_LinkedSourceScopedClear verifies the source-aware
+// ClearFileBlocks in the batched indexer does not wipe a vault-source row
+// when re-indexing a same-named linked notebook (and vice versa). This is the
+// scoping guarantee that lets #134's batched linked-tree path coexist with
+// the vault scan.
+func TestIndexScanResults_LinkedSourceScopedClear(t *testing.T) {
+	dm := newTestDB(t)
+
+	// Index a vault row.
+	vaultRes := parser.ScanResult{
+		Notebook: "Work",
+		Section:  "Journal",
+		Page:     "Daily",
+		Blocks:   []parser.ParsedBlock{sampleTaskBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)},
+	}
+	if _, _, err := dm.IndexScanResults([]parser.ScanResult{vaultRes}); err != nil {
+		t.Fatalf("first vault index: %v", err)
+	}
+
+	// Index a linked row with the SAME (notebook, section, page) — the
+	// linked clear must NOT wipe the vault row.
+	linkedRes := parser.ScanResult{
+		Notebook: "Work",
+		Section:  "Journal",
+		Page:     "Daily",
+		Source:   "linked:abc",
+		Blocks:   []parser.ParsedBlock{sampleTaskBlock("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 1)},
+	}
+	if _, _, err := dm.IndexScanResults([]parser.ScanResult{linkedRes}); err != nil {
+		t.Fatalf("linked index: %v", err)
+	}
+
+	var n int
+	if err := dm.db.QueryRow(
+		"SELECT COUNT(*) FROM blocks WHERE notebook = ? AND section = ? AND page = ?",
+		"Work", "Journal", "Daily",
+	).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected both sources to coexist (2 rows), got %d (linked clear wiped vault?)", n)
 	}
 }
 

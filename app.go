@@ -73,11 +73,32 @@ type App struct {
 	// (mirrors configWatcher).
 	templateWatcher *templates.TemplateWatcher
 
+	// linkedConfigs is an mtime-aware cache of each linked notebook's
+	// co-located <root>/.system/config.yaml (#133). Keyed by source
+	// ('linked:<id>'). linkedConfigFor refreshes an entry when the on-disk
+	// mtime advances; the watcher invalidates an entry on external edit so
+	// the next read re-loads. Guarded by linkedConfigsMu (a dedicated mutex,
+	// NOT configMu) so concurrent GetPluginSettingsForNotebook callers can
+	// safely read/write the cache without holding configMu's write lock
+	// (which would serialize all config access) and without risking a
+	// concurrent-map-write panic under configMu.RLock (a read lock cannot
+	// protect map writes).
+	linkedConfigsMu sync.Mutex
+	linkedConfigs   map[string]linkedConfigEntry
+
 	// pluginRODB is a lazy read-only handle to the in-memory index, used
 	// exclusively by PluginRawQuery so a plugin can never mutate the index
 	// or schema even if a prefix check or comment-stripping is bypassed.
 	pluginRODBMu sync.Mutex
 	pluginRODB   *sql.DB
+}
+
+// linkedConfigEntry is one slot in App.linkedConfigs. mtime is the on-disk
+// modification time of the co-located config.yaml at the moment cfg was
+// parsed; a later mtime triggers a re-read.
+type linkedConfigEntry struct {
+	cfg   config.SystemConfig
+	mtime time.Time
 }
 
 func NewApp() *App {
@@ -333,6 +354,11 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.tracker = tracker
 	a.watcher = watcher
 	a.vaultPath = vaultPath
+
+	// Route co-located per-notebook config edits to the cache invalidator +
+	// linked-config:changed event (#133). The handler is called from the
+	// watcher goroutine; it only touches configMu + the event emitter.
+	watcher.SetLinkedConfigHandler(a.onLinkedConfigChange)
 
 	// Start hot-reload of .system/config.yaml. External edits re-parse and
 	// emit config:changed without a restart (SPECS.md §9.2). Silt's own
@@ -1441,9 +1467,21 @@ type nspKey struct{ src, n, s, p string }
 // source. This lets the notebook-scoped CRUD/focus-lock operations keep their
 // IPC signatures source-free while still routing to the correct root (#100),
 // avoiding a parallel frontend source-flow.
+// resolveSourceByName maps a notebook display name to its index source
+// ("vault" or "linked:<id>"). It acquires configMu in read mode for the
+// standalone callers below.
 func (a *App) resolveSourceByName(notebookName string) string {
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()
+	return a.resolveSourceByNameLocked(notebookName)
+}
+
+// resolveSourceByNameLocked is the lock-free inner form. The caller MUST hold
+// configMu (read or write). Needed so GetPluginSettingsForNotebook — which
+// holds configMu in WRITE mode (linkedConfigLocked mutates the cache map) —
+// can resolve the source without self-deadlocking on a re-entrant RLock
+// (sync.RWMutex blocks RLock while a writer holds the lock).
+func (a *App) resolveSourceByNameLocked(notebookName string) string {
 	for _, ln := range a.cfg.LinkedNotebooks {
 		if ln.DisplayName == notebookName {
 			return ln.Source()
@@ -2006,6 +2044,12 @@ func (a *App) UnlinkNotebook(id string) error {
 		return nil // idempotent: unknown id is a no-op
 	}
 
+	// Drop the co-located config cache entry for this source (#133);
+	// a re-link of the same root will re-populate it lazily. Done AFTER
+	// releasing configMu so the dedicated linkedConfigsMu is the only lock
+	// held (no nested locking).
+	a.invalidateLinkedConfig("linked:" + id)
+
 	if a.watcher != nil && rootPath != "" {
 		a.watcher.RemoveWatchRoot(rootPath)
 	}
@@ -2096,10 +2140,114 @@ func (a *App) linkByRecordLocked(ln config.LinkedNotebook) (config.LinkedNoteboo
 	return config.LinkedNotebook{}, false
 }
 
+// linkedConfigFor returns the linked notebook's co-located config.yaml
+// (<linkedRoot>/.system/config.yaml, #133), mtime-cached. If the on-disk
+// mtime is unchanged since the last load, the cached parsed config is
+// returned; otherwise the file is re-read and the cache is updated. Thread-
+// safe via linkedConfigsMu (a dedicated mutex, NOT configMu) so concurrent
+// callers resolving different linked notebooks cannot trigger a
+// concurrent-map-write panic. A missing co-located file yields
+// config.Defaults() with no error (the normal case — the vault-scoped
+// config.yaml is the baseline). An unparseable file yields a real error so
+// the user can fix it; the cache is not populated with garbage on error.
+//
+// The PLAN (Phase 5) called for pre-populating the cache in
+// initializeVaultServices; the implementation uses lazy population instead
+// (the cache fills on the first GetPluginSettingsForNotebook call for each
+// source). This avoids blocking startup on N co-located-config reads for N
+// linked notebooks and is functionally equivalent: the mtime check on every
+// call guarantees freshness, and a cache miss is a single stat + read.
+func (a *App) linkedConfigFor(ln config.LinkedNotebook) (config.SystemConfig, error) {
+	source := ln.Source()
+	path := config.LinkedConfigPath(ln.RootPath)
+
+	// Stat OUTSIDE the lock — the mtime is the cache key, and stat is fast
+	// even on a network mount (no file content read). Holding linkedConfigsMu
+	// during stat would serialize concurrent cache-miss resolutions for
+	// different linked notebooks (#133 review).
+	st, statErr := os.Stat(path)
+	var mtime time.Time
+	fileExists := false
+	if statErr == nil {
+		mtime = st.ModTime()
+		fileExists = true
+	} else if !os.IsNotExist(statErr) {
+		return config.Defaults(), fmt.Errorf("stat linked config: %w", statErr)
+	}
+
+	// Cache check under lock (no I/O — quick map lookup).
+	a.linkedConfigsMu.Lock()
+	if a.linkedConfigs == nil {
+		a.linkedConfigs = make(map[string]linkedConfigEntry)
+	}
+	if cached, ok := a.linkedConfigs[source]; ok {
+		// Hit conditions: file still missing (zero mtime cached) or
+		// mtime unchanged.
+		if (!fileExists && cached.mtime.IsZero()) || (fileExists && cached.mtime.Equal(mtime)) {
+			a.linkedConfigsMu.Unlock()
+			return cached.cfg, nil
+		}
+	}
+	a.linkedConfigsMu.Unlock()
+
+	// Cache miss: load OUTSIDE the lock (disk read + YAML parse). Two
+	// concurrent goroutines may both miss and both load — that is fine;
+	// last writer wins and the data converges (identical or next-access
+	// refresh). The lock is only held for the map mutation.
+	cfg, err := config.LoadLinked(ln.RootPath)
+	if err != nil {
+		return config.Defaults(), err
+	}
+
+	// Update cache under lock.
+	a.linkedConfigsMu.Lock()
+	a.linkedConfigs[source] = linkedConfigEntry{cfg: cfg, mtime: mtime}
+	a.linkedConfigsMu.Unlock()
+
+	return cfg, nil
+}
+
+// invalidateLinkedConfig drops the cached co-located config for a source so
+// the next read re-loads from disk. Called by the watcher hook on an external
+// edit of <linkedRoot>/.system/config.yaml and by UnlinkNotebook. Thread-safe
+// via linkedConfigsMu.
+func (a *App) invalidateLinkedConfig(source string) {
+	a.linkedConfigsMu.Lock()
+	defer a.linkedConfigsMu.Unlock()
+	if a.linkedConfigs == nil {
+		return
+	}
+	delete(a.linkedConfigs, source)
+}
+
+// onLinkedConfigChange is the watcher hook for external edits to a linked
+// notebook's co-located <root>/.system/config.yaml (#133). It drops the
+// cached parsed config for the source (so the next GetPluginSettingsForNotebook
+// call re-reads from disk) and emits a linked-config:changed Wails event so
+// the frontend can refresh any per-active-notebook settings it derived from
+// the old config. Called from the watcher goroutine.
+func (a *App) onLinkedConfigChange(source string) {
+	a.invalidateLinkedConfig(source)
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "linked-config:changed", source)
+	}
+}
+
 // indexLinkedTree walks a linked root's markdown and indexes it under the
-// linked source. The notebook name is the link's DisplayName (the root IS one
-// notebook); sections/pages are derived from the path relative to the root.
-// Returns the number of files indexed.
+// linked source in a SINGLE batched transaction (#134). The notebook name is
+// the link's DisplayName (the root IS one notebook); sections/pages are
+// derived from the path relative to the root. Returns the number of files
+// indexed.
+//
+// Batched (was per-file): the previous implementation called IndexFileBlocks
+// (which begins/commits its own transaction) plus MarkFileIndexed for every
+// file, producing N transactions for N files. On a large synced mount (the
+// headline #100 workload) that was WAL-checkpoint thrash and slow first-link
+// UX. The batched path threads `source` through IndexScanResults (the same
+// function the vault startup scan uses) and does the files-table
+// (MarkFileIndexed) pass after the index commit, preserving linked warm
+// restart. Per-file read/parse errors are surfaced in the skipped list
+// (IndexScanResults collects them) instead of logged inline.
 func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 	files, warnings, err := parser.WalkMarkdown(ln.RootPath)
 	for _, w := range warnings {
@@ -2109,10 +2257,19 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 		return 0, fmt.Errorf("walk linked root: %w", err)
 	}
 	source := ln.Source()
-	indexed := 0
+
+	// Build the per-file ScanResult set in one pass. Read/parse errors are
+	// recorded on the result (Err) so IndexScanReports reports them in the
+	// skipped list rather than aborting the whole batch — same visibility
+	// as the per-file path, one transaction instead of N.
+	results := make([]parser.ScanResult, 0, len(files))
 	for _, file := range files {
-		rel, err := filepath.Rel(ln.RootPath, file)
-		if err != nil {
+		rel, relErr := filepath.Rel(ln.RootPath, file)
+		if relErr != nil {
+			results = append(results, parser.ScanResult{
+				Path: file,
+				Err:  fmt.Errorf("resolve relative path: %w", relErr),
+			})
 			continue
 		}
 		parts := strings.Split(filepath.ToSlash(rel), "/")
@@ -2124,36 +2281,90 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 		if len(parts) > 1 {
 			section = strings.Join(parts[:len(parts)-1], "/")
 		}
-		contentBytes, err := os.ReadFile(file)
-		if err != nil {
-			log.Printf("LinkNotebook(%s): read %s failed: %v", ln.DisplayName, file, err)
+
+		st, statErr := os.Stat(file)
+		contentBytes, readErr := os.ReadFile(file)
+		if readErr != nil {
+			log.Printf("LinkNotebook(%s): read %s failed: %v", ln.DisplayName, file, readErr)
+			results = append(results, parser.ScanResult{Path: file, Err: readErr})
 			continue
 		}
+		// Force the linked notebook's display name: an external file's
+		// frontmatter may declare a different `notebook:`, which would
+		// make the row miss ListNavigation's DisplayName filter. The
+		// linked root IS this one notebook (#100).
 		blocks, meta, _, _, perr := parser.ParseFileContent(string(contentBytes), ln.DisplayName, section, pageName, fileOrDefaultDate(file), a.spacesPerTab)
 		if perr != nil {
 			log.Printf("LinkNotebook(%s): parse %s failed: %v", ln.DisplayName, file, perr)
+			results = append(results, parser.ScanResult{Path: file, Err: perr})
 			continue
 		}
-		var idxErr error
-		a.coordinator.WithDBWrite(func() {
-			// Force the linked notebook's display name: an external file's
-			// frontmatter may declare a different `notebook:`, which would
-			// make the row miss ListNavigation's DisplayName filter. The
-			// linked root IS this one notebook (#100).
-			idxErr = a.db.IndexFileBlocks(source, ln.DisplayName, section, pageName, blocks, meta.Tags, meta.Warnings...)
-			if idxErr == nil {
-				if st, serr := os.Stat(file); serr == nil {
-					_ = a.db.MarkFileIndexed(nil, file, st.ModTime().UnixNano(), st.Size())
-				}
-			}
-		})
-		if idxErr != nil {
-			log.Printf("LinkNotebook(%s): index %s failed: %v", ln.DisplayName, file, idxErr)
-			continue
+		res := parser.ScanResult{
+			Path:     file,
+			Notebook: ln.DisplayName,
+			Section:  section,
+			Page:     pageName,
+			Source:   source,
+			Blocks:   blocks,
+			Tags:     meta.Tags,
+			Warnings: meta.Warnings,
 		}
-		indexed++
+		if statErr == nil {
+			res.MTime = st.ModTime()
+			res.Size = st.Size()
+		}
+		results = append(results, res)
 	}
-	return indexed, nil
+
+	var (
+		indexedCount int
+		skipped      []string
+		idxErr       error
+	)
+	a.coordinator.WithDBWrite(func() {
+		indexedCount, skipped, idxErr = a.db.IndexScanResults(results)
+	})
+	if idxErr != nil {
+		return indexedCount, fmt.Errorf("index linked tree: %w", idxErr)
+	}
+	for _, s := range skipped {
+		log.Printf("LinkNotebook(%s): skipped %s", ln.DisplayName, s)
+	}
+
+	// Post-commit files-table pass: record mtime+size for each successfully
+	// indexed file so a warm restart skips re-parsing it. A file is
+	// considered indexed iff IndexScanResults counted it (Err == nil &&
+	// Notebook != ""). Mirrors the vault startup scan's MarkFileIndexed loop,
+	// but batched: a single transaction inside WithDBWrite, so N files cost
+	// one commit (not N auto-committed statements) and the coordinator keeps
+	// serializing writes against concurrent IPC. Unbatched, this defeated
+	// #134's purpose on large linked mounts (WAL-checkpoint thrash) and raced
+	// other writers.
+	a.coordinator.WithDBWrite(func() {
+		tx, err := a.db.SQLDB().Begin()
+		if err != nil {
+			log.Printf("LinkNotebook(%s): begin files-tx failed: %v", ln.DisplayName, err)
+			return
+		}
+		defer tx.Rollback()
+		for _, res := range results {
+			if res.Err != nil || res.Notebook == "" {
+				continue
+			}
+			if res.MTime.IsZero() {
+				// No stat → can't record a skip key; leave it to be re-parsed
+				// next time rather than risk a false "unchanged".
+				continue
+			}
+			if err := a.db.MarkFileIndexed(tx, res.Path, res.MTime.UnixNano(), res.Size); err != nil {
+				log.Printf("LinkNotebook(%s): MarkFileIndexed(%s): %v", ln.DisplayName, res.Path, err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			log.Printf("LinkNotebook(%s): files-tx commit failed: %v", ln.DisplayName, err)
+		}
+	})
+	return indexedCount, nil
 }
 
 // CreateSection creates a section folder inside a notebook. A section groups
@@ -3646,6 +3857,92 @@ func (a *App) UpdatePluginSetting(pluginID string, key string, value any) error 
 		a.configWatcher.RegisterSelfWrite()
 	}
 	return config.Save(a.vaultPath, a.cfg)
+}
+
+// GetPluginSettingsForNotebook resolves a plugin's settings map for the
+// ACTIVE notebook, applying the co-located per-notebook override layer (#133).
+//
+// Merge precedence: vault-scoped config.yaml is the baseline; a linked
+// notebook's co-located <root>/.system/config.yaml overlays it per-key
+// (linked wins). For a vault notebook (or no active notebook), the vault
+// settings are returned unchanged. For a linked notebook with no co-located
+// file, the vault settings are returned (the normal case). The merge is
+// computed on every call from the live, mtime-cached co-located config, so an
+// external edit to either file is reflected on the next call (the watcher
+// also emits linked-config:changed to drive reactive refreshes).
+//
+// pluginID selects which plugin's entry is returned (e.g. "silt-kanban"). An
+// unknown pluginID yields an empty map, not an error — a plugin with no
+// stored settings is the same as a plugin whose settings are all defaults.
+//
+// notebookName is the display name (the sidebar label); it is resolved to a
+// source via resolveSourceByName. An empty notebookName is treated as the
+// vault scope (no active notebook).
+func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[string]any, error) {
+	if a.vaultPath == "" {
+		return nil, fmt.Errorf("vault not loaded")
+	}
+	if pluginID == "" {
+		return nil, fmt.Errorf("pluginID is required")
+	}
+
+	// Snapshot the vault entry + resolve the source under the config read
+	// lock. linkedConfigFor uses its OWN mutex (linkedConfigsMu) for the
+	// co-located cache, so we release configMu before calling it — this
+	// avoids holding configMu during disk I/O on a cache miss and avoids
+	// the concurrent-map-write panic that would arise if linkedConfigFor
+	// wrote to linkedConfigs under an RLock.
+	//
+	// CRITICAL: vaultEntry is cloned (via MergePluginSettings) INSIDE the
+	// RLock, not after release. UpdatePluginSetting mutates this map
+	// in-place (entry[key]=value) under configMu.Lock(); cloning after
+	// RUnlock would expose the clone iteration to a concurrent write.
+	a.configMu.RLock()
+	vaultEntry, _ := a.cfg.Plugins.PluginSettings[pluginID].(map[string]any)
+	if vaultEntry == nil {
+		vaultEntry = map[string]any{}
+	}
+	// Deep-clone under the lock so the returned map is a safe snapshot.
+	vaultClone := config.MergePluginSettings(vaultEntry, nil)
+	source := config.LinkedNotebooksVaultSource
+	var ln config.LinkedNotebook
+	if notebookName != "" {
+		source = a.resolveSourceByNameLocked(notebookName)
+		if source != config.LinkedNotebooksVaultSource {
+			for _, candidate := range a.cfg.LinkedNotebooks {
+				if candidate.Source() == source {
+					ln = candidate
+					break
+				}
+			}
+		}
+	}
+	a.configMu.RUnlock()
+
+	if source == config.LinkedNotebooksVaultSource {
+		// Vault notebook (or no active notebook): return the cloned snapshot.
+		return vaultClone, nil
+	}
+
+	// Linked notebook: if the registry didn't find the source (stale),
+	// degrade gracefully to vault settings (already cloned).
+	if ln.ID == "" {
+		log.Printf("GetPluginSettingsForNotebook(%s,%s): source %q not in registry; returning vault settings", pluginID, notebookName, source)
+		return vaultClone, nil
+	}
+	linkedCfg, err := a.linkedConfigFor(ln)
+	if err != nil {
+		// Fail-loud: an unparseable co-located config surfaces as an error
+		// rather than silently degrading to vault settings (the user must
+		// see their broken file). A MISSING file is not an error (LoadLinked
+		// returns Defaults + nil in that case).
+		return nil, fmt.Errorf("linked config for %s: %w", ln.DisplayName, err)
+	}
+	linkedEntry, _ := linkedCfg.Plugins.PluginSettings[pluginID].(map[string]any)
+	if linkedEntry == nil {
+		linkedEntry = map[string]any{}
+	}
+	return config.MergePluginSettings(vaultClone, linkedEntry), nil
 }
 
 // ListPlugins enumerates plugin folders under .system/plugins/, surfacing

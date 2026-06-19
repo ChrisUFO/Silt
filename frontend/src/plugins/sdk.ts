@@ -95,6 +95,20 @@ export interface PluginContext {
     id: string,
     meta: { pinned?: boolean | null; progress?: number }
   ) => Promise<boolean>
+  /**
+   * Resolve this plugin's settings map for the ACTIVE notebook, applying the
+   * co-located per-notebook override layer (#133). For a vault notebook (or
+   * no active notebook), returns the vault-scoped config.yaml entry for this
+   * plugin. For a linked notebook, returns the deep-merge of the vault entry
+   * with the linked notebook's co-located `<root>/.system/config.yaml` entry
+   * (linked wins per-key). The co-located file is READ-ONLY / user-authored;
+   * Silt persists plugin settings to the vault config via updatePluginSetting.
+   *
+   * Re-read on every call so an external edit (vault or co-located) is
+   * reflected immediately; the `linked-config:changed` event drives reactive
+   * refreshes for active UIs.
+   */
+  getPluginSettings: () => Promise<Record<string, any>>
 }
 
 export interface PluginManifest {

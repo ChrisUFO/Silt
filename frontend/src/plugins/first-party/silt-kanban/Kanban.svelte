@@ -6,6 +6,7 @@
   import { plusDaysISO } from '../../sdk'
   import { settings, updatePluginSetting } from '../../../settings/store.svelte'
   import { measureFrameBudget } from '../../../lib/perf/frame-budget'
+  import { EventsOn } from '../../../../wailsjs/runtime/runtime.js'
   import FilterBar, { type KanbanFilters } from './FilterBar.svelte'
   import CardDetailPanel, { type KanbanCard } from './CardDetailPanel.svelte'
 
@@ -102,11 +103,14 @@
   // instead of hard-coding a literal that can drift if the cap is tuned.
   let loadedCount = $state(0)
 
-  // Columns come from config.yaml (plugins.plugin_settings.silt-kanban.columns),
-  // falling back to the canonical TODO/DOING/DONE triple. Now mutable: the
-  // user can add / rename / remove / reorder lanes, and changes persist back
-  // to config via updatePluginSetting (atomic). Custom (non-status) lanes render as empty —
-  // cards are bucketed by status, so only TODO/DOING/DONE lanes fill.
+  // --- Plugin settings: read vs write paths (#133) ---
+  // READ path: ctx.getPluginSettings() resolves per-active-notebook — vault
+  // notebooks get the vault-scoped config verbatim; linked notebooks get the
+  // deep-merge of vault defaults + the co-located <root>/.system/config.yaml
+  // (linked wins per-key). The initial mount reads synchronously from the
+  // vault config store (below); the re-resolution effect handles switches.
+  // WRITE path: always vault-scoped via updatePluginSetting (#120). Silt
+  // NEVER writes the co-located file (it is read-only / user-authored).
   function initialColumns(): string[] {
     const cfgCols = settings.config?.plugins?.plugin_settings?.['silt-kanban']
       ?.columns as string[] | undefined
@@ -114,8 +118,8 @@
   }
   let columns = $state<string[]>(initialColumns())
 
-  // Filter state — persisted (debounced) to config so a board reload
-  // restores the active filter selection.
+  // Filter state — persisted (debounced) to config so a board reload restores
+  // the active filter selection. Same resolution pattern as columns (#133).
   function initialFilters(): KanbanFilters {
     const f = settings.config?.plugins?.plugin_settings?.['silt-kanban']
       ?.filters as Partial<KanbanFilters> | undefined
@@ -127,6 +131,68 @@
     }
   }
   let filters = $state<KanbanFilters>(initialFilters())
+
+  // Per-active-notebook plugin settings re-resolution (#133): on mount AND
+  // on a vault ↔ linked switch (or a linked-config:changed event), re-read
+  // the merged settings from ctx.getPluginSettings() and sync columns +
+  // filters. The synchronous init above provides a fast first paint from
+  // the vault config store; this async resolution then reconciles with the
+  // per-notebook merge — critical for the case where the app opens directly
+  // on a linked notebook, where the vault defaults are NOT the right columns.
+  //
+  // Write guard: the resolution only writes columns/filters when the values
+  // actually differ from the current state. This prevents a spurious reload
+  // when a vault notebook's async resolution returns the same data as the
+  // synchronous init (same-source resolve = no-op for state), while still
+  // applying overrides when the data differs (linked notebook at mount or
+  // on switch).
+  let settingsEpoch = $state(0)
+  $effect(() => {
+    void ctx.activeNotebook // track navigation
+    void settingsEpoch // track linked-config:changed
+    let cancelled = false
+    ctx
+      .getPluginSettings()
+      .then((s) => {
+        if (cancelled) return
+        const cfgCols = s.columns as string[] | undefined
+        const nextCols =
+          cfgCols && cfgCols.length ? [...cfgCols] : [...ALL_STATUSES]
+        if (JSON.stringify(nextCols) !== JSON.stringify(columns)) {
+          columns = nextCols
+        }
+        const f = s.filters as Partial<KanbanFilters> | undefined
+        const nextFilters: KanbanFilters = {
+          owners: f?.owners ?? [],
+          priorities: f?.priorities ?? [],
+          dueDate: f?.dueDate ?? '',
+          tags: f?.tags ?? []
+        }
+        if (JSON.stringify(nextFilters) !== JSON.stringify(filters)) {
+          filters = nextFilters
+        }
+      })
+      .catch((err) => {
+        // Fail loud: an unparseable co-located config rejects the IPC promise
+        // (GetPluginSettingsForNotebook returns a real error, not a silent
+        // default). Surface it via errorMsg so the user sees their broken file
+        // instead of a half-loaded board with no signal.
+        if (cancelled) return
+        errorMsg = err instanceof Error ? err.message : String(err)
+      })
+    return () => {
+      cancelled = true
+    }
+  })
+
+  // Re-resolve when a co-located linked config is edited externally (#133).
+  // The Go watcher emits linked-config:changed after invalidating the cache.
+  $effect(() => {
+    const off = EventsOn('linked-config:changed', () => {
+      settingsEpoch++
+    })
+    return off
+  })
 
   // Card selected for the slide-out detail panel (null = closed).
   let selectedCard = $state<KanbanCard | null>(null)
@@ -173,6 +239,12 @@
     s: Scope,
     f: KanbanFilters
   ): { sql: string; params: unknown[] } {
+    // t.pinned is a tri-state cache column (#135): NULL (no [pin::] token),
+    // 0 ([pin:: false]), or 1 ([pin:: true]). The Kanban chrome treats only
+    // `1` as "pinned"; NULL and 0 are both not-pinned, so the lossy null/0
+    // merge is intentional here (the board does not need to distinguish
+    // explicit-unpinned from no-token). The parser/renderer preserve the full
+    // tri-state round-trip regardless.
     const baseSelect = `SELECT b.id, b.notebook, b.section, b.page, b.file_date, b.line_number,
            b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority,
            t.pinned, t.progress, t.comments_count, t.links_count,

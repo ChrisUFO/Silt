@@ -27,7 +27,6 @@ export async function loadPlugins(
   // Keep the reactive location state in sync (#69). Plugins that read
   // ctx.activeNotebook at query time see the live value.
   setActiveLocation(activeNotebook, activeSection, activePage)
-  const ctx = makePluginContext()
   const plugins = new Map<string, RegisteredPlugin>()
   const errors: { id: string; message: string }[] = []
 
@@ -59,7 +58,9 @@ export async function loadPlugins(
       }
       const def: SiltPlugin | undefined = mod?.default ?? mod
       const manifest = def?.manifest ?? { id, name: id, version: '0.0.0' }
-      def?.init?.(ctx)
+      // Per-plugin context so getPluginSettings knows which plugin is
+      // resolving its settings (#133). The location getters stay reactive.
+      def?.init?.(makePluginContext(id))
       const reg: RegisteredPlugin = {
         manifest,
         component: mod?.default?.component ?? DiskPluginNotice,
@@ -82,7 +83,7 @@ export async function loadPlugins(
   for (const fp of firstPartyPlugins()) {
     if (disabledIds.has(fp.manifest.id)) continue
     if (!plugins.has(fp.manifest.id)) {
-      fp.init?.(ctx)
+      fp.init?.(makePluginContext(fp.manifest.id))
       plugins.set(fp.manifest.id, fp)
     }
   }

@@ -4,27 +4,25 @@ import (
 	"database/sql"
 	"sort"
 	"sync"
-	"sync/atomic"
 )
 
 // fileMutexEntry is the value stored in ExecutionCoordinator.ioMu for each
-// path. The generation counter lets ReleaseFileMutex invalidate a stale entry
-// WITHOUT invalidating an in-flight lock holder: a holder that already passed
-// its generation check owns the mutex until it unlocks, while a waiter that
-// loaded the about-to-be-released entry detects the bumped generation after
-// acquiring and retries against the fresh entry. See LockFileWrite.
+// path. It carries only the mutex; staleness is detected by re-checking the
+// live ioMu map AFTER locking (see LockFileWrite) rather than with a generation
+// counter. The previous generation approach had a TOCTOU window because gen
+// was read BEFORE the mutex was acquired, so a concurrently-released entry
+// could hand a caller the already-bumped gen and let it proceed on an orphaned
+// entry (#131). The map-lookup check closes that window without per-entry
+// state and keeps a single source of truth for the eviction idiom across both
+// ioMu (per-path) and blockMu (per-block).
 type fileMutexEntry struct {
-	mu  *sync.Mutex
-	gen int64 // bumped on release so waiters detect staleness
+	mu *sync.Mutex
 }
 
-// blockMutexEntry is the per-block analog of fileMutexEntry (#122). Unlike the
-// file entry, staleness is detected by re-checking the live blockMu map after
-// locking (see LockBlockWrite) rather than with a generation counter: the
-// generation approach has a TOCTOU window because the gen is read BEFORE the
-// mutex is acquired, so a concurrently-released entry can hand a caller the
-// already-bumped gen and let it proceed on an orphaned entry. The map-lookup
-// check closes that window without per-entry state.
+// blockMutexEntry is the per-block analog of fileMutexEntry (#122). The same
+// map-lookup staleness check (see LockBlockWrite) applies: a concurrent
+// ReleaseBlockMutex can delete (and force a future LoadOrStore to replace) the
+// entry, so a waiter re-checks the live map value after locking.
 type blockMutexEntry struct {
 	mu *sync.Mutex
 }
@@ -52,51 +50,43 @@ func NewExecutionCoordinator(db *sql.DB) *ExecutionCoordinator {
 	}
 }
 
-// getFileEntry returns the current fileMutexEntry for path (creating it on
-// first use) and the generation to check against after locking.
-func (ec *ExecutionCoordinator) getFileEntry(path string) (*fileMutexEntry, int64) {
+// getFileEntry returns the current fileMutexEntry for path, creating it on
+// first use. Callers MUST re-check that this entry is still the live ioMu
+// value AFTER acquiring entry.mu (see LockFileWrite): a concurrent
+// ReleaseFileMutex can delete (and force a future LoadOrStore to replace) it.
+func (ec *ExecutionCoordinator) getFileEntry(path string) *fileMutexEntry {
 	iface, _ := ec.ioMu.LoadOrStore(path, &fileMutexEntry{mu: &sync.Mutex{}})
-	e := iface.(*fileMutexEntry)
-	return e, atomic.LoadInt64(&e.gen)
+	return iface.(*fileMutexEntry)
 }
 
 // LockFileWrite runs task while holding the per-file write mutex for path,
 // serializing app-driven and watcher-driven file mutations. It tolerates
-// concurrent ReleaseFileMutex: if the entry was released (generation bumped
-// + deleted) while a caller was waiting on the lock, the caller detects the
-// stale generation after acquiring, drops the orphaned lock, and re-acquires
-// the fresh entry. No in-flight holder is ever invalidated — release only
-// prevents NEW callers from serializing against the deleted entry.
+// concurrent ReleaseFileMutex: after acquiring entry.mu it re-checks that
+// entry is still the live ioMu value; if ReleaseFileMutex deleted (and a later
+// caller replaced) it while we waited, we drop the orphaned lock and retry
+// against the fresh entry. No in-flight holder is ever invalidated — release
+// only prevents NEW callers from serializing against the deleted entry.
 func (ec *ExecutionCoordinator) LockFileWrite(path string, task func()) {
-	entry, gen := ec.getFileEntry(path)
 	for {
+		entry := ec.getFileEntry(path)
 		entry.mu.Lock()
-		if atomic.LoadInt64(&entry.gen) == gen {
-			// Current-generation lock acquired; run the critical section.
+		if current, ok := ec.ioMu.Load(path); ok && current == entry {
 			defer entry.mu.Unlock()
 			task()
 			return
 		}
-		// Stale: the entry was released while we waited. Drop the orphaned
-		// lock and re-acquire the fresh entry so we serialize correctly.
 		entry.mu.Unlock()
-		entry, gen = ec.getFileEntry(path)
 	}
 }
 
 // ReleaseFileMutex evicts the per-file mutex for path, bounding ioMu growth.
-// Safe to call concurrently with LockFileWrite: it bumps the entry's
-// generation (so any waiter holding a pointer to this entry retries against
-// the fresh one) and then deletes the map entry. A caller that already holds
-// the lock keeps it until its own Unlock — this never invalidates a holder.
-// Idempotent: a no-op if there is no entry for path.
+// Safe to call concurrently with LockFileWrite: it simply deletes the map
+// entry, so any waiter that later re-checks the map (after acquiring the
+// orphaned mutex) sees the entry is gone or replaced and retries against the
+// fresh one. A caller that already holds the lock keeps it until its own
+// Unlock — this never invalidates a holder. Idempotent: a no-op if there is
+// no entry for path.
 func (ec *ExecutionCoordinator) ReleaseFileMutex(path string) {
-	iface, ok := ec.ioMu.Load(path)
-	if !ok {
-		return
-	}
-	entry := iface.(*fileMutexEntry)
-	atomic.AddInt64(&entry.gen, 1)
 	ec.ioMu.Delete(path)
 }
 

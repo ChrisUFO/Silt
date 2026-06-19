@@ -318,6 +318,43 @@ func TestReleaseFileMutex_ConcurrentCallersSerialize(t *testing.T) {
 	}
 }
 
+// TestReleaseFileMutex_ReleasedEntryNotLive locks in the invariant the
+// map-lookup staleness check relies on: once ReleaseFileMutex evicts a path's
+// entry, the previous *fileMutexEntry pointer is no longer the value held in
+// ioMu. The old generation-based check read the gen BEFORE acquiring the
+// mutex, so a concurrently-released entry could hand a caller the already-bumped
+// gen and let it proceed on an orphaned entry (a TOCTOU mutual-exclusion bug,
+// #131); the map-lookup check instead verifies identity after locking, so it
+// MUST be able to distinguish a released entry from the live one.
+func TestReleaseFileMutex_ReleasedEntryNotLive(t *testing.T) {
+	ec := newTestCoordinator(t)
+	path := "/vault/file-stale.md"
+
+	ec.LockFileWrite(path, func() {})
+	stale := ec.getFileEntry(path)
+
+	// Evict the live entry (concurrent ReleaseFileMutex), then prime a fresh
+	// one so the map value differs from `stale`.
+	ec.ReleaseFileMutex(path)
+	ec.LockFileWrite(path, func() {})
+
+	current, ok := ec.ioMu.Load(path)
+	if !ok {
+		t.Fatal("expected a live ioMu entry after re-locking")
+	}
+	if current == stale {
+		t.Fatal("released entry is still the live map value; map-lookup check could not detect staleness")
+	}
+	// A caller that locked the stale mutex must detect non-liveness via the
+	// post-lock map lookup and retry, never proceed on the orphaned entry.
+	stale.mu.Lock()
+	live, liveOK := ec.ioMu.Load(path)
+	stale.mu.Unlock()
+	if liveOK && live == stale {
+		t.Fatal("map-lookup staleness check failed to reject a released entry")
+	}
+}
+
 // --- Phase 2: per-block mutex eviction (#122) ---
 
 // TestReleaseBlockMutex_EntryDeleted verifies that after ReleaseBlockMutex the

@@ -13,6 +13,7 @@ correctness regression, not a style choice.
 |---|---|---|---|---|
 | **Content** | Markdown (`.md`) | Vault root + per-page files | Block bodies, task markers, per-task metadata, block identity (`<!-- id: uuid @ YYYY-MM-DD -->`) | `[/] DOING TASK [Alice] (2026-06-15) #2 !pin [p:50] Implement search <!-- id: 7c2a… @ 2026-06-15 -->` |
 | **Per-vault UI preferences** | YAML | `<vault>/.system/config.yaml` | Per-vault, per-plugin settings: active/disabled plugin list, Kanban columns, Kanban filter state, hotkey bindings, editor font sizes, theme typography overrides | `plugins.plugin_settings.silt-kanban.columns: [Backlog, In Progress, Review, Done]` |
+| **Per-linked-notebook overrides** | YAML | `<linkedRoot>/.system/config.yaml` | Per-notebook plugin setting overrides for a linked (external) notebook (#133). Read-only to Silt (user-authored); deep-merged over the vault defaults (linked wins per-key). See §3.1. | `plugins.plugin_settings.silt-kanban.columns: [Backlog, Done]` |
 | **User-global, pre-vault** | JSON | `<config>/silt/settings.json` | Settings that must be known before any vault is open: active theme id, dark/light/system mode, non-vault font preferences | `{"active_theme": "silt-graphite", "mode": "dark"}` |
 | **Working memory** | SQLite (WAL) | `<vault>/.system/index.sqlite*` | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (comments/links counts, pin, progress — all re-derived from markdown on re-index), file mtime/size for incremental re-index | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache |
 
@@ -253,11 +254,15 @@ syntax (for per-block metadata) or in YAML/JSON (for per-vault / per-user
 preferences). The `pinned`/`progress` columns in the `tasks` table are the
 exception that proves the rule: they are re-derived projections cached for
 the Kanban query, rebuilt from markdown on every re-index, and never
-written to by user action directly. New features that need persistent
-per-task state must extend the markdown inline task syntax (`[pin:: true]`,
-`[progress:: N]`, etc.) and round-trip through the parser + renderer; if
-the data is per-user/per-vault, it goes in YAML config. This is what
-"local-first" means: the user's files on disk *are* the product.
+written to by user action directly. `pinned` is a **tri-state cache
+(`NULL`/`0`/`1` for `[pin:: absent|false|true]`, #135)** so the projection
+preserves the explicit-unpinned state the parser/renderer round-trip
+(#123); `progress` is a plain `0-100` projection. New features that need
+persistent per-task state must extend the markdown inline task syntax
+(`[pin:: true]`, `[progress:: N]`, etc.) and round-trip through the parser
++ renderer; if the data is per-user/per-vault, it goes in YAML config.
+This is what "local-first" means: the user's files on disk *are* the
+product.
 
 The on-disk SQLite lives in WAL mode at `<vault>/.system/index.sqlite`
 (+ `.sqlite-wal` + `.sqlite-shm`). On restart only files whose
@@ -317,7 +322,7 @@ CREATE TABLE tasks (
     start_date TEXT,         -- YYYY-MM-DD or NULL
     due_date TEXT,           -- YYYY-MM-DD or NULL
     priority INTEGER,        -- 1, 2, 3
-    pinned INTEGER DEFAULT 0,         -- 0/1; cached from [pin:: true] markdown token
+    pinned INTEGER DEFAULT 0,         -- NULL/0/1 tri-state cache (#135): NULL=no [pin::] token, 0=[pin:: false], 1=[pin:: true]; reproducible from markdown
     progress INTEGER DEFAULT 0,       -- 0-100; cached from [progress:: N] markdown token
     comments_count INTEGER DEFAULT 0, -- derived: child NOTE blocks
     links_count INTEGER DEFAULT 0,    -- derived: ((uuid)) references in body
@@ -401,8 +406,12 @@ the notebook is the registered display name (the root IS one notebook).
 Lifecycle bindings. `LinkNotebook(folderPath)` validates, assigns a stable id,
 rejects collisions, folders already inside the vault, **and ancestors of the
 vault** (which would double-index the vault), persists the registry, watches +
-indexes the tree (forcing `notebook = DisplayName` so an external file's
-frontmatter can't drift it out of the nav). `UnlinkNotebook(id)` stops watching,
+indexes the tree in a SINGLE batched transaction (forcing `notebook =
+DisplayName` so an external file's frontmatter can't drift it out of the nav).
+The batched path threads `source` through `IndexScanResults` (the same
+function the vault startup scan uses) and does the `files`-table
+(`MarkFileIndexed`) pass after the index commit, so a large synced mount
+indexes without per-file WAL-checkpoint thrash (#134). `UnlinkNotebook(id)` stops watching,
 drops the source's index rows (`ClearSourceBlocks`), and leaves the external
 files COMPLETELY UNTOUCHED (safe default). `PickLinkedNotebook()` drives the
 native folder picker. Deleting a linked notebook from the sidebar UNLINKS it
@@ -425,6 +434,31 @@ lock still hold, so external (non-Silt) edits to the same file are reconciled
 by the existing diff/lease machinery once both sides land. A vault index must
 stay on a local disk regardless (WAL does not work on NFS/SMB — §3), so only
 the markdown crosses the mount.
+
+Co-located per-notebook config (#133). Per the storage-of-truth model, data
+attached to a notebook travels with the notebook. For a linked (external)
+notebook, per-notebook plugin overrides live at
+`<linkedRoot>/.system/config.yaml`, so an external notebook on SharePoint
+carries its own config with it — not in the vault. The co-located file is
+READ-ONLY to Silt (user-authored); plugin settings continue to persist to the
+vault-scoped `config.yaml` via the atomic `UpdatePluginSetting` path. The
+co-located file is purely an override layer.
+
+Merge precedence: vault-scoped config.yaml is the baseline; a linked
+notebook's co-located file overlays it per-key (linked wins). Nested maps
+merge recursively; scalars and arrays from the co-located file replace the
+vault's. The merge is computed on every call from the live, mtime-cached
+co-located config (see `App.linkedConfigs`), so an external edit is reflected
+on the next call. The multi-root watcher observes `<linkedRoot>/.system/
+config.yaml` and emits `linked-config:changed` on external edit, driving
+reactive refreshes (e.g. Kanban columns/filters re-resolve on the switch).
+
+Resolution surface: `App.GetPluginSettingsForNotebook(pluginID, notebookName)`
+is the IPC binding that resolves a plugin's settings for the active notebook
+(vault → vault settings verbatim; linked → deep-merge). The SDK
+`PluginContext.getPluginSettings()` wraps it with the live `activeNotebook`
+reactive getter, so a plugin that calls it at render time always sees the
+merged settings for the current notebook.
 
 
 4. Wails Bridge & IPC API Contract
@@ -488,6 +522,17 @@ func (a *App) ListNavigation() (NavigationTree, error)
 // config:changed. GetAppVersion returns the embedded VERSION.
 func (a *App) GetSystemConfig() (config.SystemConfig, error)
 func (a *App) SaveSystemConfig(cfg config.SystemConfig) error
+
+// Per-plugin settings — UpdatePluginSetting is the atomic read-modify-write
+// for a single key in the vault-scoped config.yaml (#120).
+// GetPluginSettingsForNotebook resolves a plugin's settings for the ACTIVE
+// notebook, applying the co-located per-notebook override layer (#133): vault
+// notebooks return the vault-scoped entry; linked notebooks return the deep-
+// merge of vault defaults with the co-located <root>/.system/config.yaml
+// (linked wins per-key). Emits linked-config:changed on external edit of a
+// co-located file so reactive consumers (e.g. Kanban) refresh.
+func (a *App) UpdatePluginSetting(pluginID, key string, value any) error
+func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[string]any, error)
 func (a *App) GetAppVersion() string
 
 

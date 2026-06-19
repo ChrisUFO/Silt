@@ -18,7 +18,8 @@ function makeCtx(): PluginContext {
     sqliteQuery: mocks.sqliteQuery,
     updateBlockState: vi.fn(),
     mutateBlock: vi.fn(),
-    updateTaskMeta: vi.fn()
+    updateTaskMeta: vi.fn(),
+    getPluginSettings: vi.fn(() => Promise.resolve({}))
   }
 }
 
