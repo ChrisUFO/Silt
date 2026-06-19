@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // writeVaultFixture creates a representative vault tree at root: two
@@ -459,5 +460,105 @@ func TestRemoveOldVault_RefusesEmptyPath(t *testing.T) {
 	// working directory, which could be catastrophic if it held a .system.
 	if err := RemoveOldVault(""); err == nil {
 		t.Fatal("expected refusal for an empty path, got nil")
+	}
+}
+
+func TestSourceModifiedAfter(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "Work"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "Work", "a.md"), []byte("a"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Snapshot NOW; everything written so far predates the cutoff.
+	cutoff := time.Now()
+	// Allow the filesystem clock to advance (mtimes have second resolution
+	// on some filesystems).
+	time.Sleep(1100 * time.Millisecond)
+
+	// No edit since cutoff → not modified.
+	modified, err := SourceModifiedAfter(root, cutoff)
+	if err != nil {
+		t.Fatalf("SourceModifiedAfter: %v", err)
+	}
+	if modified {
+		t.Error("expected not modified when nothing changed after cutoff")
+	}
+
+	// Edit a file → modified.
+	if err := os.WriteFile(filepath.Join(root, "Work", "a.md"), []byte("changed"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	modified, err = SourceModifiedAfter(root, cutoff)
+	if err != nil {
+		t.Fatalf("SourceModifiedAfter after edit: %v", err)
+	}
+	if !modified {
+		t.Error("expected modified after a post-cutoff edit")
+	}
+
+	// Index artifacts are excluded from the check (they're rebuilt anyway, so
+	// a WAL rewrite must not block removeOld).
+	if err := os.MkdirAll(filepath.Join(root, ".system"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".system", "index.sqlite-wal"), []byte("wal"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Fresh cutoff after the markdown edit but before a WAL bump.
+	cutoff2 := time.Now()
+	time.Sleep(1100 * time.Millisecond)
+	_ = os.WriteFile(filepath.Join(root, ".system", "index.sqlite-wal"), []byte("wal2"), 0644)
+	modified, err = SourceModifiedAfter(root, cutoff2)
+	if err != nil {
+		t.Fatalf("SourceModifiedAfter index-exclusion: %v", err)
+	}
+	if modified {
+		t.Error("index artifact change alone must not count as a source modification")
+	}
+
+	// Empty root → false, no error.
+	if m, err := SourceModifiedAfter("", cutoff); err != nil || m {
+		t.Errorf("empty root: modified=%v err=%v", m, err)
+	}
+}
+
+func TestCopyVaultTree_CountsSkippedSymlinks(t *testing.T) {
+	// A symlinked entry is not followed (filepath.WalkDir), so it is absent
+	// from the destination. The mover counts it so the UI can warn the user
+	// the copy is incomplete.
+	if os.Geteuid() == 0 {
+		t.Skip("symlink mode assertions are unreliable as root")
+	}
+	src := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(src, "Work"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "Work", "real.md"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// A symlink to a directory outside the vault — must be skipped, not followed.
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, "note.md"), []byte("y"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(src, "Work", "linked")); err != nil {
+		// Some CI filesystems disallow symlinks; skip rather than fail there.
+		t.Skipf("cannot create symlink: %v", err)
+	}
+
+	dest := filepath.Join(t.TempDir(), "copy")
+	res, err := CopyVaultTree(src, dest)
+	if err != nil {
+		t.Fatalf("CopyVaultTree: %v", err)
+	}
+	if res.SkippedSymlinks != 1 {
+		t.Errorf("SkippedSymlinks = %d, want 1", res.SkippedSymlinks)
+	}
+	// The symlink target's content must NOT have been copied in.
+	if _, err := os.Stat(filepath.Join(dest, "Work", "linked", "note.md")); err == nil {
+		t.Error("symlink was followed — target content should be absent from the copy")
 	}
 }

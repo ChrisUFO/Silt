@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"silt/backend/db"
 )
@@ -39,6 +41,10 @@ type CopyResult struct {
 	FilesCopied  int   `json:"files_copied"`
 	BytesCopied  int64 `json:"bytes_copied"`
 	SkippedIndex bool  `json:"skipped_index"`
+	// SkippedSymlinks is the count of symlinks encountered and NOT followed
+	// (filepath.WalkDir does not follow them). A symlinked notebook is absent
+	// from the copy, so this lets the UI warn the user the copy is incomplete.
+	SkippedSymlinks int `json:"skipped_symlinks"`
 }
 
 // MoveVaultResult is returned by App.MoveVault. It embeds CopyResult (the
@@ -163,8 +169,15 @@ func CopyVaultTree(src, dest string) (CopyResult, error) {
 		case info.Mode().IsRegular():
 			return copyRegularFile(path, destPath, info.Mode().Perm(), &result)
 		default:
-			// Skip symlinks and special files (Silt's scanner also skips
-			// symlinks; they are not part of the vault content model).
+			// Skip symlinks and special files. Silt's scanner also skips
+			// symlinks; they are not part of the vault content model. Count
+			// + log each symlink so a user whose vault has a symlinked
+			// notebook learns the copy is incomplete (that notebook is
+			// absent from the destination) rather than discovering it later.
+			if info.Mode()&os.ModeSymlink != 0 {
+				result.SkippedSymlinks++
+				log.Printf("CopyVaultTree: skipping symlink (not followed): %s", rel)
+			}
 			return nil
 		}
 	})
@@ -232,6 +245,49 @@ func RemoveOldVault(oldPath string) error {
 		return fmt.Errorf("not a Silt vault (no .system folder): %s", oldPath)
 	}
 	return os.RemoveAll(abs)
+}
+
+// SourceModifiedAfter reports whether any regular, non-index file under root
+// has an mtime at or after cutoff. MoveVault snapshots the source vault the
+// instant its copy+verify completes and calls this before the post-cutover
+// removal of the old folder: ARCHITECTURE.md lets external editors (VS Code)
+// write vault files concurrently, and an edit landing in the
+// copy→cutover→removeOld window would be silently lost when the source is
+// deleted. A "modified since copy" result means the move MUST keep the old
+// folder in place rather than delete it (#141 review). Returns false for an
+// empty root (nothing to check).
+func SourceModifiedAfter(root string, cutoff time.Time) (bool, error) {
+	if root == "" {
+		return false, nil
+	}
+	modified := false
+	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." || isIndexArtifact(filepath.ToSlash(rel)) {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		// !Before (>=) is conservative: treat an edit at the exact cutoff
+		// instant as "changed" so a borderline file is never deleted away
+		// from its owner.
+		if !info.ModTime().Before(cutoff) {
+			modified = true
+		}
+		return nil
+	})
+	return modified, walkErr
 }
 
 // --- helpers ---------------------------------------------------------------

@@ -31,6 +31,7 @@
   import SidebarResizeHandle from './components/SidebarResizeHandle.svelte'
   import { setActiveLocation } from './plugins/location.svelte'
   import ToastContainer from './components/ToastContainer.svelte'
+  import { pushNotification } from './notifications/store.svelte'
   import logo from './assets/logo.svg'
 
   let isInitialized = $state(false)
@@ -216,8 +217,10 @@
     // `vault:moved` fires after a successful vault Move/Copy-Switch (#141).
     // The backend has already reinitialized services at the new path; reset
     // navigation, close settings, and reload the (vault-scoped) config store
-    // so the UI reflects the new workspace.
-    const offVaultMoved = EventsOn('vault:moved', () => {
+    // so the UI reflects the new workspace. If the optional old-vault removal
+    // didn't happen, payload.warning carries the reason → surface a non-
+    // blocking toast (the move itself succeeded).
+    const offVaultMoved = EventsOn('vault:moved', (e: { from?: string; to?: string; warning?: string }) => {
       activeNotebook = ''
       activeSection = ''
       activePage = ''
@@ -227,6 +230,9 @@
         console.error('Post-move config reload failed:', e)
       )
       window.dispatchEvent(new CustomEvent('refresh-navigation'))
+      if (e?.warning) {
+        pushNotification({ kind: 'error', message: e.warning })
+      }
     })
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)

@@ -14,6 +14,7 @@
     files_copied: number
     bytes_copied: number
     skipped_index: boolean
+    skipped_symlinks: number
   }
 
   interface Props {
@@ -31,7 +32,7 @@
   let confirmDelete = $state(false)
   let busy = $state(false)
   let error = $state('')
-  let done = $state<null | { path: string; files: number; bytes: number }>(null)
+  let done = $state<null | { path: string; files: number; bytes: number; skippedSymlinks: number }>(null)
 
   let dialogEl = $state<HTMLDivElement | null>(null)
   let previouslyFocused: HTMLElement | null = null
@@ -119,7 +120,11 @@
         done = {
           path: destination,
           files: res.files_copied,
-          bytes: res.bytes_copied
+          bytes: res.bytes_copied,
+          // Symlinks aren't followed (filepath.WalkDir), so a symlinked
+          // notebook is absent from the copy — surface the count so the user
+          // knows the copy is incomplete.
+          skippedSymlinks: res.skipped_symlinks ?? 0
         }
       }
     } catch (e) {
@@ -297,6 +302,11 @@
           <p class="text-text-muted text-[11px] font-label-sm mt-1 truncate">
             {done.path}
           </p>
+          {#if done.skippedSymlinks > 0}
+            <p class="text-status-warn text-[11px] font-label-sm mt-1">
+              {done.skippedSymlinks} symlink(s) skipped — not included in the copy.
+            </p>
+          {/if}
         </div>
       </div>
       <div class="flex items-center justify-end gap-2 pt-4 mt-4 border-t border-border-muted">

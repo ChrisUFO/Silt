@@ -545,15 +545,12 @@ func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult,
 		return vault.MoveVaultResult{}, fmt.Errorf("move vault: %w", err)
 	}
 	dest := destPath
+	// Snapshot the instant the copy+verify completed. Used before removeOld
+	// to detect an external edit (e.g. VS Code) that landed in the source
+	// during the cutover — deleting the source then would silently lose it.
+	copyDoneAt := time.Now()
 
-	// 2. Snapshot the current settings BEFORE any cutover write, so a rollback
-	//    can restore them verbatim (preserving theme/mode).
-	prior, err := vault.LoadSettings()
-	if err != nil {
-		return vault.MoveVaultResult{}, fmt.Errorf("move vault: load settings to snapshot: %w", err)
-	}
-
-	// 3. Update the dest config.yaml notebooks.path so the Settings → General
+	// 2. Update the dest config.yaml notebooks.path so the Settings → General
 	//    workspace row reflects the new location (matches ScaffoldVault's
 	//    forward-slash convention). Best-effort: a failure here is logged but
 	//    does not abort — the vault is fully usable with a stale display path.
@@ -564,9 +561,12 @@ func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult,
 		}
 	}
 
-	// 4. Cutover under the exclusive write lock: no reader can dereference a
+	// 3. Cutover under the exclusive write lock: no reader can dereference a
 	//    service pointer while the db / watcher are being torn down and
-	//    rebuilt. Re-check a.vaultPath hasn't moved (defensive; the UI
+	//    rebuilt. The prior-settings snapshot is read UNDER this lock (not
+	//    before it) so a concurrent settings.json writer (ApplyTheme) can't
+	//    commit a change that the cutover then overwrites with a stale
+	//    snapshot. Re-check a.vaultPath hasn't moved (defensive; the UI
 	//    serializes lifecycle calls). rollbackMove also runs under this lock
 	//    (it does not acquire it itself — RWMutex is not reentrant).
 	cutoverErr := func() error {
@@ -574,6 +574,10 @@ func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult,
 		defer a.vaultMu.Unlock()
 		if a.vaultPath != src {
 			return fmt.Errorf("vault changed during move (concurrent lifecycle transition)")
+		}
+		prior, err := vault.LoadSettings()
+		if err != nil {
+			return fmt.Errorf("move vault: snapshot settings: %w", err)
 		}
 		a.teardownVaultServices()
 		newSettings := *prior
@@ -600,22 +604,40 @@ func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult,
 		To:         dest,
 	}
 
-	// 5. Optional old-vault removal (non-fatal: the cutover already
-	//    succeeded). Logged so a silent permission/lock failure is at least
-	//    visible in app logs even though the frontend treats the move as done.
+	// 4. Optional old-vault removal (non-fatal: the cutover already
+	//    succeeded). First guard against an external edit to the source that
+	//    landed after the copy snapshot — if so, keep the old folder in place
+	//    rather than delete the user's unsaved-to-the-new-vault change. A
+	//    permission/lock failure on the delete itself is also carried on
+	//    RemoveOldErr + logged so it is never fully silent.
 	if removeOld {
-		if err := vault.RemoveOldVault(src); err != nil {
+		if modified, mErr := vault.SourceModifiedAfter(src, copyDoneAt); mErr != nil {
+			result.RemoveOldErr = fmt.Sprintf("could not verify source unchanged: %v", mErr)
+			log.Printf("MoveVault: skip removeOld — source check failed for %s: %v", src, mErr)
+		} else if modified {
+			result.RemoveOldErr = "original vault was modified during the move; left in place"
+			log.Printf("MoveVault: skip removeOld — %s modified after copy snapshot", src)
+		} else if err := vault.RemoveOldVault(src); err != nil {
 			result.RemoveOldErr = err.Error()
 			log.Printf("MoveVault: failed to remove old vault at %s: %v", src, err)
 		}
 	}
 
-	// 6. Notify the frontend to reset navigation + reload stores.
+	// 5. Notify the frontend to reset navigation + reload stores. If the
+	//    optional old-vault removal didn't happen (source modified during
+	//    cutover, or a delete permission/lock error), carry a warning so the
+	//    user is told the original folder is still on disk — the move itself
+	//    succeeded, so this is non-blocking (surfaced as a toast, not an error
+	//    return).
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "vault:moved", map[string]string{
+		payload := map[string]string{
 			"from": src,
 			"to":   dest,
-		})
+		}
+		if result.RemoveOldErr != "" {
+			payload["warning"] = "Vault moved, but the original folder could not be removed: " + result.RemoveOldErr
+		}
+		runtime.EventsEmit(a.ctx, "vault:moved", payload)
 	}
 	return result, nil
 }
@@ -656,15 +678,17 @@ func (a *App) SwitchVault(path string) error {
 		return fmt.Errorf("not a Silt vault (no .system folder): %s", path)
 	}
 
-	prior, _ := vault.LoadSettings()
-
 	// Cutover under the exclusive write lock so concurrent readers can't race
-	// the teardown/reinit. activePath is captured under that lock (before
-	// teardown nils it) for rollback. rollbackMove runs under this same lock.
+	// the teardown/reinit. The prior-settings snapshot is read UNDER this lock
+	// (not before it) so a concurrent settings.json writer (ApplyTheme) can't
+	// commit a change that the cutover overwrites with a stale snapshot.
+	// activePath is captured under the lock (before teardown nils it) for
+	// rollback. rollbackMove runs under this same lock.
 	switchErr := func() error {
 		a.vaultMu.Lock()
 		defer a.vaultMu.Unlock()
 		activePath := a.vaultPath
+		prior, _ := vault.LoadSettings()
 		a.teardownVaultServices()
 
 		settings := prior
