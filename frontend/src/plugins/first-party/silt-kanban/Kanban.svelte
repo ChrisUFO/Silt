@@ -132,35 +132,44 @@
   }
   let filters = $state<KanbanFilters>(initialFilters())
 
-  // Per-active-notebook plugin settings re-resolution (#133): on a vault ↔
-  // linked switch (or a linked-config:changed event), re-read the merged set-
-  // tings from ctx.getPluginSettings() and sync columns + filters. The INIT-
-  // IAL mount skips this (the synchronous init above already populated from
-  // the vault config store, which is the baseline for every notebook), so
-  // the first board load is not delayed by an async IPC round-trip and does
-  // not trigger a spurious reload.
+  // Per-active-notebook plugin settings re-resolution (#133): on mount AND
+  // on a vault ↔ linked switch (or a linked-config:changed event), re-read
+  // the merged settings from ctx.getPluginSettings() and sync columns +
+  // filters. The synchronous init above provides a fast first paint from
+  // the vault config store; this async resolution then reconciles with the
+  // per-notebook merge — critical for the case where the app opens directly
+  // on a linked notebook, where the vault defaults are NOT the right columns.
+  //
+  // Write guard: the resolution only writes columns/filters when the values
+  // actually differ from the current state. This prevents a spurious reload
+  // when a vault notebook's async resolution returns the same data as the
+  // synchronous init (same-source resolve = no-op for state), while still
+  // applying overrides when the data differs (linked notebook at mount or
+  // on switch).
   let settingsEpoch = $state(0)
-  let settingsFirstRun = true
   $effect(() => {
     void ctx.activeNotebook // track navigation
     void settingsEpoch // track linked-config:changed
-    if (settingsFirstRun) {
-      settingsFirstRun = false
-      return // mount: synchronous init already set columns/filters
-    }
     let cancelled = false
     ctx
       .getPluginSettings()
       .then((s) => {
         if (cancelled) return
         const cfgCols = s.columns as string[] | undefined
-        columns = cfgCols && cfgCols.length ? [...cfgCols] : [...ALL_STATUSES]
+        const nextCols =
+          cfgCols && cfgCols.length ? [...cfgCols] : [...ALL_STATUSES]
+        if (JSON.stringify(nextCols) !== JSON.stringify(columns)) {
+          columns = nextCols
+        }
         const f = s.filters as Partial<KanbanFilters> | undefined
-        filters = {
+        const nextFilters: KanbanFilters = {
           owners: f?.owners ?? [],
           priorities: f?.priorities ?? [],
           dueDate: f?.dueDate ?? '',
           tags: f?.tags ?? []
+        }
+        if (JSON.stringify(nextFilters) !== JSON.stringify(filters)) {
+          filters = nextFilters
         }
       })
       .catch((err) => {

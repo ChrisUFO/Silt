@@ -965,12 +965,16 @@ describe('Kanban plugin (#19)', () => {
   describe('per-active-notebook settings (#133)', () => {
     it('re-resolves columns from getPluginSettings on notebook switch', async () => {
       // The vault notebook starts with TODO/DOING/DONE (from the synchronous
-      // vault-config init). A linked notebook "Ext" provides Backlog/Done
-      // via getPluginSettings. On mount the re-resolution is skipped (the
-      // synchronous init already set columns); on the notebook switch it
-      // fires and overrides columns from the resolved settings.
+      // vault-config init). The async resolution fires on mount but the
+      // write-guard skips the assignment (same data = no-op). On the switch
+      // to the linked notebook, the resolution returns different data
+      // (Backlog/Done) and the guard lets the write through.
+      const vaultSettings = { columns: ['TODO', 'DOING', 'DONE'] }
       const linkedSettings = { columns: ['Backlog', 'Done'] }
-      const getPluginSettings = vi.fn().mockResolvedValue(linkedSettings)
+      const getPluginSettings = vi
+        .fn()
+        .mockResolvedValueOnce(vaultSettings) // mount on Work
+        .mockResolvedValue(linkedSettings) // subsequent calls (switch to Ext)
 
       setNav({ notebook: 'Work', section: '', page: '' })
       render(Kanban, {
@@ -981,10 +985,9 @@ describe('Kanban plugin (#19)', () => {
       })
       await flush()
 
-      // Vault notebook: standard columns from the vault config store.
+      // Vault notebook: standard columns (the mount resolution returned the
+      // same data, so the write-guard skipped the assignment — no flicker).
       expect(screen.getByRole('group', { name: 'To Do' })).toBeInTheDocument()
-      // getPluginSettings NOT called yet (mount skips the async resolution).
-      expect(getPluginSettings).not.toHaveBeenCalled()
 
       // Navigate to the linked notebook — the re-resolution effect fires
       // and overrides columns from getPluginSettings.
@@ -997,9 +1000,36 @@ describe('Kanban plugin (#19)', () => {
       expect(
         screen.queryByRole('group', { name: 'To Do' })
       ).not.toBeInTheDocument()
+    })
 
-      // getPluginSettings was called once (the re-resolution on switch).
-      expect(getPluginSettings).toHaveBeenCalledTimes(1)
+    it('resolves linked overrides on mount when opened directly on a linked notebook', async () => {
+      // Regression: if the app opens directly on a linked notebook (no
+      // navigation after mount), the async resolution must still fire and
+      // apply the co-located overrides. The old settingsFirstRun skip
+      // prevented this — the user saw vault-default columns until they
+      // navigated away and back.
+      const linkedSettings = { columns: ['Backlog', 'Review', 'Done'] }
+      const getPluginSettings = vi.fn().mockResolvedValue(linkedSettings)
+
+      // Mount DIRECTLY on the linked notebook (no vault-first render).
+      setNav({ notebook: 'Ext', section: '', page: '' })
+      render(Kanban, {
+        ctx: reactiveCtx(mocks.sqliteQuery, {
+          getPluginSettings
+        }),
+        manifest: MANIFEST
+      })
+      await flush()
+
+      // The linked overrides (Backlog/Review/Done) appear — not the vault
+      // defaults (TODO/DOING/DONE).
+      expect(screen.getByRole('group', { name: 'Backlog' })).toBeInTheDocument()
+      expect(
+        screen.queryByRole('group', { name: 'To Do' })
+      ).not.toBeInTheDocument()
+
+      // The resolution fired on mount (not deferred to a navigation event).
+      expect(getPluginSettings).toHaveBeenCalled()
     })
 
     it('surfaces a getPluginSettings rejection as the board error banner', async () => {
@@ -1011,7 +1041,9 @@ describe('Kanban plugin (#19)', () => {
       // into errorMsg so the existing error banner surfaces it.
       const getPluginSettings = vi
         .fn()
+        .mockResolvedValueOnce({ columns: ['TODO', 'DOING', 'DONE'] }) // mount on Work (ok)
         .mockRejectedValue(
+          // switch to Ext (broken co-located config)
           new Error('linked config for Ext: yaml: line 1: bad')
         )
 
@@ -1022,10 +1054,9 @@ describe('Kanban plugin (#19)', () => {
       })
       await flush()
 
-      // Vault notebook loads normally; the re-resolution effect has not run
-      // (mount skips it) so the rejection has not happened yet.
+      // Vault notebook loads normally (mount resolution returned same data,
+      // write-guard skipped the assignment).
       expect(screen.getByRole('group', { name: 'To Do' })).toBeInTheDocument()
-      expect(getPluginSettings).not.toHaveBeenCalled()
 
       // Switch to the linked notebook with the broken co-located config.
       setNav({ notebook: 'Ext', section: '', page: '' })

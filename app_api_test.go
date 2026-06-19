@@ -2288,12 +2288,14 @@ func TestGetPluginSettingsForNotebook_ConcurrentCallersNoPanic(t *testing.T) {
 }
 
 // TestGetPluginSettingsForNotebook_ConcurrentWithUpdatePluginSetting
-// exercises the vault-path data race that the raw-map-return would trigger:
-// concurrent GetPluginSettingsForNotebook (read + JSON serialization) +
-// UpdatePluginSetting (in-place map write) on the SAME plugin entry. Before
-// the clone fix, the returned map was the same underlying reference that
-// UpdatePluginSetting mutated, producing a fatal "concurrent map read and
-// map write" panic. Run under -race.
+// verifies the deep-clone invariant of GetPluginSettingsForNotebook: the
+// returned map is a snapshot (cloned inside configMu.RLock via
+// MergePluginSettings), so concurrent UpdatePluginSetting calls (which
+// mutate the underlying a.cfg.Plugins.PluginSettings[pluginID] map in-place)
+// cannot race with the caller iterating the returned map. Without the clone,
+// the returned reference shares the same underlying map that
+// UpdatePluginSetting writes to → fatal "concurrent map read and map write".
+// Run under -race.
 func TestGetPluginSettingsForNotebook_ConcurrentWithUpdatePluginSetting(t *testing.T) {
 	app := newTestApp(t)
 	// Seed the vault config with a known plugin entry.
@@ -2357,6 +2359,41 @@ func TestGetPluginSettingsForNotebook_ConcurrentWithUpdatePluginSetting(t *testi
 
 	close(start)
 	wg.Wait()
+}
+
+// TestGetPluginSettingsForNotebook_ReturnsCloneNotReference directly proves
+// the deep-clone invariant: mutating the returned map must NOT affect the
+// underlying a.cfg.Plugins.PluginSettings entry. Without the clone (raw
+// reference return), the mutation would leak into the config store,
+// corrupting subsequent reads.
+func TestGetPluginSettingsForNotebook_ReturnsCloneNotReference(t *testing.T) {
+	app := newTestApp(t)
+	app.configMu.Lock()
+	app.cfg.Plugins.PluginSettings["silt-kanban"] = map[string]any{
+		"columns": []any{"TODO", "DOING", "DONE"},
+	}
+	app.configMu.Unlock()
+
+	got, err := app.GetPluginSettingsForNotebook("silt-kanban", "Work")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	// Mutate the returned map.
+	got["columns"] = []any{"HACKED"}
+	got["injected"] = true
+
+	// The underlying config store must be unchanged.
+	app.configMu.RLock()
+	stored, _ := app.cfg.Plugins.PluginSettings["silt-kanban"].(map[string]any)
+	app.configMu.RUnlock()
+	cols, _ := stored["columns"].([]any)
+	if len(cols) != 3 || cols[0] != "TODO" {
+		t.Errorf("mutation leaked into config store: columns=%v", stored["columns"])
+	}
+	if _, leaked := stored["injected"]; leaked {
+		t.Error("mutation leaked: 'injected' key present in config store")
+	}
 }
 
 // TestSaveFileBlocks_LinkedRootUnusable_ReturnsClearError locks the documented
