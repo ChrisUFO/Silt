@@ -26,6 +26,7 @@
   import { measureFrameBudget } from '../lib/perf/frame-budget'
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
+  import { getSlashCommands } from '../lib/editor/slash-registry'
 
   interface Props {
     notebook: string
@@ -319,6 +320,15 @@
       // blocks are inserted at the cursor position (ARCHITECTURE §5.1 — the
       // UniqueBlockIds extension mints fresh UUIDs for the inserted nodes).
       showTemplatePicker = true
+    } else {
+      // v2 SDK plugin-registered slash command (#110): look up the command in
+      // the registry and invoke its onSelect handler with the live editor +
+      // cursor position. Built-ins are handled by the id branches above; any
+      // other id must be a plugin command with a handler.
+      const cmd = getSlashCommands().find((c) => c.id === commandId)
+      if (cmd?.onSelect) {
+        cmd.onSelect(editorInstance, editorInstance.state.selection.to)
+      }
     }
   }
 

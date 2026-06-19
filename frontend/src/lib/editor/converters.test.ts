@@ -3,7 +3,12 @@ import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { SiltBlockExtensions, UniqueBlockIds } from './index'
 import { EmbedNode, BlockReferenceNode } from './schema'
-import { blocksToDoc, docToBlocks } from './converters'
+import {
+  blocksToDoc,
+  docToBlocks,
+  embedBlockMarker,
+  parseEmbedBlockMarker
+} from './converters'
 import type { ParsedBlock, DocJSON } from './types'
 
 // Helper: build a ParsedBlock with sensible defaults for a given type.
@@ -348,7 +353,9 @@ describe('uniqueIdPlugin', () => {
     })
     const doc = blocksToDoc([block])
     const noteNode = doc.content[0] as any
-    const refs = noteNode.content.filter((c: any) => c.type === 'blockReferenceNode')
+    const refs = noteNode.content.filter(
+      (c: any) => c.type === 'blockReferenceNode'
+    )
     expect(refs).toHaveLength(2)
     expect(refs[0].attrs.uuid).toBe(UUID_A)
     expect(refs[1].attrs.uuid).toBe(UUID_B)
@@ -420,6 +427,40 @@ describe('uniqueIdPlugin', () => {
     expect(back).toHaveLength(1)
     expect(back[0].clean_text).toBe(`{{embed:${embedUuid}}}`)
     expect(back[0].id).toBeTruthy()
+    editor.destroy()
+  })
+
+  it('round-trips a generic embedBlock node through the silt-embed marker (#110)', () => {
+    const editor = new Editor({
+      // @ts-ignore — minimal schema for doc round-trip; the converter functions
+      // operate on JSON, not the live editor, so a bare doc is sufficient.
+      extensions: [StarterKit.configure({ paragraph: true })]
+    })
+    const marker = embedBlockMarker({
+      embedType: 'attachment',
+      src: 'attachments/report.pdf',
+      caption: 'Q3 Report',
+      openable: true,
+      pluginID: 'silt-attachments'
+    })
+    // A NOTE block carrying the marker → blockToNode → embedBlock node.
+    const block = mkBlock('NOTE', { clean_text: marker })
+    const doc = blocksToDoc([block])
+    expect(doc.content![0].type).toBe('embedBlock')
+    expect((doc.content![0].attrs as any).embedType).toBe('attachment')
+    expect((doc.content![0].attrs as any).src).toBe('attachments/report.pdf')
+
+    // embedBlock node → docToBlocks → NOTE block with the marker preserved.
+    const back = docToBlocks(doc)
+    expect(back).toHaveLength(1)
+    expect(back[0].type).toBe('NOTE')
+    expect(back[0].clean_text).toBe(marker)
+
+    // The marker survives a parse → emit → parse cycle byte-for-byte.
+    const reparsed = parseEmbedBlockMarker(back[0].clean_text)
+    expect(reparsed).not.toBeNull()
+    expect(reparsed!.embedType).toBe('attachment')
+    expect(reparsed!.openable).toBe(true)
     editor.destroy()
   })
 })

@@ -7,6 +7,7 @@ import { loadedPlugins } from './store.svelte'
 import { settings } from '../settings/store.svelte'
 import type { LoadedPlugins, RegisteredPlugin, SiltPlugin } from './sdk'
 import { cleanupPlugin, clearAllSubscribers } from './events'
+import { unregisterPluginSlashCommands } from '../lib/editor/slash-registry'
 import DiskPluginNotice from './DiskPluginNotice.svelte'
 
 // Whether the lifecycle wiring (vault:closing subscription) has been installed.
@@ -178,6 +179,7 @@ export function teardownPlugin(pluginID: string): void {
     // best-effort
   }
   cleanupPlugin(pluginID)
+  unregisterPluginSlashCommands(pluginID)
   try {
     reg.onShutdown?.()
   } catch {

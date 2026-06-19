@@ -4,13 +4,15 @@ import {
   NoteBlock,
   HeaderBlock,
   EmbedNode,
-  BlockReferenceNode
+  BlockReferenceNode,
+  EmbedBlockNode
 } from './schema'
 import TaskBlockView from '../../components/editor/TaskBlockView.svelte'
 import NoteBlockView from '../../components/editor/NoteBlockView.svelte'
 import HeaderBlockView from '../../components/editor/HeaderBlockView.svelte'
 import EmbedNodeView from '../../components/editor/EmbedNodeView.svelte'
 import BlockReferenceNodeView from '../../components/editor/BlockReferenceNodeView.svelte'
+import EmbedBlockNodeView from '../../components/editor/EmbedBlockNodeView.svelte'
 
 // Production extensions: the base schema nodes extended with Svelte NodeView
 // rendering. NoteBlock first — it's the default block type (see schema.ts).
@@ -41,6 +43,13 @@ export const SiltBlockExtensionsWithNodeViews = [
   BlockReferenceNode.extend({
     addNodeView() {
       return SvelteNodeViewRenderer(BlockReferenceNodeView)
+    }
+  }),
+  // Generic plugin-extensible embed block (#110). The default NodeView renders
+  // a minimal card; plugins with custom embed types provide their own NodeView.
+  EmbedBlockNode.extend({
+    addNodeView() {
+      return SvelteNodeViewRenderer(EmbedBlockNodeView)
     }
   })
 ]

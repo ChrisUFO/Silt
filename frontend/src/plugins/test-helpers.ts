@@ -38,6 +38,8 @@ export const v2CtxStubs: Pick<
   | 'clipboardRead'
   | 'clipboardWrite'
   | 'notify'
+  | 'fetch'
+  | 'registerSlashCommand'
 > = {
   queryByTag: () => Promise.resolve(emptyResult),
   queryByDateRange: () => Promise.resolve(emptyResult),
@@ -64,5 +66,7 @@ export const v2CtxStubs: Pick<
   pickSaveFile: () => Promise.resolve(''),
   clipboardRead: () => Promise.resolve(''),
   clipboardWrite: () => Promise.resolve(true),
-  notify: () => Promise.resolve(true)
+  notify: () => Promise.resolve(true),
+  fetch: () => Promise.resolve({ status: 0, headers: {}, body: '', ok: false }),
+  registerSlashCommand: () => () => {}
 }

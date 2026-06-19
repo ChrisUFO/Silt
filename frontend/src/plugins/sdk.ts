@@ -218,6 +218,46 @@ export interface PluginContext {
   clipboardWrite: (text: string) => Promise<boolean>
   /** Show a desktop notification. Gated by os-notify. */
   notify: (opts: { title: string; body: string }) => Promise<boolean>
+
+  // --- Network / fetch (#115) — capability-gated ---------------------------
+
+  /**
+   * HTTP fetch through the Go-side proxy (CORS-free, with timeout/size/
+   * redirect caps). Host + status are audit-logged (never the body). Gated by
+   * the network capability.
+   */
+  fetch: (
+    url: string,
+    opts?: {
+      method?: string
+      headers?: Record<string, string>
+      body?: string
+      timeoutMs?: number
+    }
+  ) => Promise<{
+    status: number
+    headers: Record<string, string>
+    body: string
+    ok: boolean
+  }>
+
+  // --- Editor extension points (#110) ------------------------------------
+
+  /**
+   * Register a slash-menu command (#110). The command appears in the `/` menu
+   * alongside built-ins; when selected, `onSelect` is called with the live
+   * TipTap editor instance + cursor position. The id is namespaced as
+   * `<this plugin's id>:<id>` to avoid collisions. Returns an unregister fn.
+   * Registration is user-driven (a menu item) so it is not capability-gated;
+   * the handler's own privileged calls route through the normal gates.
+   */
+  registerSlashCommand: (cmd: {
+    id: string
+    label: string
+    description?: string
+    icon?: string
+    onSelect: (editor: unknown, pos: number) => void
+  }) => () => void
 }
 
 // --- v2 SDK typed event bus (#106) ---------------------------------------

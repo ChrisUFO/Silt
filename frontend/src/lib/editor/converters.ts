@@ -108,6 +108,41 @@ function deriveParentIDs(blocks: ParsedBlock[]): void {
 const SOLE_EMBED_RE =
   /^\{\{embed:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}\}$/i
 
+// Silt-embed marker: a NOTE block whose clean_text is `<!-- silt-embed: {json} -->`
+// becomes a generic embedBlock node (#110). The JSON carries the embed attrs
+// (embedType, src, caption, openable, pluginID). The Go parser preserves the
+// marker as the NOTE's clean_text (it only strips the trailing id comment), so
+// the on-disk file round-trips byte-for-byte.
+const SOLE_EMBED_BLOCK_RE = /^<!-- silt-embed: (\{.*\}) -->$/
+
+export function embedBlockMarker(attrs: {
+  embedType: string
+  src: string
+  caption?: string
+  openable?: boolean
+  pluginID?: string
+}): string {
+  return `<!-- silt-embed: ${JSON.stringify(attrs)} -->`
+}
+
+export function parseEmbedBlockMarker(
+  text: string
+): {
+  embedType: string
+  src: string
+  caption?: string
+  openable?: boolean
+  pluginID?: string
+} | null {
+  const m = text.match(SOLE_EMBED_BLOCK_RE)
+  if (!m) return null
+  try {
+    return JSON.parse(m[1])
+  } catch {
+    return null
+  }
+}
+
 // Convert a single ParsedBlock to its ProseMirror node JSON.
 function blockToNode(block: ParsedBlock): NodeJSON {
   const text = block.clean_text || ''
@@ -120,6 +155,16 @@ function blockToNode(block: ParsedBlock): NodeJSON {
     return {
       type: 'embedNode',
       attrs: { id: block.id, uuid: embedMatch[1] }
+    }
+  }
+
+  // A NOTE whose entire body is a `<!-- silt-embed: {json} -->` marker becomes
+  // a generic embedBlock node (#110). Plugins specialize it via attrs.
+  const embedBlockAttrs = parseEmbedBlockMarker(text)
+  if (embedBlockAttrs) {
+    return {
+      type: 'embedBlock',
+      attrs: { id: block.id, ...embedBlockAttrs }
     }
   }
 
@@ -226,6 +271,35 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         priority: 3,
         line_number: lineNumber,
         file_date: ''
+      })
+      continue
+    }
+
+    // Generic plugin embedBlock (#110): serialize to a NOTE carrying the
+    // `<!-- silt-embed: {json} -->` marker as its clean_text. The Go renderer
+    // emits it verbatim, so the on-disk file round-trips.
+    if (node.type === 'embedBlock') {
+      const marker = embedBlockMarker({
+        embedType: attrs.embedType || '',
+        src: attrs.src || '',
+        caption: attrs.caption || undefined,
+        openable: attrs.openable || undefined,
+        pluginID: attrs.pluginID || undefined
+      })
+      blocks.push({
+        id,
+        parent_id: '',
+        type: 'NOTE',
+        depth: 0,
+        raw_text: marker,
+        clean_text: marker,
+        status: '',
+        owner: '',
+        start_date: '',
+        due_date: '',
+        priority: 3,
+        line_number: lineNumber,
+        file_date: (attrs.file_date as string) || ''
       })
       continue
     }

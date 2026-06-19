@@ -253,6 +253,48 @@ func TestPluginWritePathAllowed(t *testing.T) {
 }
 
 // =========================================================================
+// Network / fetch (#115) — capability gating
+// =========================================================================
+
+// PluginFetch is denied without a network grant.
+func TestPluginFetch_DeniedWithoutGrant(t *testing.T) {
+	app := newTestApp(t)
+	_, err := app.PluginFetch("third-party", PluginFetchInput{URL: "https://example.com"})
+	if err == nil {
+		t.Fatal("expected capability denial without network grant")
+	}
+}
+
+// PluginFetch rejects a non-http(s) URL even with a grant.
+func TestPluginFetch_RejectsUnsafeUrl(t *testing.T) {
+	app := newTestApp(t)
+	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
+	_, err := app.PluginFetch("p", PluginFetchInput{URL: "file:///etc/passwd"})
+	if err == nil {
+		t.Fatal("expected rejection of file:// scheme")
+	}
+	_, err = app.PluginFetch("p", PluginFetchInput{URL: "javascript:alert(1)"})
+	if err == nil {
+		t.Fatal("expected rejection of javascript: scheme")
+	}
+}
+
+// GetNetworkAudit + ClearNetworkAudit round-trip an empty log.
+func TestNetworkAudit_Clear(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.ClearNetworkAudit(); err != nil {
+		t.Fatalf("ClearNetworkAudit: %v", err)
+	}
+	entries, err := app.GetNetworkAudit()
+	if err != nil {
+		t.Fatalf("GetNetworkAudit: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("after clear, audit has %d entries", len(entries))
+	}
+}
+
+// =========================================================================
 // Helpers
 // =========================================================================
 

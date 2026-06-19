@@ -26,10 +26,15 @@ import {
   PluginPickSaveFile,
   PluginClipboardReadText,
   PluginClipboardWriteText,
-  PluginNotify
+  PluginNotify,
+  PluginFetch
 } from '../../wailsjs/go/main/App.js'
 import { getActiveLocation } from './location.svelte'
 import { subscribe } from './events'
+import {
+  registerSlashCommand,
+  unregisterSlashCommand
+} from '../lib/editor/slash-registry'
 
 /**
  * Build a PluginContext whose `activeNotebook/Section/Page` are live reactive
@@ -210,7 +215,36 @@ export function makePluginContext(pluginID: string): PluginContext {
     clipboardWrite: (text) =>
       PluginClipboardWriteText(pluginID, text).then(() => true),
     notify: (opts) =>
-      PluginNotify(pluginID, opts.title, opts.body).then(() => true)
+      PluginNotify(pluginID, opts.title, opts.body).then(() => true),
+
+    // --- Network / fetch (#115) — capability-gated --------------------------
+    fetch: (url, opts) =>
+      PluginFetch(pluginID, {
+        url,
+        method: opts?.method ?? '',
+        headers: opts?.headers ?? {},
+        body: opts?.body ?? '',
+        timeout: opts?.timeoutMs ?? 0
+      }).then((res) => ({
+        status: res?.status ?? 0,
+        headers: res?.headers ?? {},
+        body: res?.body ?? '',
+        ok: !!res?.ok
+      })),
+
+    // --- Editor extension points (#110) — plugin slash commands -------------
+    registerSlashCommand: (cmd) => {
+      const namespacedId = `${pluginID}:${cmd.id}`
+      registerSlashCommand({
+        id: namespacedId,
+        label: cmd.label,
+        description: cmd.description,
+        icon: cmd.icon,
+        pluginID,
+        onSelect: cmd.onSelect
+      })
+      return () => unregisterSlashCommand(namespacedId)
+    }
   }
 }
 

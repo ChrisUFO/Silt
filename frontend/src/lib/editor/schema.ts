@@ -208,8 +208,7 @@ export const EmbedNode = Node.create({
       uuid: {
         default: '',
         parseHTML: (el) => el.getAttribute('data-uuid') || '',
-        renderHTML: (attrs) =>
-          attrs.uuid ? { 'data-uuid': attrs.uuid } : {}
+        renderHTML: (attrs) => (attrs.uuid ? { 'data-uuid': attrs.uuid } : {})
       }
     }
   },
@@ -219,10 +218,7 @@ export const EmbedNode = Node.create({
   },
 
   renderHTML({ HTMLAttributes }) {
-    return [
-      'div',
-      mergeAttributes({ 'data-type': 'embed' }, HTMLAttributes)
-    ]
+    return ['div', mergeAttributes({ 'data-type': 'embed' }, HTMLAttributes)]
   }
 })
 
@@ -244,8 +240,7 @@ export const BlockReferenceNode = Node.create({
       uuid: {
         default: '',
         parseHTML: (el) => el.getAttribute('data-uuid') || '',
-        renderHTML: (attrs) =>
-          attrs.uuid ? { 'data-uuid': attrs.uuid } : {}
+        renderHTML: (attrs) => (attrs.uuid ? { 'data-uuid': attrs.uuid } : {})
       }
     }
   },
@@ -258,6 +253,81 @@ export const BlockReferenceNode = Node.create({
     return [
       'span',
       mergeAttributes({ 'data-type': 'block-ref' }, HTMLAttributes)
+    ]
+  }
+})
+
+// ---- EmbedBlockNode (generic plugin-extensible block, #110 Phase 1) ---------
+// A generic block-level atomic node that plugins specialize via attrs (type,
+// src, caption, openable, pluginID, data). Covers attachments (#101), image
+// embeds, link cards, and most custom-block use cases without requiring a
+// static ProseMirror schema change per plugin.
+//
+// Serialization round-trip: the node serializes to a NOTE block whose clean_text
+// is an HTML-comment marker `<!-- silt-embed: {json attrs} -->`, consistent with
+// the existing `<!-- id: uuid @ date -->` convention. The Go parser preserves
+// the marker as the NOTE's clean_text (it only strips the trailing id comment),
+// so the on-disk file round-trips byte-for-byte.
+export interface EmbedBlockAttrs {
+  embedType: string // "attachment" | "image" | plugin-defined
+  src: string // relative path / url / identifier
+  caption?: string
+  openable?: boolean
+  pluginID?: string
+  data?: Record<string, unknown> // arbitrary plugin-specific attrs
+}
+
+export const SiltEmbedMarker = 'silt-embed'
+
+export const EmbedBlockNode = Node.create({
+  name: 'embedBlock',
+  group: 'block',
+  atom: true,
+  selectable: true,
+  draggable: true,
+
+  addAttributes() {
+    return {
+      embedType: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-embed-type') || '',
+        renderHTML: (attrs) =>
+          attrs.embedType ? { 'data-embed-type': attrs.embedType } : {}
+      },
+      src: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-src') || '',
+        renderHTML: (attrs) => (attrs.src ? { 'data-src': attrs.src } : {})
+      },
+      caption: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-caption') || '',
+        renderHTML: (attrs) =>
+          attrs.caption ? { 'data-caption': attrs.caption } : {}
+      },
+      openable: {
+        default: false,
+        parseHTML: (el) => el.getAttribute('data-openable') === 'true',
+        renderHTML: (attrs) =>
+          attrs.openable ? { 'data-openable': 'true' } : {}
+      },
+      pluginID: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-plugin') || '',
+        renderHTML: (attrs) =>
+          attrs.pluginID ? { 'data-plugin': attrs.pluginID } : {}
+      }
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'div[data-type="embed-block"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'div',
+      mergeAttributes({ 'data-type': 'embed-block' }, HTMLAttributes)
     ]
   }
 })

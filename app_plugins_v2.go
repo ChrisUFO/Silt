@@ -9,12 +9,15 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"silt/backend/parser"
@@ -662,6 +665,182 @@ func notifyDesktop(title, body string) error {
 	default: // linux
 		return exec.Command("notify-send", title, body).Start()
 	}
+}
+
+// =========================================================================
+// Network / fetch (#115)
+// =========================================================================
+
+// maxPluginFetchBytes bounds a single plugin fetch response body (defense-
+// in-depth memory guard, mirroring maxPluginQueryRows).
+const maxPluginFetchBytes = 10 * 1024 * 1024 // 10 MB
+
+// maxPluginFetchRedirects caps redirect hops so a plugin can't be tricked into
+// an infinite redirect loop.
+const maxPluginFetchRedirects = 5
+
+// defaultPluginFetchTimeout caps how long a single fetch may take.
+const defaultPluginFetchTimeout = 30 * time.Second
+
+// PluginFetchResult is the envelope returned by PluginFetch.
+type PluginFetchResult struct {
+	Status  int               `json:"status"`
+	Headers map[string]string `json:"headers"`
+	Body    string            `json:"body"` // raw body (may be truncated to maxPluginFetchBytes)
+	Ok      bool              `json:"ok"`
+}
+
+// PluginFetchInput is the request envelope for PluginFetch.
+type PluginFetchInput struct {
+	URL     string            `json:"url"`
+	Method  string            `json:"method"`            // defaults to GET
+	Headers map[string]string `json:"headers,omitempty"` // arbitrary (auth) — audit-logged
+	Body    string            `json:"body,omitempty"`
+	Timeout int               `json:"timeout,omitempty"` // milliseconds; capped at 30s
+}
+
+// networkAuditMu guards the in-memory network audit log. The log is a simple
+// append-only slice of {plugin, host, status, time} entries, surfaced in
+// Settings → Plugins so a user can see what a networked plugin is doing (#115).
+var (
+	networkAuditMu sync.Mutex
+	networkAudit   []NetworkAuditEntry
+)
+
+// NetworkAuditEntry is one row of the plugin network audit log.
+type NetworkAuditEntry struct {
+	Plugin   string `json:"plugin"`
+	Host     string `json:"host"`
+	Status   int    `json:"status"`
+	Method   string `json:"method"`
+	At       string `json:"at"` // RFC3339
+}
+
+// PluginFetch performs an HTTP request through the Go backend (CORS-free),
+// with timeout / size / redirect caps. Gated by the network capability.
+// The host + status are appended to the in-memory audit log (never the body).
+func (a *App) PluginFetch(pluginID string, input PluginFetchInput) (PluginFetchResult, error) {
+	if err := a.requireGrant(pluginID, plugins.CapNetwork); err != nil {
+		return PluginFetchResult{}, err
+	}
+	if input.URL == "" {
+		return PluginFetchResult{}, fmt.Errorf("url is required")
+	}
+	if !isSafeUrl(input.URL) {
+		return PluginFetchResult{}, fmt.Errorf("url scheme is not allowed (only http/https)")
+	}
+	method := strings.ToUpper(strings.TrimSpace(input.Method))
+	if method == "" {
+		method = "GET"
+	}
+	timeout := defaultPluginFetchTimeout
+	if input.Timeout > 0 {
+		requested := time.Duration(input.Timeout) * time.Millisecond
+		if requested < timeout {
+			timeout = requested
+		}
+	}
+
+	client := &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxPluginFetchRedirects {
+				return fmt.Errorf("too many redirects (max %d)", maxPluginFetchRedirects)
+			}
+			return nil
+		},
+	}
+
+	var reqBody io.Reader
+	if input.Body != "" {
+		reqBody = strings.NewReader(input.Body)
+	}
+	req, err := http.NewRequest(method, input.URL, reqBody)
+	if err != nil {
+		return PluginFetchResult{}, fmt.Errorf("build request: %w", err)
+	}
+	for k, v := range input.Headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		// Still audit the attempt so the user sees the plugin tried.
+		a.auditNetwork(pluginID, method, input.URL, 0)
+		return PluginFetchResult{}, fmt.Errorf("fetch failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxPluginFetchBytes+1))
+	if err != nil {
+		a.auditNetwork(pluginID, method, input.URL, resp.StatusCode)
+		return PluginFetchResult{}, fmt.Errorf("read body: %w", err)
+	}
+	if int64(len(body)) > maxPluginFetchBytes {
+		body = body[:maxPluginFetchBytes]
+	}
+
+	headers := make(map[string]string, len(resp.Header))
+	for k, v := range resp.Header {
+		if len(v) > 0 {
+			headers[strings.ToLower(k)] = v[0]
+		}
+	}
+
+	a.auditNetwork(pluginID, method, input.URL, resp.StatusCode)
+
+	return PluginFetchResult{
+		Status:  resp.StatusCode,
+		Headers: headers,
+		Body:    string(body),
+		Ok:      resp.StatusCode >= 200 && resp.StatusCode < 300,
+	}, nil
+}
+
+// GetNetworkAudit returns the in-memory plugin network audit log (#115).
+func (a *App) GetNetworkAudit() ([]NetworkAuditEntry, error) {
+	networkAuditMu.Lock()
+	defer networkAuditMu.Unlock()
+	out := make([]NetworkAuditEntry, len(networkAudit))
+	copy(out, networkAudit)
+	return out, nil
+}
+
+// ClearNetworkAudit empties the audit log.
+func (a *App) ClearNetworkAudit() error {
+	networkAuditMu.Lock()
+	defer networkAuditMu.Unlock()
+	networkAudit = nil
+	return nil
+}
+
+// auditNetwork appends a {plugin, host, status, time} row. The body is NEVER
+// logged — only the host + status so a user can see what a plugin is doing
+// without leaking sensitive request/response payloads.
+func (a *App) auditNetwork(pluginID, method, rawURL string, status int) {
+	host := rawURL
+	// Best-effort host extraction without a full URL parse (the URL was already
+	// validated as http/https above).
+	if i := strings.Index(rawURL, "://"); i >= 0 {
+		rest := rawURL[i+3:]
+		if j := strings.IndexAny(rest, "/?#"); j >= 0 {
+			rest = rest[:j]
+		}
+		host = rest
+	}
+	networkAuditMu.Lock()
+	networkAudit = append(networkAudit, NetworkAuditEntry{
+		Plugin: pluginID,
+		Host:   host,
+		Status: status,
+		Method: method,
+		At:     time.Now().Format(time.RFC3339),
+	})
+	// Bound the log to the last 500 entries so it does not grow unbounded.
+	if len(networkAudit) > 500 {
+		networkAudit = networkAudit[len(networkAudit)-500:]
+	}
+	networkAuditMu.Unlock()
 }
 
 // newUUID mints a UUIDv4 string. Wraps the existing uuid import so the v2
