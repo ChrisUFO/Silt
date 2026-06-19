@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -297,6 +298,50 @@ func TestImportVaultTree_RejectsTamperedRootDigest(t *testing.T) {
 	_, err := ImportVaultTree(bad, dest, nil)
 	if err == nil || !strings.Contains(err.Error(), "integrity") {
 		t.Fatalf("expected integrity-root rejection, got %v", err)
+	}
+}
+
+// TestImportVaultTree_RejectsEntryExceedingPerEntryCap proves the per-entry
+// size cap in extractAndVerify fires end-to-end. The forged archive declares an
+// entry Size past the cap in the MANIFEST, then RECOMPUTES the root digest so
+// the archive passes every upstream check (integrity, presence, .system/,
+// total-size) and only fails at the extraction-phase guard — confirming the
+// bound is what rejects, not an earlier check. The zip entry's actual
+// UncompressedSize64 is untouched (small), so this isolates the manifest-SIZE
+// trust path. Guards the int64-overflow-safe bound added in the fix loop.
+func TestImportVaultTree_RejectsEntryExceedingPerEntryCap(t *testing.T) {
+	root := t.TempDir()
+	scaffoldArchiveTree(t, root)
+	good := filepath.Join(t.TempDir(), "out.silt-vault")
+	if _, err := ExportVaultTree(root, good, "V", "test", nil); err != nil {
+		t.Fatalf("ExportVaultTree: %v", err)
+	}
+	bad := filepath.Join(t.TempDir(), "oversize-entry.silt-vault")
+	if err := rebuildWithManifestEdit(t, good, bad, func(m *ArchiveManifest) {
+		if len(m.Entries) == 0 {
+			t.Fatal("need an entry to oversize")
+		}
+		// A Size within 1024 of int64 max is the exact case the fix protects
+		// against: the pre-fix `limit := want.Size + 1024` would OVERFLOW to a
+		// negative and `limit > cap` evaluated false, bypassing the guard (the
+		// entry then failed later with a confusing "size 0 does not match"
+		// error from io.LimitReader's negative-N behavior). The direct
+		// `want.Size > cap` bound rejects it cleanly here. Recompute the root
+		// so the archive passes integrity and reaches the extraction guard.
+		m.Entries[0].Size = math.MaxInt64 - 512
+		m.ArchiveSHA256 = rootDigest(m.Entries)
+	}); err != nil {
+		t.Fatalf("rebuildWithManifestEdit: %v", err)
+	}
+	dest := filepath.Join(t.TempDir(), "dest")
+	_, err := ImportVaultTree(bad, dest, nil)
+	if err == nil || !strings.Contains(err.Error(), "per-entry limit") {
+		t.Fatalf("expected per-entry-limit rejection at extraction, got %v", err)
+	}
+	// destAbs is never created: extraction aborts in the sibling temp dir before
+	// the cutover rename.
+	if _, statErr := os.Stat(dest); statErr == nil {
+		t.Error("destDir must not be created when the per-entry cap fires")
 	}
 }
 
