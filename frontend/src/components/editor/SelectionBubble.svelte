@@ -2,9 +2,9 @@
   import type { Editor } from 'svelte-tiptap'
 
   // SelectionBubble — a floating popover above non-collapsed text selection
-  // (#168). Notion/Trilium pattern. Shows the same format buttons as the
-  // toolbar in a tighter layout. Auto-dismisses on Esc, click outside, or
-  // selection collapse. role="menu" with arrow-key navigation.
+  // (#168). Shows the same format buttons as the toolbar in a tighter
+  // layout. Auto-dismisses on Esc, click outside, or selection collapse.
+  // role="menu" with arrow-key navigation.
 
   interface Props {
     editor: Editor | null

@@ -277,7 +277,7 @@ export const SiltBlockKeymaps = Extension.create({
       },
 
       // Strikethrough — the Strike extension uses Mod-Shift-s, but the
-      // standard Word/Notion binding is Mod-Shift-x. Register both (#168).
+      // standard binding is Mod-Shift-x. Register both (#168).
       'Mod-Shift-x': () => {
         this.editor.chain().focus().toggleStrike().run()
         return true

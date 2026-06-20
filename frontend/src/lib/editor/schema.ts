@@ -32,7 +32,7 @@ import Superscript from '@tiptap/extension-superscript'
 // the editor's extension array alongside StarterKit.
 //
 // On-disk serialization:
-//   highlight   → ==text==   (Obsidian syntax)
+//   highlight   → ==text==
 //   subscript   → <sub>text</sub>
 //   superscript → <sup>text</sup>
 // All three round-trip through clean_text (the Go parser preserves HTML/tags

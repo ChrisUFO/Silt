@@ -33,6 +33,9 @@
   import FormatToolbar from './editor/FormatToolbar.svelte'
   import FormattingFirstRunTip from './editor/FormattingFirstRunTip.svelte'
   import SelectionBubble from './editor/SelectionBubble.svelte'
+  import ViewModeToggle from './editor/ViewModeToggle.svelte'
+  import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
+  import { getViewMode, toggleViewMode } from '../lib/viewMode.svelte'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { dispatch as dispatchPluginEvent } from '../plugins/events'
 
@@ -110,6 +113,13 @@
 
   // Word count (updated on every editor transaction via CharacterCount storage).
   let wordCount = $state(0)
+
+  // View mode (#171): edit (TipTap WYSIWYG) vs source (raw markdown).
+  // Synced via $effect so it reacts to both prop changes and store toggles.
+  let viewMode = $state<'edit' | 'source'>('edit')
+  $effect(() => {
+    viewMode = getViewMode(notebook, section, page)
+  })
 
   // First-run tip: dismissed when 'formatting_tip_v1' is in dismissed_tips.
   let formatTipDismissed = $derived(
@@ -300,6 +310,11 @@
       editorInstance = editor as Editor
     }
   })
+
+  function handleToggleViewMode(): void {
+    toggleViewMode(notebook, section, page)
+    viewMode = getViewMode(notebook, section, page)
+  }
 
   onDestroy(() => {
     stopHeartbeat()
@@ -607,67 +622,74 @@
 </script>
 
 <div class="tiptap-editor-host" class:focused={isFocused} class:focus-mode={focusModeEnabled}>
-  {#if showFormatToolbar}
-    <FormatToolbar editor={editorInstance} {activeMarks} />
-  {/if}
-  <FormattingFirstRunTip dismissed={formatTipDismissed} onDismiss={dismissFormatTip} />
-  <SelectionBubble
-    editor={editorInstance}
-    {activeMarks}
-    {selectionEmpty}
-    {selectionCoords}
-  />
-  {#if editorStore}
-    <EditorContent editor={$editorStore} />
-  {/if}
-  {#if unsavedChanges || lastSaveError}
-    <div
-      class="unsaved-indicator {lastSaveError ? 'error' : ''}"
-      role={lastSaveError ? 'alert' : 'status'}
-      aria-live={lastSaveError ? 'assertive' : 'polite'}
-    >
-      {#if lastSaveError}
-        <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
-          >error</span
-        >
-        <span>Save failed — edits not persisted</span>
-      {:else}
-        <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
-          >schedule</span
-        >
-        <span>Unsaved changes</span>
-      {/if}
-    </div>
-  {/if}
-  {#if showWordCount && wordCount > 0}
-    <div class="word-count" role="status" aria-live="off">
-      {wordCount} {wordCount === 1 ? 'word' : 'words'}
-    </div>
-  {/if}
-  {#if showSlashMenu}
-    <CommandPalette
-      onSelect={handleSlashSelect}
-      onClose={() => (showSlashMenu = false)}
+  <div class="view-mode-bar">
+    <ViewModeToggle mode={viewMode} onToggle={handleToggleViewMode} />
+  </div>
+  {#if viewMode === 'source'}
+    <MarkdownSourceViewer {blocks} filePath="{notebook}/{section}/{page}.md" />
+  {:else}
+    {#if showFormatToolbar}
+      <FormatToolbar editor={editorInstance} {activeMarks} />
+    {/if}
+    <FormattingFirstRunTip dismissed={formatTipDismissed} onDismiss={dismissFormatTip} />
+    <SelectionBubble
+      editor={editorInstance}
+      {activeMarks}
+      {selectionEmpty}
+      {selectionCoords}
     />
-  {/if}
-  {#if metaPopup}
-    {@const c = metaPopupCoords()}
-    {#if c}
-      <div class="meta-suggest" style="left:{c.left}px; top:{c.top}px">
-        {#each metaPopup.items as item, i}
-          <button
-            type="button"
-            class="meta-suggest-item"
-            class:selected={i === metaPopup.selected}
-            role="option"
-            aria-selected={i === metaPopup.selected}
-            onclick={() => onMetaPick(item.key)}
+    {#if editorStore}
+      <EditorContent editor={$editorStore} />
+    {/if}
+    {#if unsavedChanges || lastSaveError}
+      <div
+        class="unsaved-indicator {lastSaveError ? 'error' : ''}"
+        role={lastSaveError ? 'alert' : 'status'}
+        aria-live={lastSaveError ? 'assertive' : 'polite'}
+      >
+        {#if lastSaveError}
+          <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
+            >error</span
           >
-            <span class="meta-suggest-key">{item.key}</span>
-            <span class="meta-suggest-desc">{item.description}</span>
-          </button>
-        {/each}
+          <span>Save failed — edits not persisted</span>
+        {:else}
+          <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
+            >schedule</span
+          >
+          <span>Unsaved changes</span>
+        {/if}
       </div>
+    {/if}
+    {#if showWordCount && wordCount > 0}
+      <div class="word-count" role="status" aria-live="off">
+        {wordCount} {wordCount === 1 ? 'word' : 'words'}
+      </div>
+    {/if}
+    {#if showSlashMenu}
+      <CommandPalette
+        onSelect={handleSlashSelect}
+        onClose={() => (showSlashMenu = false)}
+      />
+    {/if}
+    {#if metaPopup}
+      {@const c = metaPopupCoords()}
+      {#if c}
+        <div class="meta-suggest" style="left:{c.left}px; top:{c.top}px">
+          {#each metaPopup.items as item, i}
+            <button
+              type="button"
+              class="meta-suggest-item"
+              class:selected={i === metaPopup.selected}
+              role="option"
+              aria-selected={i === metaPopup.selected}
+              onclick={() => onMetaPick(item.key)}
+            >
+              <span class="meta-suggest-key">{item.key}</span>
+              <span class="meta-suggest-desc">{item.description}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
     {/if}
   {/if}
 </div>
@@ -683,6 +705,12 @@
 <style>
   .tiptap-editor-host {
     width: 100%;
+  }
+
+  .view-mode-bar {
+    display: flex;
+    justify-content: flex-end;
+    padding: 4px 8px;
   }
 
   .unsaved-indicator {

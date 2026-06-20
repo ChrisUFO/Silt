@@ -47,6 +47,9 @@ type EditorConfig struct {
 	// FocusMode dims all paragraphs except the active one for distraction-free
 	// writing (#168 Phase 3). Default false.
 	FocusMode *bool `yaml:"focus_mode,omitempty" json:"focus_mode,omitempty"`
+	// DefaultViewMode controls whether pages open in "edit" (TipTap WYSIWYG)
+	// or "source" (raw markdown) mode (#171). Default "edit".
+	DefaultViewMode *string `yaml:"default_view_mode,omitempty" json:"default_view_mode,omitempty"`
 }
 
 // ParsingConfig holds the task-parse rules consumed by the AST parser.
@@ -206,6 +209,7 @@ func Defaults() SystemConfig {
 			FocusHighlightAncestors: true,
 			ShowWordCount: boolPtr(false),
 			FocusMode:     boolPtr(false),
+			DefaultViewMode: stringPtr("edit"),
 		},
 		Parsing: ParsingConfig{
 			AutoInjectUUID:      true,
@@ -227,7 +231,7 @@ func Defaults() SystemConfig {
 			"next_tab":  "Ctrl+Tab",
 			"prev_tab":  "Ctrl+Shift+Tab",
 			"close_tab": "Ctrl+W",
-			// Inline formatting hotkeys (#168). Standard Word/Notion bindings
+			// Inline formatting hotkeys (#168). Standard editor bindings
 			// so muscle memory transfers. Each is overridable per-vault via
 			// the deep-merge. The editor's ProseMirror keymaps consume these
 			// inside the contenteditable; the global handler skips them when
@@ -252,6 +256,8 @@ func Defaults() SystemConfig {
 			"align_center":  "Ctrl+Shift+E",
 			"align_right":   "Ctrl+Shift+R",
 			"align_justify": "Ctrl+Shift+J",
+			// View mode toggle (#171). Standard source/view toggle binding.
+			"toggle_view_mode": "Ctrl+E",
 		},
 		Plugins: PluginsConfig{
 			Active:   []string{"silt-agenda", "silt-calendar", "silt-kanban"},
@@ -526,12 +532,25 @@ func normalize(cfg SystemConfig) SystemConfig {
 	if cfg.Editor.FocusMode == nil {
 		cfg.Editor.FocusMode = boolPtr(false)
 	}
+	// DefaultViewMode: nil → "edit" (#171). Validate to edit/source.
+	if cfg.Editor.DefaultViewMode == nil {
+		cfg.Editor.DefaultViewMode = stringPtr("edit")
+	} else {
+		v := strings.TrimSpace(*cfg.Editor.DefaultViewMode)
+		if v != "edit" && v != "source" {
+			cfg.Editor.DefaultViewMode = stringPtr("edit")
+		}
+	}
 	return cfg
 }
 
 // boolPtr is a small helper for the Defaults() block so *bool fields can be
 // initialized inline without a temporary variable.
 func boolPtr(b bool) *bool { return &b }
+
+// stringPtr is a small helper for the Defaults() block so *string fields can
+// be initialized inline without a temporary variable.
+func stringPtr(s string) *string { return &s }
 
 // writeFileAtomic writes data to a sibling temp file, fsyncs it, then renames
 // it over path. Kept local (rather than reusing parser.WriteFileAtomic) so the
