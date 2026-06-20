@@ -577,6 +577,8 @@ The active `notebook/section/page` from the navigator is bound into the context 
 
 8.3 Core Feature Decoupling
 
+**Content mutation is intentionally ungated.** PluginCreateBlock, PluginDeleteBlock, PluginMoveBlock, PluginCreatePage, PluginDeletePage, PluginRenamePage, PluginCreateSection, and PluginCreateNotebook do NOT call requireGrant. This is a deliberate trust-model decision: any loaded plugin can mutate content (create/delete/move blocks, pages, sections, notebooks), mirroring the core `mutateBlock` / `updateBlockState` pattern. The capability model gates I/O-bound operations (files, network, OS, clipboard) that have cross-process or cross-host impact; in-vault content mutation is treated as an implicit right of all loaded plugins, consistent with the editor's own mutation path. See GitHub issue #156 for the tracking discussion on whether a `content-mutate` capability should be added in a future release.
+
 To enforce architectural parity, the user interface contains no custom code for the default Calendar, Kanban, or Agenda dashboards. They use the exact same SDK constraints as any third-party developer plugin:
 
 Kanban Plugin: Uses the sqliteQuery context hook to pull records scoped to the active navigation level (vault / notebook / section / page). The user selects the scope via a segmented control in the board header. The WHERE clause is built per scope:

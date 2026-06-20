@@ -111,7 +111,8 @@
     'notify',
     'fetch',
     'registerSlashCommand',
-    'registerSurface'
+    'registerSurface',
+    'readPluginAsset'
   ])
 
   function handleRequest(ev: MessageEvent) {

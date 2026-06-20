@@ -1263,6 +1263,22 @@ func (a *App) PluginFetch(pluginID string, input PluginFetchInput) (PluginFetchR
 }
 
 // GetNetworkAudit returns the in-memory plugin network audit log (#115).
+// truncateNetworkLog reads the log file, keeps the last n lines, and rewrites
+// it. Best-effort — errors are silently ignored (the audit log is not a
+// security boundary, just a diagnostic aid).
+func truncateNetworkLog(path string, keepLines int) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) <= keepLines {
+		return
+	}
+	kept := lines[len(lines)-keepLines:]
+	_ = os.WriteFile(path, []byte(strings.Join(kept, "\n")+"\n"), 0o644)
+}
+
 func (a *App) GetNetworkAudit() ([]NetworkAuditEntry, error) {
 	networkAuditMu.Lock()
 	defer networkAuditMu.Unlock()
@@ -1288,7 +1304,9 @@ func (a *App) auditNetwork(pluginID, method, rawURL string, status int) {
 	// validated as http/https above).
 	if i := strings.Index(rawURL, "://"); i >= 0 {
 		rest := rawURL[i+3:]
-		if j := strings.IndexAny(rest, "/?#"); j >= 0 {
+		// Include the path (up to but not including query string) so the
+		// audit log distinguishes GET /health from DELETE /data/all.
+		if j := strings.IndexAny(rest, "?#"); j >= 0 {
 			rest = rest[:j]
 		}
 		host = rest
@@ -1310,10 +1328,16 @@ func (a *App) auditNetwork(pluginID, method, rawURL string, status int) {
 	networkAuditMu.Unlock()
 	// Best-effort persist to a vault-scoped log file so the audit trail survives
 	// a restart (#115). The log is per-plugin so a user can inspect it.
+	// Capped at maxPluginNetworkLogBytes to prevent unbounded growth from a
+	// chatty plugin; when exceeded, the file is truncated to its last 200 lines.
+	const maxPluginNetworkLogBytes = 1 * 1024 * 1024 // 1 MB
 	if a.vaultPath != "" {
 		logPath := filepath.Join(a.vaultPath, ".system", "plugins", pluginID, "network.log")
 		line := fmt.Sprintf("%s %s %s %d %s\n", entry.At, entry.Method, entry.Host, entry.Status, pluginID)
 		_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
+		if info, err := os.Stat(logPath); err == nil && info.Size() > maxPluginNetworkLogBytes {
+			truncateNetworkLog(logPath, 200)
+		}
 		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 		if err == nil {
 			_, _ = f.WriteString(line)
@@ -1592,16 +1616,15 @@ func (a *App) PluginReadPluginAsset(pluginID, relPath string) (string, error) {
 	if a.vaultPath == "" {
 		return "", fmt.Errorf("vault not loaded")
 	}
-	safeID := sanitizePathSegment(pluginID)
-	if safeID == "" {
-		return "", fmt.Errorf("invalid plugin id")
+	if !plugins.IsValidID(pluginID) {
+		return "", fmt.Errorf("invalid plugin id %q", pluginID)
 	}
 	cleaned := filepath.Clean(filepath.FromSlash(relPath))
 	if strings.HasPrefix(cleaned, "..") || filepath.IsAbs(cleaned) {
 		return "", fmt.Errorf("relative path escapes the plugin directory")
 	}
-	assetPath := filepath.Join(a.vaultPath, ".system", "plugins", safeID, cleaned)
-	if !isPathWithinRoot(assetPath, filepath.Join(a.vaultPath, ".system", "plugins", safeID)) {
+	assetPath := filepath.Join(a.vaultPath, ".system", "plugins", pluginID, cleaned)
+	if !isPathWithinRoot(assetPath, filepath.Join(a.vaultPath, ".system", "plugins", pluginID)) {
 		return "", fmt.Errorf("path escapes plugin directory")
 	}
 	data, err := os.ReadFile(assetPath)

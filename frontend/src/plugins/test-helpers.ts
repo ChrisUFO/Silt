@@ -77,7 +77,14 @@ export const v2CtxStubs: Pick<
   clipboardRead: () => Promise.resolve(''),
   clipboardWrite: () => Promise.resolve(true),
   notify: () => Promise.resolve(true),
-  fetch: () => Promise.resolve({ status: 0, headers: {}, body: '', ok: false }),
+  fetch: () =>
+    Promise.resolve({
+      status: 0,
+      headers: {},
+      body: '',
+      ok: false,
+      truncated: false
+    }),
   registerSlashCommand: () => () => {},
   provideDecorations: () => () => {},
   getSetting: () => Promise.resolve(undefined),

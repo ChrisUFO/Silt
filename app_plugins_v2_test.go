@@ -362,6 +362,21 @@ func TestNetworkAudit_Clear(t *testing.T) {
 	}
 }
 
+// auditNetwork includes the URL path (not just the host) so the log
+// distinguishes GET /health from DELETE /data/all.
+func TestNetworkAudit_IncludesUrlPath(t *testing.T) {
+	app := newTestApp(t)
+	_ = app.ClearNetworkAudit()
+	app.auditNetwork("test-plugin", "GET", "https://api.example.com/v1/data/all", 200)
+	entries, _ := app.GetNetworkAudit()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if !strings.Contains(entries[0].Host, "/v1/data/all") {
+		t.Errorf("audit Host should include URL path, got %q", entries[0].Host)
+	}
+}
+
 // CheckPluginUpdate uses the same SSRF-defended client as PluginFetch (#101
 // review). A request whose target is a private/loopback host must be
 // rejected — by the initial-URL check, the redirect callback, or the

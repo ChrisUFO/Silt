@@ -259,6 +259,7 @@ export interface PluginContext {
     headers: Record<string, string>
     body: string
     ok: boolean
+    truncated: boolean
   }>
 
   // --- Editor extension points (#110) ------------------------------------

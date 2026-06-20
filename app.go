@@ -4676,15 +4676,15 @@ func (a *App) UninstallPlugin(pluginID string) error {
 	// Best-effort grant cleanup; a failure here must not mask the successful
 	// uninstall (the folder is already gone). The grants block is harmless if
 	// it lingers, but cleaning it keeps the manager UI honest.
-	_ = a.revokeAllGrantsLocked(pluginID)
+	_ = a.revokeAllGrants(pluginID)
 	a.emitPluginsChanged()
 	return nil
 }
 
-// revokeAllGrantsLocked removes every capability grant for pluginID without
+// revokeAllGrants removes every capability grant for pluginID without
 // emitting plugins:changed (the caller decides whether to emit). Used by
-// UninstallPlugin and the vault teardown path.
-func (a *App) revokeAllGrantsLocked(pluginID string) error {
+// UninstallPlugin and the vault teardown path. Acquires configMu internally.
+func (a *App) revokeAllGrants(pluginID string) error {
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
 	if a.cfg.Plugins.Grants == nil {
@@ -4764,7 +4764,11 @@ func isFirstPartyPlugin(pluginID string) bool {
 // file writes) read it via grantedQualifier after a successful requireGrant.
 func (a *App) requireGrant(pluginID string, cap plugins.Capability) error {
 	if !plugins.IsValidID(pluginID) {
-		return &plugins.CapabilityDeniedError{Capability: string(cap), Requested: "granted"}
+		return &plugins.CapabilityDeniedError{
+			Plugin:     "<invalid>",
+			Capability: string(cap),
+			Requested:  plugins.QualGranted,
+		}
 	}
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()

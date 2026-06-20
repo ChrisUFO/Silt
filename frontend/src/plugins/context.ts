@@ -275,7 +275,8 @@ export function makePluginContext(pluginID: string): PluginContext {
         status: res?.status ?? 0,
         headers: res?.headers ?? {},
         body: res?.body ?? '',
-        ok: !!res?.ok
+        ok: !!res?.ok,
+        truncated: !!res?.truncated
       })),
 
     // --- Editor extension points (#110) — plugin slash commands -------------
