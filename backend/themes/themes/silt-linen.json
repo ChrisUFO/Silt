@@ -43,7 +43,8 @@
       },
       "status": {
         "warn": "#e0b566",
-        "danger": "#d27878"
+        "danger": "#d27878",
+        "success": "#22c55e"
       },
       "texture": {
         "image": "repeating-linear-gradient(0deg, rgba(236,229,216,0.8) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, rgba(236,229,216,0.8) 0 1px, transparent 1px 5px), url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
@@ -84,7 +85,8 @@
       },
       "status": {
         "warn": "#b08428",
-        "danger": "#b85555"
+        "danger": "#b85555",
+        "success": "#16a34a"
       },
       "texture": {
         "image": "repeating-linear-gradient(0deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",

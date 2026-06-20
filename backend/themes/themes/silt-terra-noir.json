@@ -43,7 +43,8 @@
       },
       "status": {
         "warn": "#f0a823",
-        "danger": "#d83a3a"
+        "danger": "#d83a3a",
+        "success": "#22c55e"
       }
     },
     "light": {
@@ -79,7 +80,8 @@
       },
       "status": {
         "warn": "#b8791a",
-        "danger": "#bd3434"
+        "danger": "#bd3434",
+        "success": "#16a34a"
       }
     }
   }

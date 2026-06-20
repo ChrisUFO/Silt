@@ -3,7 +3,6 @@
 @theme {
   --color-error: #ffb4ab;
   --color-background: #0e1416;
-  --color-text-muted: #8b8b94;
   --color-on-secondary: #1000a9;
   --color-inverse-on-surface: #2b3133;
   --color-on-secondary-fixed-variant: #2f2ebe;
@@ -14,11 +13,9 @@
   --color-surface-container-lowest: #090f11;
   --color-surface-bright: #343a3c;
   --color-outline: #869397;
-  --color-text-primary: #e4e4e7;
   --color-on-surface-variant: #bcc9cd;
   --color-on-error-container: #ffdad6;
   --color-on-background: #dee3e6;
-  --color-border-zinc: #27272a;
   --color-surface-container-highest: #303638;
   --color-surface-container-high: #252b2d;
   --color-secondary-container: #3131c0;
@@ -26,25 +23,10 @@
   --color-surface-variant: #303638;
   --color-surface-dim: #0e1416;
   --color-surface-container: #1b2122;
-  --color-panel: #161619;
-  --color-surface: #121215;
-  /*
-   * Aliases so the bg-* utility classes resolve (#142). Components use
-   * `bg-panel`, `bg-surface`, etc. throughout; in Tailwind v4 these need
-   * --color-bg-* theme variables to generate real CSS. Each alias references
-   * the runtime --bg-* custom property (set by :root below + overwritten by the
-   * theme injector), so a theme change flows through automatically.
-   */
-  --color-bg-panel: var(--bg-panel);
-  --color-bg-surface: var(--bg-surface);
-  --color-bg-void: var(--bg-void);
-  --color-bg-hover: var(--bg-hover);
-  --color-bg-active: var(--bg-active);
   --color-tertiary-fixed-dim: #ffb873;
   --color-on-error: #690005;
   --color-inverse-surface: #dee3e6;
   --color-on-tertiary-container: #5b3200;
-  --color-border-muted: #1e1e23;
   --color-on-tertiary: #4b2800;
   --color-on-tertiary-fixed-variant: #6a3b00;
   --color-tertiary-container: #e89337;
@@ -55,15 +37,38 @@
   --color-surface-container-low: #171d1e;
   --color-on-secondary-fixed: #07006c;
   --color-secondary-fixed-dim: #c0c1ff;
-  --color-void: #0c0c0e;
 
-  /* Accent Gradients & Tones (semantic: primary=teal, secondary=indigo) */
-  --color-accent-primary-start: #2dd4bf;
-  --color-accent-primary-end: #0d9488;
-  --color-accent-primary-glow: rgba(20, 184, 166, 0.15);
-  --color-accent-secondary-start: #6366f1;
-  --color-accent-secondary-end: #a855f7;
-  --color-accent-secondary-glow: rgba(168, 85, 247, 0.12);
+  /* Background scale — runtime overridable via theme injector. */
+  --color-void: var(--bg-void);
+  --color-surface: var(--bg-surface);
+  --color-panel: var(--bg-panel);
+  --color-hover: var(--bg-hover);
+  --color-active: var(--bg-active);
+
+  /* Border scale — runtime overridable via theme injector. */
+  --color-border-muted: var(--border-muted);
+  --color-border-zinc: var(--border-zinc);
+  --color-border-active: var(--border-active);
+  --color-border-focus: var(--border-focus);
+
+  /* Text scale — runtime overridable via theme injector. */
+  --color-text-primary: var(--text-primary);
+  --color-text-muted: var(--text-muted);
+  --color-text-disabled: var(--text-disabled);
+
+  /* Accent Gradients & Tones (semantic: primary=teal, secondary=indigo).
+     Runtime overridable via theme injector. */
+  --color-accent-primary-start: var(--accent-primary-start);
+  --color-accent-primary-end: var(--accent-primary-end);
+  --color-accent-primary-glow: var(--accent-primary-glow);
+  --color-accent-secondary-start: var(--accent-secondary-start);
+  --color-accent-secondary-end: var(--accent-secondary-end);
+  --color-accent-secondary-glow: var(--accent-secondary-glow);
+
+  /* Status (semantic: warn/danger/success). */
+  --color-status-warn: var(--status-warn);
+  --color-status-danger: var(--status-danger);
+  --color-status-success: var(--status-success);
 
   /* Spacing */
   --spacing-guide-offset: -12px;

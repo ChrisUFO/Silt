@@ -104,10 +104,11 @@ type AccentTriple struct {
 	Glow  string `json:"glow"`
 }
 
-// Status holds warn/danger semantic colors.
+// Status holds warn/danger/success semantic colors.
 type Status struct {
-	Warn   string `json:"warn"`
-	Danger string `json:"danger"`
+	Warn    string `json:"warn"`
+	Danger  string `json:"danger"`
+	Success string `json:"success"`
 }
 
 // Flatten produces the flat map of CSS custom-property names → values for
@@ -145,6 +146,7 @@ func (t *Theme) Flatten(mode string) map[string]string {
 
 	out["--status-warn"] = m.Status.Warn
 	out["--status-danger"] = m.Status.Danger
+	out["--status-success"] = m.Status.Success
 
 	// Optional decorative surface texture (e.g. Linen's woven paper grain).
 	// Emitted only when the mode declares a texture block; absent on the

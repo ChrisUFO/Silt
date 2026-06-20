@@ -27,7 +27,7 @@ const validCustomThemeJSON = `{
         "primary": {"start":"#c2410c","end":"#7c2d12","glow":"rgba(194,65,12,0.15)"},
         "secondary": {"start":"#4d7c0f","end":"#365314","glow":"rgba(77,124,15,0.12)"}
       },
-      "status": {"warn":"#fbbf24","danger":"#f43f5e"}
+      "status": {"warn":"#fbbf24","danger":"#f43f5e","success":"#22c55e"}
     },
     "light": {
       "bg": {"void":"#faf6f2","surface":"#ffffff","panel":"#f1ebe4","hover":"#e5dccf","active":"#d6c7b4"},
@@ -37,7 +37,7 @@ const validCustomThemeJSON = `{
         "primary": {"start":"#9a3412","end":"#7c2d12","glow":"rgba(154,52,18,0.10)"},
         "secondary": {"start":"#3f6212","end":"#365314","glow":"rgba(63,98,18,0.08)"}
       },
-      "status": {"warn":"#b45309","danger":"#be123c"}
+      "status": {"warn":"#b45309","danger":"#be123c","success":"#16a34a"}
     }
   }
 }`

@@ -95,6 +95,7 @@ var requiredTokens = []struct {
 	{"accent.secondary.glow", func(m Mode) string { return m.Accent.Secondary.Glow }},
 	{"status.warn", func(m Mode) string { return m.Status.Warn }},
 	{"status.danger", func(m Mode) string { return m.Status.Danger }},
+	{"status.success", func(m Mode) string { return m.Status.Success }},
 }
 
 // Validate checks a parsed theme against the canonical schema. It returns

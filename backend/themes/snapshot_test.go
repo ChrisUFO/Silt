@@ -41,6 +41,7 @@ var goldenDefaultDark = map[string]string{
 	"--accent-secondary-glow": "rgba(168, 85, 247, 0.12)",
 	"--status-warn":           "#fbbf24",
 	"--status-danger":         "#f43f5e",
+	"--status-success":        "#22c55e",
 	"--font-body":             "'Plus Jakarta Sans', sans-serif",
 	"--font-mono":             "'JetBrains Mono', monospace",
 	"--font-headline":         "'Hanken Grotesk', sans-serif",
@@ -67,6 +68,7 @@ var goldenDefaultLight = map[string]string{
 	"--accent-secondary-glow": "rgba(79, 70, 229, 0.08)",
 	"--status-warn":           "#d97706",
 	"--status-danger":         "#e11d48",
+	"--status-success":        "#16a34a",
 	"--font-body":             "'Plus Jakarta Sans', sans-serif",
 	"--font-mono":             "'JetBrains Mono', monospace",
 	"--font-headline":         "'Hanken Grotesk', sans-serif",
@@ -142,7 +144,7 @@ func titleCase(s string) string {
 }
 
 // expectedFlattenKeys is the complete set of CSS custom properties a theme
-// with the default typography block produces when flattened: 20 color tokens
+// with the default typography block produces when flattened: 21 color tokens
 // + 3 typography tokens (--font-body/mono/headline). The default golden
 // snapshot above pins every VALUE of cyber_forest against this set; the
 // first-class shape guard below pins the SET (and the tuned tokens) for the
@@ -153,7 +155,7 @@ var expectedFlattenKeys = []string{
 	"--text-primary", "--text-muted", "--text-disabled",
 	"--accent-primary-start", "--accent-primary-end", "--accent-primary-glow",
 	"--accent-secondary-start", "--accent-secondary-end", "--accent-secondary-glow",
-	"--status-warn", "--status-danger",
+	"--status-warn", "--status-danger", "--status-success",
 	"--font-body", "--font-mono", "--font-headline",
 }
 

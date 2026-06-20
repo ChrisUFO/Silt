@@ -35,7 +35,7 @@ const minimalValidJSON = `{
         "primary": {"start":"#2dd4bf","end":"#0d9488","glow":"rgba(20,184,166,0.15)"},
         "secondary": {"start":"#6366f1","end":"#a855f7","glow":"rgba(168,85,247,0.12)"}
       },
-      "status": {"warn":"#fbbf24","danger":"#f43f5e"}
+      "status": {"warn":"#fbbf24","danger":"#f43f5e","success":"#22c55e"}
     },
     "light": {
       "bg": {"void":"#ffffff","surface":"#f8fafc","panel":"#f1f5f9","hover":"#e2e8f0","active":"#cbd5e1"},
@@ -45,7 +45,7 @@ const minimalValidJSON = `{
         "primary": {"start":"#0d9488","end":"#115e59","glow":"rgba(13,148,136,0.10)"},
         "secondary": {"start":"#4f46e5","end":"#7c3aed","glow":"rgba(79,70,229,0.08)"}
       },
-      "status": {"warn":"#d97706","danger":"#e11d48"}
+      "status": {"warn":"#d97706","danger":"#e11d48","success":"#16a34a"}
     }
   }
 }`
@@ -156,7 +156,7 @@ const darkOnlyJSON = `{
         "primary": {"start":"#2dd4bf","end":"#0d9488","glow":"rgba(20,184,166,0.15)"},
         "secondary": {"start":"#6366f1","end":"#a855f7","glow":"rgba(168,85,247,0.12)"}
       },
-      "status": {"warn":"#fbbf24","danger":"#f43f5e"}
+      "status": {"warn":"#fbbf24","danger":"#f43f5e","success":"#22c55e"}
     }
   }
 }`
@@ -240,7 +240,7 @@ func TestParseDefault_IsValid(t *testing.T) {
 		"--text-primary", "--text-muted", "--text-disabled",
 		"--accent-primary-start", "--accent-primary-end", "--accent-primary-glow",
 		"--accent-secondary-start", "--accent-secondary-end", "--accent-secondary-glow",
-		"--status-warn", "--status-danger",
+		"--status-warn", "--status-danger", "--status-success",
 	}
 	for _, k := range expected {
 		if _, ok := tokens[k]; !ok {
@@ -570,7 +570,7 @@ func TestValidate_TextureRejectsCSSInjection(t *testing.T) {
 
 	// End-to-end: a crafted theme JSON file with an injection image is
 	// rejected by the full ParseAndValidate pipeline (not just validateTexture).
-	darkStatus := `"status": {"warn":"#fbbf24","danger":"#f43f5e"}`
+	darkStatus := `"status": {"warn":"#fbbf24","danger":"#f43f5e","success":"#22c55e"}`
 	crafted := strings.Replace(
 		minimalValidJSON,
 		darkStatus,
