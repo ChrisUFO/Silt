@@ -163,8 +163,18 @@
       { tabs: displayedTabs, activeId: activeTabId },
       dir
     )
+    // Merge the MRU-bumped tabs (from the cycled subset) back into the
+    // full openTabs array. cycleTabState → activateTab bumps
+    // lastActivatedAt on the newly-active tab; without this merge,
+    // repeated Ctrl+Tab presses would use stale timestamps and the
+    // cycling order would degrade (#142 review: discarded MRU bump).
+    openTabs = openTabs.map((t) => {
+      const updated = result.tabs.find((x) => x.id === t.id)
+      return updated ?? t
+    })
     activeTabId = result.activeId
     syncActiveFromTab()
+    schedulePersistTabs()
   }
 
   // --- Tab persistence (debounced 250ms, pinned-only) ----------------------
@@ -557,12 +567,21 @@
     blockId: string
   ) {
     // Route through openPage (VS Code preview-tab semantics, #142).
-    // If the target is already the active page, openPage('preview') →
-    // activate-only (no tab change, just scroll-to-block).
-    openPage({ notebook, section, page }, 'preview', {
-      fileDate: date,
-      blockId
-    })
+    // Use activate-only when the target IS the active page so block
+    // navigation does not re-bump the MRU timestamp (the state machine's
+    // activate-only path is a true no-op on tab state, just sets the
+    // scroll-to-block target). Otherwise open in preview mode.
+    const activeTab = openTabs.find((t) => t.id === activeTabId)
+    const isSamePage =
+      activeTab &&
+      activeTab.notebook === notebook &&
+      activeTab.section === section &&
+      activeTab.page === page
+    openPage(
+      { notebook, section, page },
+      isSamePage ? 'activate-only' : 'preview',
+      { fileDate: date, blockId }
+    )
     activeView = 'notes'
     searchTargetDate = date
     searchTargetBlockId = blockId

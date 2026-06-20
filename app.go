@@ -3814,8 +3814,15 @@ func (a *App) GetOpenTabs() (OpenTabsResult, error) {
 	a.configMu.RLock()
 	tabs := append([]config.TabRef(nil), a.cfg.UI.OpenTabs...)
 	active := a.cfg.UI.ActiveTab
-	vaultPath := a.vaultPath
 	a.configMu.RUnlock()
+
+	// vaultPath is vaultMu-guarded (per the App struct docstring). Read it
+	// under the correct mutex in a short critical section. We must NOT hold
+	// vaultMu while calling ListNavigation below (it takes its own
+	// vaultMu.RLock, and recursive RLock deadlocks if a writer is waiting).
+	a.vaultMu.RLock()
+	vaultPath := a.vaultPath
+	a.vaultMu.RUnlock()
 
 	if vaultPath == "" {
 		return OpenTabsResult{OpenTabs: []config.TabRef{}}, nil
@@ -3864,16 +3871,15 @@ func (a *App) GetOpenTabs() (OpenTabsResult, error) {
 
 // SetOpenTabs persists the open-tab set + active tab to config.yaml. The
 // frontend filters to pinned tabs before calling (preview tabs are
-// ephemeral). Snapshots vaultPath under vaultMu.RLock, then releases it
-// before acquiring configMu and writing — matching the GetOpenTabs pattern
-// so the disk-write (config.Save) does not hold vaultMu and block readers
-// like ListNavigation (#142 review: redundant lock broadening).
+// ephemeral). Holds vaultMu.RLock across the entire call to block lifecycle
+// transitions (CloseVault / MoveVault) during the disk write — matching the
+// SetSidebarWidth / SetNavOrder sibling pattern. RLock does not block other
+// RLock readers, so ListNavigation and GetOpenTabs continue to operate
+// concurrently. The vaultMu → configMu ordering is preserved.
 func (a *App) SetOpenTabs(openTabs []config.TabRef, activeTab *config.TabRef) error {
 	a.vaultMu.RLock()
-	vaultPath := a.vaultPath
-	a.vaultMu.RUnlock()
-
-	if vaultPath == "" {
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
 	if openTabs == nil {
@@ -3889,7 +3895,7 @@ func (a *App) SetOpenTabs(openTabs []config.TabRef, activeTab *config.TabRef) er
 	if a.configWatcher != nil {
 		a.configWatcher.RegisterSelfWrite()
 	}
-	return config.Save(vaultPath, cfg)
+	return config.Save(a.vaultPath, cfg)
 }
 
 // navPageSet flattens the NavigationTree into a set of
