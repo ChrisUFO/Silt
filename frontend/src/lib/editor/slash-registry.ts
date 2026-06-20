@@ -151,3 +151,9 @@ registerSlashCommand({ id: 'h2', label: 'Heading 2', description: 'Convert the b
 registerSlashCommand({ id: 'h3', label: 'Heading 3', description: 'Convert the block to an H3', icon: 'format_size', shortcut: 'Ctrl+Alt+3' })
 registerSlashCommand({ id: 'note', label: 'Plain note', description: 'Convert the block to a plain note (strip header / task)', icon: 'notes', shortcut: 'Ctrl+Alt+0' })
 registerSlashCommand({ id: 'task', label: 'Task', description: 'Convert the block to a task', icon: 'check_box', shortcut: 'Ctrl+Alt+4' })
+
+// --- Text alignment commands (#173) ---------------------------------------
+registerSlashCommand({ id: 'align-left', label: 'Align left', description: 'Align the current block to the left', icon: 'format_align_left', shortcut: 'Ctrl+Shift+L' })
+registerSlashCommand({ id: 'align-center', label: 'Align center', description: 'Center the current block', icon: 'format_align_center', shortcut: 'Ctrl+Shift+E' })
+registerSlashCommand({ id: 'align-right', label: 'Align right', description: 'Align the current block to the right', icon: 'format_align_right', shortcut: 'Ctrl+Shift+R' })
+registerSlashCommand({ id: 'align-justify', label: 'Align justify', description: 'Justify the current block', icon: 'format_align_justify', shortcut: 'Ctrl+Shift+J' })

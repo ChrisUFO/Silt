@@ -303,6 +303,29 @@ function tokenizeInline(text: string): NodeJSON[] {
   return nodes
 }
 
+// ---- Alignment marker helpers (#173) -------------------------------------
+// Block-level alignment is persisted as a trailing HTML-comment marker in
+// clean_text: `text <!-- silt-align: center -->`. The marker is invisible
+// in the rendered editor and any markdown viewer, but present in the raw
+// file. Default 'left' emits no marker. TASK blocks never emit a marker
+// (alignment is not supported on tasks).
+
+const ALIGN_MARKER_RE = /\s*<!-- silt-align: (left|center|right|justify) -->\s*$/
+
+export function stripAlignmentMarker(
+  cleanText: string
+): { body: string; align: string } {
+  const m = cleanText.match(ALIGN_MARKER_RE)
+  if (m) {
+    return { body: cleanText.slice(0, m.index).trimEnd(), align: m[1] }
+  }
+  return { body: cleanText, align: 'left' }
+}
+
+export function emitAlignmentMarker(align: string): string {
+  return align && align !== 'left' ? ` <!-- silt-align: ${align} -->` : ''
+}
+
 // Derive parent_id from block depths via the stack-walk algorithm used by the
 // Go parser (parser.go activeIDs) and the legacy BlockRenderer (getUpdatedParentIDs).
 // parent_id = the id of the nearest preceding block at depth-1.
@@ -371,7 +394,13 @@ export function parseEmbedBlockMarker(text: string): {
 
 // Convert a single ParsedBlock to its ProseMirror node JSON.
 function blockToNode(block: ParsedBlock): NodeJSON {
-  const text = block.clean_text || ''
+  const rawText = block.clean_text || ''
+
+  // Strip alignment marker from clean_text (#173). The marker is a trailing
+  // HTML comment preserved by the Go parser as part of the line body. Embed
+  // blocks don't carry alignment, but we strip defensively so a stray marker
+  // never leaks into visible text.
+  const { body: text, align } = stripAlignmentMarker(rawText)
 
   // A NOTE whose entire body is a single {{embed:uuid}} token becomes a
   // top-level embedNode. Wrapping a block-level node inside noteBlock's
@@ -418,6 +447,7 @@ function blockToNode(block: ParsedBlock): NodeJSON {
         attrs: {
           id: block.id,
           depth: block.depth || 1,
+          align,
           file_date: block.file_date || ''
         },
         content
@@ -432,6 +462,7 @@ function blockToNode(block: ParsedBlock): NodeJSON {
           id: block.id,
           depth: block.depth,
           bullet: detectBullet(block.raw_text),
+          align,
           file_date: block.file_date || ''
         },
         content
@@ -533,7 +564,15 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
       continue
     }
 
-    const cleanText = serializeInlineContent(node.content)
+    const baseCleanText = serializeInlineContent(node.content)
+
+    // Emit alignment marker for NOTE and HEADER blocks (#173). TASK blocks
+    // never emit a marker (alignment is not supported on tasks).
+    const align = (attrs.align as string) || 'left'
+    const cleanText =
+      align !== 'left' && node.type !== 'taskBlock'
+        ? baseCleanText + emitAlignmentMarker(align)
+        : baseCleanText
 
     let type: BlockType
     switch (node.type) {

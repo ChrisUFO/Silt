@@ -135,6 +135,16 @@ export const NoteBlock = Node.create({
         parseHTML: (el) => el.getAttribute('data-bullet') || '- ',
         renderHTML: (attrs) => ({ 'data-bullet': attrs.bullet })
       },
+      // Block-level text alignment (#173). Only NOTE and HEADER support it;
+      // TASK blocks do not get this attr. Default 'left' = no marker emitted.
+      align: {
+        default: 'left',
+        parseHTML: (el) => el.getAttribute('data-align') || 'left',
+        renderHTML: (attrs) =>
+          attrs.align && attrs.align !== 'left'
+            ? { 'data-align': attrs.align }
+            : {}
+      },
       file_date: {
         default: '',
         parseHTML: (el) => el.getAttribute('data-file-date') || '',
@@ -174,6 +184,15 @@ export const HeaderBlock = Node.create({
         default: 1,
         parseHTML: (el) => Number(el.getAttribute('data-depth') || 1),
         renderHTML: (attrs) => ({ 'data-depth': String(attrs.depth) })
+      },
+      // Block-level text alignment (#173).
+      align: {
+        default: 'left',
+        parseHTML: (el) => el.getAttribute('data-align') || 'left',
+        renderHTML: (attrs) =>
+          attrs.align && attrs.align !== 'left'
+            ? { 'data-align': attrs.align }
+            : {}
       },
       file_date: {
         default: '',

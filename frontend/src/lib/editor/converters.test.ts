@@ -647,3 +647,74 @@ describe('inline mark round-trips (#168)', () => {
     })
   })
 })
+
+describe('block alignment round-trips (#173)', () => {
+  it('round-trips center alignment on a NOTE', () => {
+    const cleanText = 'centered text <!-- silt-align: center -->'
+    const block = mkBlock('NOTE', { clean_text: cleanText })
+    const doc = blocksToDoc([block])
+    expect((doc.content![0].attrs as any).align).toBe('center')
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toBe(cleanText)
+  })
+
+  it('round-trips right alignment on a HEADER', () => {
+    const cleanText = 'Right Title <!-- silt-align: right -->'
+    const block = mkBlock('HEADER', { clean_text: cleanText, depth: 1 })
+    const doc = blocksToDoc([block])
+    expect((doc.content![0].attrs as any).align).toBe('right')
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toBe(cleanText)
+  })
+
+  it('left alignment is the default (no marker)', () => {
+    const block = mkBlock('NOTE', { clean_text: 'plain text' })
+    const doc = blocksToDoc([block])
+    expect((doc.content![0].attrs as any).align).toBe('left')
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toBe('plain text')
+  })
+
+  it('TASK blocks never emit an alignment marker', () => {
+    // Even if the align attr is somehow set on a taskBlock, docToBlocks
+    // must NOT emit the marker.
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'taskBlock',
+          attrs: {
+            id: 'test-task',
+            depth: 0,
+            status: 'TODO',
+            align: 'center',
+            priority: 3
+          },
+          content: [{ type: 'text', text: 'task text' }]
+        }
+      ]
+    }
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toBe('task text')
+    expect(back[0].clean_text).not.toContain('silt-align')
+  })
+
+  it('all four alignment values round-trip', () => {
+    for (const align of ['center', 'right', 'justify']) {
+      const cleanText = `text <!-- silt-align: ${align} -->`
+      const block = mkBlock('NOTE', { clean_text: cleanText })
+      const back = docToBlocks(blocksToDoc([block]))
+      expect(back[0].clean_text, `align=${align}`).toBe(cleanText)
+    }
+  })
+
+  it('alignment survives the editor round-trip', () => {
+    const editor = makeEditor()
+    const cleanText = 'centered <!-- silt-align: center -->'
+    const block = mkBlock('NOTE', { clean_text: cleanText })
+    editor.commands.setContent(blocksToDoc([block]))
+    const back = docToBlocks(editor.getJSON() as DocJSON)
+    expect(back[0].clean_text).toBe(cleanText)
+    editor.destroy()
+  })
+})

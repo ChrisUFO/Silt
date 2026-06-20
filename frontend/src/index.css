@@ -442,6 +442,11 @@ body::before {
   padding-left: calc(var(--indent-unit) * 6);
 }
 
+/* Block-level text alignment (#173). Applied via data-align attr. */
+.ProseMirror > div[data-align='center']  { text-align: center; }
+.ProseMirror > div[data-align='right']   { text-align: right; }
+.ProseMirror > div[data-align='justify'] { text-align: justify; }
+
 /* Header blocks render larger/bolder based on depth (heading level).
    Sizes use CSS custom properties so themes can override (#169). */
 :root {

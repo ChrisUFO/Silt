@@ -242,6 +242,11 @@ func Defaults() SystemConfig {
 			"set_h3":   "Ctrl+Alt+3",
 			"set_note": "Ctrl+Alt+0",
 			"set_task": "Ctrl+Alt+4",
+			// Text alignment hotkeys (#173). Standard Word/Google Docs bindings.
+			"align_left":    "Ctrl+Shift+L",
+			"align_center":  "Ctrl+Shift+E",
+			"align_right":   "Ctrl+Shift+R",
+			"align_justify": "Ctrl+Shift+J",
 		},
 		Plugins: PluginsConfig{
 			Active:   []string{"silt-agenda", "silt-calendar", "silt-kanban"},

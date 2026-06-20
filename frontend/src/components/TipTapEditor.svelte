@@ -429,6 +429,26 @@
     }
   }
 
+  // Set block alignment attr (#173). No-op for TASK blocks.
+  function setBlockAlignAttr(align: string): void {
+    if (!editorInstance || editorInstance.isDestroyed) return
+    const pos = editorInstance.state.selection.$from
+    for (let d = pos.depth; d >= 1; d--) {
+      const node = pos.node(d)
+      if (node.type.name === 'taskBlock') return
+      if (['noteBlock', 'headerBlock'].includes(node.type.name)) {
+        const nodePos = pos.before(d)
+        const tr = editorInstance.state.tr.setNodeAttribute(
+          nodePos,
+          'align',
+          align
+        )
+        editorInstance.view.dispatch(tr)
+        return
+      }
+    }
+  }
+
   function handleSlashSelect(commandId: string): void {
     showSlashMenu = false
     if (!editorInstance || editorInstance.isDestroyed) return
@@ -450,6 +470,14 @@
       changeBlockType('noteBlock', {})
     } else if (commandId === 'task') {
       changeBlockType('taskBlock', { status: 'TODO' })
+    } else if (commandId === 'align-left') {
+      setBlockAlignAttr('left')
+    } else if (commandId === 'align-center') {
+      setBlockAlignAttr('center')
+    } else if (commandId === 'align-right') {
+      setBlockAlignAttr('right')
+    } else if (commandId === 'align-justify') {
+      setBlockAlignAttr('justify')
     } else if (commandId === 'today') {
       const d = new Date()
       const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`

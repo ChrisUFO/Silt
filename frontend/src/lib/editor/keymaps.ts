@@ -98,6 +98,24 @@ function focusBlockAt(editor: Editor, blockIndex: number): void {
   editor.view.dispatch(tr)
 }
 
+// Set the alignment attr on the current block (#173). No-op for TASK blocks
+// (alignment is not supported on tasks — the taskBlock schema has no align attr).
+function setBlockAlign(editor: Editor, align: string): boolean {
+  const { selection } = editor.state
+  const pos = selection.$from
+  for (let d = pos.depth; d >= 1; d--) {
+    const node = pos.node(d)
+    if (node.type.name === 'taskBlock') return true // silently skip
+    if (BLOCK_TYPES.includes(node.type.name)) {
+      const nodePos = pos.before(d)
+      const tr = editor.state.tr.setNodeAttribute(nodePos, 'align', align)
+      editor.view.dispatch(tr)
+      return true
+    }
+  }
+  return false
+}
+
 export const SiltBlockKeymaps = Extension.create({
   name: 'siltBlockKeymaps',
 
@@ -287,7 +305,14 @@ export const SiltBlockKeymaps = Extension.create({
       'Mod-Alt-2': () => convertToBlock(this.editor, 'headerBlock', 2),
       'Mod-Alt-3': () => convertToBlock(this.editor, 'headerBlock', 3),
       'Mod-Alt-0': () => convertToBlock(this.editor, 'noteBlock'),
-      'Mod-Alt-4': () => convertToBlock(this.editor, 'taskBlock')
+      'Mod-Alt-4': () => convertToBlock(this.editor, 'taskBlock'),
+
+      // Text alignment shortcuts (#173). Mod-Shift-L/E/R/J for left/center/
+      // right/justify. No-op for TASK blocks (alignment not supported on tasks).
+      'Mod-Shift-l': () => setBlockAlign(this.editor, 'left'),
+      'Mod-Shift-e': () => setBlockAlign(this.editor, 'center'),
+      'Mod-Shift-r': () => setBlockAlign(this.editor, 'right'),
+      'Mod-Shift-j': () => setBlockAlign(this.editor, 'justify')
     }
   }
 })
