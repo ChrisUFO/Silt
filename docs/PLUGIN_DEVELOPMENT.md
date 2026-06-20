@@ -120,7 +120,7 @@ export default {
 }
 ```
 
-> **UI rendering (third-party):** Today, third-party plugins get full SDK access (`init(ctx)` + `sqliteQuery`/`mutateBlock`/`updateBlockState`) and appear in the Plugin Manager, but a dedicated UI surface for arbitrary third-party components ships in a follow-up (Silt cannot compile Svelte at runtime). First-party plugins provide the rendered-view examples. Headless/data plugins (queries, exports, automations via the SDK) are fully supported today.
+> **UI rendering (third-party):** Third-party plugins render UI through a sandboxed `<iframe srcdoc>` + postMessage bridge (#117). Use `ctx.registerSurface(...)` (requires the `ui-surface` capability grant) to mount HTML into sidebar-panel, modal, status-bar, or settings-panel slots. The iframe carries a restrictive CSP (`connect-src 'none'`); all network traffic routes through `ctx.fetch`. See §8 for the full rendered-UI surface guide.
 
 ---
 

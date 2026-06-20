@@ -128,7 +128,7 @@ Frontend: `npm run check` reports **0 errors** across the smart-graph components
 
 ## Sprint 3 Known Gaps
 
-- Third-party plugins get full SDK access but a dedicated rendered-UI surface for arbitrary third-party components ships in a follow-up (Silt cannot compile Svelte at runtime); first-party plugins are the rendered-view references.
+- ~~Third-party plugins get full SDK access but a dedicated rendered-UI surface for arbitrary third-party components ships in a follow-up~~ — **Resolved in the v2 SDK (PR #148, #117)**: third-party plugins render UI through a sandboxed `<iframe srcdoc>` + postMessage bridge (`frontend/src/plugins/surfaces.ts`). Sidebar-panel, modal, status-bar, and settings surfaces are all supported.
 - Drag-to-reorder in the navigator/kanban deferred to a future sprint.
 - ~~Real-time theme-swap reactivity of the titlebar depends on the not-yet-built theme-injector pipeline (DESIGN.md §7)~~ — **Resolved in Sprint 5**: the theme injector (frontend/src/theme) rewrites `:root` tokens same-tick, so every token-bound surface (including the titlebar) now re-themes live.
 
@@ -168,7 +168,7 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` (frontend, sve
 
 ## Known Gaps (deferred)
 
-- The Appearance tab is a placeholder; wiring the theme picker + dark/light mode toggle into Settings is tracked in #47 (Sprint 6). The theme engine core landed in Sprint 5 (#43–#46), and Sprint 10 code uses its canonical semantic accent tokens.
+- ~~The Appearance tab is a placeholder; wiring the theme picker + dark/light mode toggle into Settings is tracked in #47 (Sprint 6).~~ — **Resolved in Sprint 6**: Settings → Appearance is a fully accessible theme picker + mode toggle + import/export.
 - Per-plugin settings in the detail panel are read-only; an editing UI is future work.
 - Community plugin marketplace/registry browsing is out of scope (separate future issue).
 
