@@ -331,6 +331,23 @@
         templatePickerMode = 'new-page'
         showTemplatePicker = !showTemplatePicker
       }
+      // Tab-strip hotkeys (#142). Ctrl+Tab / Ctrl+Shift+Tab cycle MRU;
+      // Ctrl+W closes the active tab. All three are remappable / disable-
+      // able (empty string) from Settings → General. No-op when 0 tabs.
+      if (openTabs.length > 0) {
+        if (matchHotkey(e, hotkeys.next_tab)) {
+          e.preventDefault()
+          handleCycleTab(1)
+        }
+        if (matchHotkey(e, hotkeys.prev_tab)) {
+          e.preventDefault()
+          handleCycleTab(-1)
+        }
+        if (matchHotkey(e, hotkeys.close_tab)) {
+          e.preventDefault()
+          if (activeTabId) handleCloseTab(activeTabId)
+        }
+      }
     }
 
     // Smart Graph navigation: refs/embeds/tag-pills dispatch these.
@@ -710,6 +727,9 @@
                       )
                       if (tab.id === activeTabId) activePage = newName
                     }}
+                    onFirstEdit={tab.preview
+                      ? () => handlePromoteTab(tab.id)
+                      : undefined}
                   />
                 </div>
               {/each}

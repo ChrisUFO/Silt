@@ -716,9 +716,20 @@ Frontend (frontend/src/templates):
 
 The frontend uses Svelte 5's fine-grained compiler. The editor surface is built on TipTap v3 (ProseMirror engine) via the `svelte-tiptap` adapter, replacing the former per-block contenteditable. The TipTap editor provides native cross-block selection (the core capability the per-block approach could not support), eliminates the text-duplication bug, and delegates IME/selection edge cases to the framework.
 
-5.1 TipTap Editor Surface (one editor per page)
+5.1 TipTap Editor Surface (one editor per open tab, #142)
 
-Each page renders a single TipTap editor instance (`TipTapEditor.svelte`) containing all of the page's blocks. The editor's transaction lifecycle is wired to the Go backend:
+Each **open tab** renders a single TipTap editor instance
+(`TipTapEditor.svelte`) containing all of that page's blocks. The tab strip
+(`TabStrip.svelte`, directly above the editor in the content area) manages the
+VS Code-style preview-vs-pinned model: a single-click opens a transient
+**preview tab** (reusable slot); a double-click, middle-click, or first edit
+promotes it to a dedicated **pinned tab**. Multiple editors coexist (one per
+open tab, hidden via `display:none` to preserve per-tab scroll, cursor, and
+selection); only the active tab is visible and holds the focus lease. The tab
+set + active tab persist across restarts via `ui.open_tabs` / `ui.active_tab`
+in `config.yaml` (pinned-only; preview tabs are ephemeral).
+
+The editor's transaction lifecycle is wired to the Go backend:
 - **Load:** `FetchPageBlocks(notebook, section, page)` returns a flat `[]ParsedBlock`; `blocksToDoc(blocks)` converts to ProseMirror doc JSON; `editor.commands.setContent(doc)` populates the editor.
 - **Save:** `editor.on('update')` (debounced via `editor.auto_save_delay_ms`) → `docToBlocks(editor.getJSON())` → `SaveFileBlocks(notebook, section, page, blocks)`. Go's `RenderFileContent` remains the single on-disk serializer.
 - **Focus lock (#38):** the editor's `onFocus`/`onBlur` events drive `Acquire/ReleaseFocusLock`; a 20s heartbeat (`RefreshFocusLock`) keeps the lease alive while focused.

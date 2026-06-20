@@ -15,6 +15,7 @@
     onBlockBlur?: () => void
     activeFocusedBlockAncestors?: string[]
     onPageRenamed?: (newName: string) => void
+    onFirstEdit?: () => void
   }
 
   let {
@@ -26,13 +27,15 @@
     onBlockFocus,
     onBlockBlur,
     activeFocusedBlockAncestors = [],
-    onPageRenamed
+    onPageRenamed,
+    onFirstEdit
   }: Props = $props()
 
   let blocks = $state<ParsedBlock[]>([])
   let loading = $state(false)
   let loadError = $state('')
   let containerEl = $state<HTMLDivElement | null>(null)
+  let hasFirstEdit = false
   let handledTargetKey = $state('')
 
   $effect(() => {
@@ -100,6 +103,12 @@
 
   function handleBlocksUpdated(updatedBlocks: ParsedBlock[]) {
     blocks = updatedBlocks
+    // Fire onFirstEdit on the first content change — used by the tab strip
+    // to promote a preview tab to pinned (VS Code edit-to-pin, #142).
+    if (!hasFirstEdit) {
+      hasFirstEdit = true
+      onFirstEdit?.()
+    }
   }
 
   function formatDate(d: string): string {
