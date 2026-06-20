@@ -1059,12 +1059,11 @@ func isInternalIP(ip net.IP) bool {
 // notifyDesktop shows a desktop notification, cross-platform. Best-effort: a
 // spawn error is returned but callers may ignore it for non-critical UX.
 //
-// title and body originate from plugin-controlled strings, so they must never
-// be interpolated into a shell/script string — otherwise a granted (but
-// untrusted) plugin can escape the notifier and execute arbitrary code, which
-// is a privilege escalation beyond any capability it was granted. They are
-// therefore passed as data: as osascript argv on macOS, and via environment
-// variables on Windows (PowerShell never re-parses $env: values as code).
+// title and body are plugin-controlled strings. They are passed as DATA —
+// never interpolated into the command string — so a granted but untrusted
+// plugin cannot escape the notifier to execute arbitrary code. On macOS they
+// are osascript argv; on Windows they are environment variables (PowerShell
+// reads $env: values as data, not source); on Linux they are notify-send argv.
 func notifyDesktop(title, body string) error {
 	switch goruntime.GOOS {
 	case "darwin":
@@ -1325,11 +1324,9 @@ func (a *App) auditNetwork(pluginID, method, rawURL string, status int) {
 	if len(networkAudit) > 500 {
 		networkAudit = networkAudit[len(networkAudit)-500:]
 	}
-	networkAuditMu.Unlock()
-	// Best-effort persist to a vault-scoped log file so the audit trail survives
-	// a restart (#115). The log is per-plugin so a user can inspect it.
-	// Capped at maxPluginNetworkLogBytes to prevent unbounded growth from a
-	// chatty plugin; when exceeded, the file is truncated to its last 200 lines.
+	// Persist to the on-disk log inside the same lock so concurrent
+	// PluginFetch calls cannot interleave file writes and corrupt lines.
+	// The I/O is a single WriteString — holding the lock briefly is fine.
 	const maxPluginNetworkLogBytes = 1 * 1024 * 1024 // 1 MB
 	if a.vaultPath != "" {
 		logPath := filepath.Join(a.vaultPath, ".system", "plugins", pluginID, "network.log")
@@ -1344,6 +1341,7 @@ func (a *App) auditNetwork(pluginID, method, rawURL string, status int) {
 			_ = f.Close()
 		}
 	}
+	networkAuditMu.Unlock()
 }
 
 // newUUID mints a UUIDv4 string. Wraps the existing uuid import so the v2
