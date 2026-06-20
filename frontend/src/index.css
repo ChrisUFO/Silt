@@ -113,6 +113,7 @@
   /* Status tones (canonical token set). */
   --status-warn: #fbbf24;
   --status-danger: #f43f5e;
+  --status-success: #22c55e;
 
   /* Task Priority Tones */
   --error: #ffb4ab;

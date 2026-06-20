@@ -330,7 +330,7 @@
           onchange={onProgressChange}
           disabled={progressPending}
           aria-label="Task progress"
-          class="w-full accent-secondary-start disabled:opacity-50"
+          class="w-full accent-accent-secondary-start disabled:opacity-50"
         />
         <div
           class="mt-2 h-1 bg-surface border border-border-muted rounded overflow-hidden"

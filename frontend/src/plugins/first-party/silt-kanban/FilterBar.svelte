@@ -141,7 +141,7 @@
                 type="checkbox"
                 checked={filters.owners.includes(o)}
                 onchange={() => toggleOwner(o)}
-                class="accent-primary-start"
+                class="accent-accent-primary-start"
               />
               <span class="truncate">{o}</span>
             </label>
@@ -186,7 +186,7 @@
               type="checkbox"
               checked={filters.priorities.includes(p.value)}
               onchange={() => togglePriority(p.value)}
-              class="accent-primary-start"
+              class="accent-accent-primary-start"
             />
             <span>{p.label}</span>
           </label>
@@ -275,7 +275,7 @@
                 type="checkbox"
                 checked={filters.tags.includes(t)}
                 onchange={() => toggleTag(t)}
-                class="accent-primary-start"
+                class="accent-accent-primary-start"
               />
               <span class="truncate">{t}</span>
             </label>
