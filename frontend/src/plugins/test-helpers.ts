@@ -40,6 +40,7 @@ export const v2CtxStubs: Pick<
   | 'notify'
   | 'fetch'
   | 'registerSlashCommand'
+  | 'provideDecorations'
   | 'getSetting'
   | 'registerSurface'
   | 'addAttachment'
@@ -77,6 +78,7 @@ export const v2CtxStubs: Pick<
   notify: () => Promise.resolve(true),
   fetch: () => Promise.resolve({ status: 0, headers: {}, body: '', ok: false }),
   registerSlashCommand: () => () => {},
+  provideDecorations: () => () => {},
   getSetting: () => Promise.resolve(undefined),
   registerSurface: () => () => {},
   addAttachment: () => Promise.resolve(''),

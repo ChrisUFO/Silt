@@ -277,6 +277,19 @@ export interface PluginContext {
     onSelect: (editor: unknown, pos: number) => void
   }) => () => void
 
+  /**
+   * Register a read-only decoration provider (#110). The provider is called
+   * on each editor render with the current doc and returns an array of
+   * decoration specs (from/to/class). Decorations are transient — never
+   * persisted. Returns an unregister function.
+   */
+  provideDecorations: (
+    id: string,
+    provider: (
+      doc: unknown
+    ) => Array<{ from: number; to: number; class?: string }>
+  ) => () => void
+
   // --- Rendered UI surfaces (#117) — capability-gated ---------------------
 
   /**

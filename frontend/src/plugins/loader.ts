@@ -9,6 +9,7 @@ import type { LoadedPlugins, RegisteredPlugin, SiltPlugin } from './sdk'
 import { cleanupPlugin, clearAllSubscribers } from './events'
 import { unregisterPluginSlashCommands } from '../lib/editor/slash-registry'
 import { unregisterPluginSurfaces } from './surfaces'
+import { unregisterPluginDecorations } from '../lib/editor/decorations'
 import DiskPluginNotice from './DiskPluginNotice.svelte'
 
 // Whether the lifecycle wiring (vault:closing subscription) has been installed.
@@ -182,6 +183,7 @@ export function teardownPlugin(pluginID: string): void {
   cleanupPlugin(pluginID)
   unregisterPluginSlashCommands(pluginID)
   unregisterPluginSurfaces(pluginID)
+  unregisterPluginDecorations(pluginID)
   try {
     reg.onShutdown?.()
   } catch {

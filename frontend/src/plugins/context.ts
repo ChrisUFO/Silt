@@ -43,6 +43,7 @@ import {
   registerSlashCommand,
   unregisterSlashCommand
 } from '../lib/editor/slash-registry'
+import { registerDecorationProvider } from '../lib/editor/decorations'
 import { loadedPlugins } from './store.svelte'
 import { registerSurface, unregisterSurface } from './surfaces'
 
@@ -280,6 +281,10 @@ export function makePluginContext(pluginID: string): PluginContext {
       })
       return () => unregisterSlashCommand(namespacedId)
     },
+
+    // --- Editor decorations (#110) — read-only overlays --------------------
+    provideDecorations: (id, provider) =>
+      registerDecorationProvider(id, pluginID, provider as any),
 
     // --- Rendered UI surfaces (#117) — capability-gated --------------------
     registerSurface: (surface) => {

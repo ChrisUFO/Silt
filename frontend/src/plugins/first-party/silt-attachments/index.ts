@@ -2,6 +2,13 @@
 // via ctx.registerSlashCommand. The command opens a native file picker, copies
 // the chosen file into the notebook's attachments/ dir, and inserts an
 // embedBlock at the cursor. Uses the PluginContext SDK exclusively.
+//
+// Kanban travel (#101): an attachment embedBlock inserted as a CHILD of a
+// task block (indented under it) automatically travels with its parent when
+// the task is reordered in the editor or queried in the Kanban. This is
+// inherent to the block hierarchy — the parser preserves parent-child depth,
+// and the Kanban's query joins on blocks.parent_id. No explicit association
+// model is needed; the block tree IS the association.
 import type { PluginContext, SiltPlugin } from '../../sdk'
 import Attachments from './Attachments.svelte'
 
