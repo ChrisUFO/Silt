@@ -37,17 +37,17 @@ func TestLaunchBackgroundColour_TracksActiveCustom(t *testing.T) {
         "primary": {"start":"#f59e0b","end":"#b45309","glow":"rgba(245,158,11,0.15)"},
         "secondary": {"start":"#a855f7","end":"#7e22ce","glow":"rgba(168,85,247,0.12)"}
       },
-      "status": {"warn":"#fbbf24","danger":"#f43f5e"}
-    },
-    "light": {
-      "bg": {"void":"#fff7e6","surface":"#ffffff","panel":"#fff0d2","hover":"#ffe4b0","active":"#ffd58a"},
-      "border": {"muted":"#ffe4b0","zinc":"#ffd58a","active":"#b88a3a","focus":"#8a6420"},
-      "text": {"primary":"#2a1f10","muted":"#6e5a36","disabled":"#a08a64"},
-      "accent": {
-        "primary": {"start":"#b45309","end":"#92400e","glow":"rgba(180,83,9,0.10)"},
-        "secondary": {"start":"#7e22ce","end":"#6b21a8","glow":"rgba(126,34,206,0.08)"}
-      },
-      "status": {"warn":"#d97706","danger":"#be123c"}
+       "status": {"warn":"#fbbf24","danger":"#f43f5e","success":"#22c55e"}
+     },
+     "light": {
+       "bg": {"void":"#fff7e6","surface":"#ffffff","panel":"#fff0d2","hover":"#ffe4b0","active":"#ffd58a"},
+       "border": {"muted":"#ffe4b0","zinc":"#ffd58a","active":"#b88a3a","focus":"#8a6420"},
+       "text": {"primary":"#2a1f10","muted":"#6e5a36","disabled":"#a08a64"},
+       "accent": {
+         "primary": {"start":"#b45309","end":"#92400e","glow":"rgba(180,83,9,0.10)"},
+         "secondary": {"start":"#7e22ce","end":"#6b21a8","glow":"rgba(126,34,206,0.08)"}
+       },
+       "status": {"warn":"#d97706","danger":"#be123c","success":"#16a34a"}
     }
   }
 }`
