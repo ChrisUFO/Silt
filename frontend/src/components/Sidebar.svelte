@@ -51,6 +51,7 @@
     onSelectNotebook: (notebook: string) => void
     onSelectSection: (section: string) => void
     onSelectPage: (notebook: string, section: string, page: string) => void
+    onPinPage: (notebook: string, section: string, page: string) => void
     onSelectView: (view: string) => void
     onCloseVault?: () => void
   }
@@ -66,6 +67,7 @@
     onSelectNotebook,
     onSelectSection,
     onSelectPage,
+    onPinPage,
     onSelectView,
     onCloseVault
   }: Props = $props()
@@ -383,6 +385,12 @@
     activeSection = section
     activePage = page
     onSelectPage(activeNotebook, section, page)
+  }
+
+  function handlePinPage(section: string, page: string) {
+    activeSection = section
+    activePage = page
+    onPinPage(activeNotebook, section, page)
   }
 
   function openCreate(mode: 'notebook' | 'section') {
@@ -871,6 +879,7 @@
             {dropTarget}
             onToggleSection={toggleSection}
             onSelectPage={handleSelectPage}
+            onPinPage={handlePinPage}
             {onSelectSection}
             onCreatePageInline={handleCreatePageInline}
             onDragStart={handleDragStart}

@@ -40,14 +40,32 @@
     dropTarget?: DropTarget | null
     onToggleSection: (name: string) => void
     onSelectPage: (section: string, page: string) => void
+    onPinPage: (section: string, page: string) => void
     onSelectSection: (section: string) => void
     onCreatePageInline: (section: string) => void
-    onDragStart: (e: DragEvent, level: string, name: string, section?: string) => void
+    onDragStart: (
+      e: DragEvent,
+      level: string,
+      name: string,
+      section?: string
+    ) => void
     onDragOver: (e: DragEvent, level: string, name: string) => void
     onDragLeave: () => void
-    onDrop: (e: DragEvent, level: string, targetName: string, notebook?: string, section?: string) => void
+    onDrop: (
+      e: DragEvent,
+      level: string,
+      targetName: string,
+      notebook?: string,
+      section?: string
+    ) => void
     onDragEnd: () => void
-    onContextMenu: (e: MouseEvent, level: 'section' | 'page', notebook: string, section?: string, page?: string) => void
+    onContextMenu: (
+      e: MouseEvent,
+      level: 'section' | 'page',
+      notebook: string,
+      section?: string,
+      page?: string
+    ) => void
   }
 
   let {
@@ -61,6 +79,7 @@
     dropTarget = null,
     onToggleSection,
     onSelectPage,
+    onPinPage,
     onSelectSection,
     onCreatePageInline,
     onDragStart,
@@ -74,7 +93,10 @@
   let sectionKey = $derived(section.path || section.name)
   let isExpanded = $derived(expandedSections.has(sectionKey))
 
-  function sortByName<T extends { name: string }>(items: T[], order: string[] | undefined): T[] {
+  function sortByName<T extends { name: string }>(
+    items: T[],
+    order: string[] | undefined
+  ): T[] {
     if (!order || order.length === 0) return items
     const orderMap = new Map(order.map((n, i) => [n, i]))
     return [...items].sort((a, b) => {
@@ -86,7 +108,10 @@
   }
 
   let sortedPages = $derived(
-    sortByName(section.pages, navOrder.pages[`${activeNotebook}/${sectionKey}`] ?? [])
+    sortByName(
+      section.pages,
+      navOrder.pages[`${activeNotebook}/${sectionKey}`] ?? []
+    )
   )
 
   function recursivePageCount(sec: NavSection): number {
@@ -106,8 +131,12 @@
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
     class="group flex items-center gap-1 px-2 py-1.5 cursor-pointer rounded hover:bg-hover transition-colors"
-    class:drag-over-top={dropTarget?.level === 'section' && dropTarget.name === section.name && dropTarget.before}
-    class:drag-over-bottom={dropTarget?.level === 'section' && dropTarget.name === section.name && !dropTarget.before}
+    class:drag-over-top={dropTarget?.level === 'section' &&
+      dropTarget.name === section.name &&
+      dropTarget.before}
+    class:drag-over-bottom={dropTarget?.level === 'section' &&
+      dropTarget.name === section.name &&
+      !dropTarget.before}
     draggable="true"
     ondragstart={(e) => onDragStart(e, 'section', section.name)}
     ondragover={(e) => onDragOver(e, 'section', section.name)}
@@ -121,7 +150,8 @@
         onToggleSection(sectionKey)
       }
     }}
-    oncontextmenu={(e) => onContextMenu(e, 'section', activeNotebook, sectionKey)}
+    oncontextmenu={(e) =>
+      onContextMenu(e, 'section', activeNotebook, sectionKey)}
     role="treeitem"
     tabindex="0"
     aria-level={depth + 1}
@@ -163,20 +193,33 @@
   {#if isExpanded}
     <div class="ml-4 border-l border-border-muted pl-1 mt-0.5 mb-1.5">
       {#if section.pages.length === 0 && (!section.children || section.children.length === 0)}
-        <div class="text-text-muted text-[11px] font-body-md py-1.5 px-2 italic">
+        <div
+          class="text-text-muted text-[11px] font-body-md py-1.5 px-2 italic"
+        >
           No pages. Click + to add one.
         </div>
       {:else}
         {#each sortedPages as pg (pg.name)}
-          {@const isActive = activeSection === sectionKey && activePage === pg.name}
+          {@const isActive =
+            activeSection === sectionKey && activePage === pg.name}
           <button
             onclick={() => onSelectPage(sectionKey, pg.name)}
-            oncontextmenu={(e) => onContextMenu(e, 'page', activeNotebook, sectionKey, pg.name)}
+            ondblclick={() => onPinPage(sectionKey, pg.name)}
+            onauxclick={(e) => {
+              // Middle-click (button 1) pins the page — VS Code parity (#142).
+              if (e.button === 1) {
+                e.preventDefault()
+                onPinPage(sectionKey, pg.name)
+              }
+            }}
+            oncontextmenu={(e) =>
+              onContextMenu(e, 'page', activeNotebook, sectionKey, pg.name)}
             draggable="true"
             ondragstart={(e) => onDragStart(e, 'page', pg.name, section.name)}
             ondragover={(e) => onDragOver(e, 'page', pg.name)}
             ondragleave={onDragLeave}
-            ondrop={(e) => onDrop(e, 'page', pg.name, activeNotebook, section.name)}
+            ondrop={(e) =>
+              onDrop(e, 'page', pg.name, activeNotebook, section.name)}
             ondragend={onDragEnd}
             class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
             class:bg-hover={isActive}
@@ -212,6 +255,7 @@
           {dropTarget}
           {onToggleSection}
           {onSelectPage}
+          {onPinPage}
           {onSelectSection}
           {onCreatePageInline}
           {onDragStart}

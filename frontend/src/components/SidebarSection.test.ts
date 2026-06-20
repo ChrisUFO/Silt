@@ -9,14 +9,20 @@ type NavSectionShape = {
   children?: NavSectionShape[]
 }
 
-function makeProps(overrides: {
-  section?: NavSectionShape
-  depth?: number
-  activeSection?: string
-  expandedSections?: Set<string>
-} = {}) {
+function makeProps(
+  overrides: {
+    section?: NavSectionShape
+    depth?: number
+    activeSection?: string
+    expandedSections?: Set<string>
+  } = {}
+) {
   return {
-    section: overrides.section ?? { name: 'Journal', path: 'Journal', pages: [{ name: 'Daily', count: 5 }] },
+    section: overrides.section ?? {
+      name: 'Journal',
+      path: 'Journal',
+      pages: [{ name: 'Daily', count: 5 }]
+    },
     depth: overrides.depth ?? 0,
     activeNotebook: 'Work',
     activeSection: overrides.activeSection ?? '',
@@ -26,6 +32,7 @@ function makeProps(overrides: {
     dropTarget: null,
     onToggleSection: vi.fn(),
     onSelectPage: vi.fn(),
+    onPinPage: vi.fn(),
     onSelectSection: vi.fn(),
     onCreatePageInline: vi.fn(),
     onDragStart: vi.fn(),
@@ -96,7 +103,11 @@ describe('SidebarSection (#88 deep-nesting)', () => {
     }
     const props = makeProps({
       section: deepSection,
-      expandedSections: new Set(['Projects', 'Projects/Active', 'Projects/Active/Sub'])
+      expandedSections: new Set([
+        'Projects',
+        'Projects/Active',
+        'Projects/Active/Sub'
+      ])
     })
     render(SidebarSection, { props })
     expect(screen.getByText('Projects')).toBeInTheDocument()
@@ -108,7 +119,11 @@ describe('SidebarSection (#88 deep-nesting)', () => {
   it('toggles expansion on click', async () => {
     const onToggle = vi.fn()
     const props = makeProps({
-      section: { name: 'Journal', path: 'Journal', pages: [{ name: 'Daily', count: 5 }] }
+      section: {
+        name: 'Journal',
+        path: 'Journal',
+        pages: [{ name: 'Daily', count: 5 }]
+      }
     })
     props.onToggleSection = onToggle
     render(SidebarSection, { props })
@@ -155,12 +170,49 @@ describe('SidebarSection (#88 deep-nesting)', () => {
   it('emits selectPage when a page is clicked', async () => {
     const onSelectPage = vi.fn()
     const props = makeProps({
-      section: { name: 'Journal', path: 'Journal', pages: [{ name: 'Daily', count: 5 }] },
+      section: {
+        name: 'Journal',
+        path: 'Journal',
+        pages: [{ name: 'Daily', count: 5 }]
+      },
       expandedSections: new Set(['Journal'])
     })
     props.onSelectPage = onSelectPage
     render(SidebarSection, { props })
     await fireEvent.click(screen.getByText('Daily'))
     expect(onSelectPage).toHaveBeenCalledWith('Journal', 'Daily')
+  })
+
+  it('emits pinPage on double-click (#142)', async () => {
+    const onPinPage = vi.fn()
+    const props = makeProps({
+      section: {
+        name: 'Journal',
+        path: 'Journal',
+        pages: [{ name: 'Daily', count: 5 }]
+      },
+      expandedSections: new Set(['Journal'])
+    })
+    props.onPinPage = onPinPage
+    render(SidebarSection, { props })
+    await fireEvent.dblClick(screen.getByText('Daily'))
+    expect(onPinPage).toHaveBeenCalledWith('Journal', 'Daily')
+  })
+
+  it('emits pinPage on middle-click (#142)', async () => {
+    const onPinPage = vi.fn()
+    const props = makeProps({
+      section: {
+        name: 'Journal',
+        path: 'Journal',
+        pages: [{ name: 'Daily', count: 5 }]
+      },
+      expandedSections: new Set(['Journal'])
+    })
+    props.onPinPage = onPinPage
+    render(SidebarSection, { props })
+    const page = screen.getByText('Daily')
+    page.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }))
+    expect(onPinPage).toHaveBeenCalledWith('Journal', 'Daily')
   })
 })

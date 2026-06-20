@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"silt/backend/config"
 	"silt/backend/parser"
@@ -442,4 +443,204 @@ func TestLockBlocksWrite_NoDeadlock(t *testing.T) {
 		app.coordinator.LockBlockWrite("b-2", func() {})
 	}()
 	wg.Wait()
+}
+
+// --- Open tabs IPC tests (#142) ---
+
+// writePageOnDisk creates a minimal page file so ListNavigation surfaces it.
+// The page carries standard frontmatter matching the parser's expectations.
+func writePageOnDisk(t *testing.T, vaultPath, notebook, section, page string) {
+	t.Helper()
+	var dir string
+	if section == "" {
+		dir = filepath.Join(vaultPath, notebook)
+	} else {
+		dir = filepath.Join(vaultPath, notebook, section)
+	}
+	content := "---\nnotebook: " + notebook + "\nsection: \"" + section + "\"\npage: " + page + "\ndate: 2026-06-15\ntags: []\n---\n# " + page + "\n"
+	writeFile(t, filepath.Join(dir, page+".md"), content)
+}
+
+func TestGetSetOpenTabs_RoundTrip(t *testing.T) {
+	app := newTestApp(t)
+
+	// Create pages on disk so the nav tree has valid targets.
+	writePageOnDisk(t, app.vaultPath, "Work", "Projects", "Site")
+	writePageOnDisk(t, app.vaultPath, "Work", "", "Top")
+	writePageOnDisk(t, app.vaultPath, "Personal", "Journal", "Daily")
+
+	tabs := []config.TabRef{
+		{Notebook: "Work", Section: "Projects", Page: "Site"},
+		{Notebook: "Work", Section: "", Page: "Top"},
+	}
+	active := &config.TabRef{Notebook: "Work", Section: "Projects", Page: "Site"}
+
+	if err := app.SetOpenTabs(tabs, active); err != nil {
+		t.Fatalf("SetOpenTabs: %v", err)
+	}
+
+	result, err := app.GetOpenTabs()
+	if err != nil {
+		t.Fatalf("GetOpenTabs: %v", err)
+	}
+	if len(result.OpenTabs) != 2 {
+		t.Fatalf("expected 2 tabs, got %d: %+v", len(result.OpenTabs), result.OpenTabs)
+	}
+	// Both tabs should survive (both pages exist on disk).
+	pages := map[string]bool{}
+	for _, tab := range result.OpenTabs {
+		pages[tab.Page] = true
+	}
+	if !pages["Site"] || !pages["Top"] {
+		t.Errorf("expected Site + Top tabs, got %v", pages)
+	}
+	if result.ActiveTab == nil || result.ActiveTab.Page != "Site" {
+		t.Errorf("active tab: got %+v, want Site", result.ActiveTab)
+	}
+}
+
+func TestGetOpenTabs_PruneStaleTabs(t *testing.T) {
+	app := newTestApp(t)
+
+	// Create two pages.
+	writePageOnDisk(t, app.vaultPath, "Work", "Projects", "KeepMe")
+	writePageOnDisk(t, app.vaultPath, "Work", "Projects", "DeleteMe")
+
+	// Persist tabs for both.
+	tabs := []config.TabRef{
+		{Notebook: "Work", Section: "Projects", Page: "KeepMe"},
+		{Notebook: "Work", Section: "Projects", Page: "DeleteMe"},
+	}
+	active := &config.TabRef{Notebook: "Work", Section: "Projects", Page: "DeleteMe"}
+	if err := app.SetOpenTabs(tabs, active); err != nil {
+		t.Fatalf("SetOpenTabs: %v", err)
+	}
+
+	// Delete the "DeleteMe" page from disk.
+	os.Remove(filepath.Join(app.vaultPath, "Work", "Projects", "DeleteMe.md"))
+
+	// GetOpenTabs should prune the stale tab AND clear the stale active.
+	result, err := app.GetOpenTabs()
+	if err != nil {
+		t.Fatalf("GetOpenTabs: %v", err)
+	}
+	if len(result.OpenTabs) != 1 || result.OpenTabs[0].Page != "KeepMe" {
+		t.Errorf("expected only KeepMe tab after prune, got %+v", result.OpenTabs)
+	}
+	if result.ActiveTab != nil {
+		t.Errorf("expected nil active tab (stale active pruned), got %+v", *result.ActiveTab)
+	}
+}
+
+func TestGetOpenTabs_PruneMalformedEntries(t *testing.T) {
+	app := newTestApp(t)
+
+	writePageOnDisk(t, app.vaultPath, "Work", "", "Valid")
+
+	// A malformed entry with an empty Page should be dropped silently.
+	tabs := []config.TabRef{
+		{Notebook: "Work", Section: "", Page: "Valid"},
+		{Notebook: "Work", Section: "", Page: ""}, // malformed
+	}
+	if err := app.SetOpenTabs(tabs, nil); err != nil {
+		t.Fatalf("SetOpenTabs: %v", err)
+	}
+
+	result, err := app.GetOpenTabs()
+	if err != nil {
+		t.Fatalf("GetOpenTabs: %v", err)
+	}
+	if len(result.OpenTabs) != 1 || result.OpenTabs[0].Page != "Valid" {
+		t.Errorf("expected only Valid tab (malformed pruned), got %+v", result.OpenTabs)
+	}
+}
+
+func TestSetOpenTabs_AtomicWrite(t *testing.T) {
+	app := newTestApp(t)
+	tabs := []config.TabRef{{Notebook: "Work", Section: "", Page: "Page1"}}
+	if err := app.SetOpenTabs(tabs, nil); err != nil {
+		t.Fatalf("SetOpenTabs: %v", err)
+	}
+	// The .system directory should contain exactly config.yaml (no leftover
+	// temp files from the atomic write).
+	entries, err := os.ReadDir(filepath.Join(app.vaultPath, ".system"))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		// Allow config.yaml, themes/, plugins/, templates/ dirs; reject any
+		// .tmp file (leftover from a failed atomic write).
+		if strings.HasSuffix(name, ".tmp") {
+			t.Errorf("leftover temp file in .system: %s", name)
+		}
+	}
+}
+
+func TestSetOpenTabs_NilBecomesEmptySlice(t *testing.T) {
+	app := newTestApp(t)
+	// Passing nil for openTabs should persist as an empty slice, not null
+	// (so the frontend JSON layer never sees null).
+	if err := app.SetOpenTabs(nil, nil); err != nil {
+		t.Fatalf("SetOpenTabs(nil): %v", err)
+	}
+	cfg, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if cfg.UI.OpenTabs == nil || len(cfg.UI.OpenTabs) != 0 {
+		t.Errorf("expected non-nil empty slice, got %v", cfg.UI.OpenTabs)
+	}
+}
+
+func TestGetOpenTabs_EmptyVault(t *testing.T) {
+	app := newTestApp(t)
+	// No tabs persisted → empty slice, nil active, no error.
+	result, err := app.GetOpenTabs()
+	if err != nil {
+		t.Fatalf("GetOpenTabs on empty vault: %v", err)
+	}
+	if len(result.OpenTabs) != 0 {
+		t.Errorf("expected empty tab slice, got %d", len(result.OpenTabs))
+	}
+	if result.ActiveTab != nil {
+		t.Errorf("expected nil active, got %+v", *result.ActiveTab)
+	}
+}
+
+// TestSetOpenTabs_SelfWriteSuppressed verifies that SetOpenTabs calls
+// RegisterSelfWrite so the config watcher does NOT fire a config:changed
+// reload for Silt's own write (#142). This is the PLAN's promised
+// self-write suppression test, exercised end-to-end via a real ConfigWatcher.
+func TestSetOpenTabs_SelfWriteSuppressed(t *testing.T) {
+	app := newTestApp(t)
+
+	// Set up a real config watcher so RegisterSelfWrite is meaningful.
+	changed := make(chan config.SystemConfig, 4)
+	cw, err := config.NewConfigWatcher(app.vaultPath, func(c config.SystemConfig) {
+		changed <- c
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewConfigWatcher: %v", err)
+	}
+	defer cw.Close()
+	cw.Start()
+	app.configWatcher = cw
+	defer func() { app.configWatcher = nil }()
+
+	// Give the watcher time to settle.
+	time.Sleep(150 * time.Millisecond)
+
+	tabs := []config.TabRef{{Notebook: "Work", Section: "", Page: "Page1"}}
+	if err := app.SetOpenTabs(tabs, nil); err != nil {
+		t.Fatalf("SetOpenTabs: %v", err)
+	}
+
+	// The watcher should NOT fire within the self-write cooldown window.
+	select {
+	case <-changed:
+		t.Fatalf("self-write should be suppressed, but config:changed fired")
+	case <-time.After(700 * time.Millisecond):
+		// expected: no reload within the cooldown window
+	}
 }

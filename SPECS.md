@@ -684,10 +684,22 @@ hotkeys:
   cycle_view_layout: "Alt+Tab"
   indent_block: "Tab"
   unindent_block: "Shift+Tab"
+  open_template_picker: "Ctrl+Shift+T"
+  next_tab: "Ctrl+Tab"
+  prev_tab: "Ctrl+Shift+Tab"
+  close_tab: "Ctrl+W"
 
 # UI Preferences (per-vault)
 ui:
   sidebar_width: 256
+  # Open-tab persistence (#142). Only pinned tabs are persisted; preview
+  # tabs are ephemeral (VS Code parity). These keys live under `ui.*` (not
+  # `editor.*`) because tab state is per-vault UI preference per
+  # ARCHITECTURE §0 rule #2.
+  enable_preview_tabs: true   # false = every open is a pinned tab
+  max_open_tabs: 8            # LRU-evict at cap (preview-first, then oldest pinned)
+  # open_tabs: []             # list of {notebook, section, page}
+  # active_tab: null          # the last-active pinned tab
 
 # Plugin Registry
 plugins:

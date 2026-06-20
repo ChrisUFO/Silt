@@ -85,10 +85,26 @@ func (l LinkedNotebook) Source() string { return "linked:" + l.ID }
 const LinkedNotebooksVaultSource = "vault"
 
 // UIConfig holds per-vault UI preferences (sidebar width, custom navigation
-// ordering). Stored in the YAML tier (per-vault) per ARCHITECTURE §0 rule #2.
+// ordering, the open-tab set). Stored in the YAML tier (per-vault) per
+// ARCHITECTURE §0 rule #2.
 type UIConfig struct {
-	SidebarWidth int      `yaml:"sidebar_width" json:"sidebar_width"`
-	NavOrder     NavOrder `yaml:"nav_order,omitempty" json:"nav_order,omitempty"`
+	SidebarWidth      int      `yaml:"sidebar_width" json:"sidebar_width"`
+	NavOrder          NavOrder `yaml:"nav_order,omitempty" json:"nav_order,omitempty"`
+	OpenTabs          []TabRef `yaml:"open_tabs,omitempty" json:"open_tabs,omitempty"`
+	ActiveTab         *TabRef  `yaml:"active_tab,omitempty" json:"active_tab,omitempty"`
+	EnablePreviewTabs *bool    `yaml:"enable_preview_tabs,omitempty" json:"enable_preview_tabs,omitempty"`
+	MaxOpenTabs       int      `yaml:"max_open_tabs,omitempty" json:"max_open_tabs,omitempty"`
+}
+
+// TabRef is a persisted reference to an open tab's page (#142). It is the
+// YAML-serializable form of a frontend TabEntry — only the locator triple is
+// persisted; preview flag, scroll/cursor state, and the like are ephemeral
+// (VS Code parity: preview tabs are not restored across restarts). The
+// frontend filters to pinned tabs before calling SetOpenTabs.
+type TabRef struct {
+	Notebook string `yaml:"notebook" json:"notebook"`
+	Section  string `yaml:"section" json:"section"`
+	Page     string `yaml:"page" json:"page"`
 }
 
 // NavOrder stores explicit ordering for the sidebar navigator tree. Folders on
@@ -173,6 +189,13 @@ func Defaults() SystemConfig {
 			"indent_block":         "Tab",
 			"unindent_block":       "Shift+Tab",
 			"open_template_picker": "Ctrl+Shift+T",
+			// Tab strip hotkeys (#142). `tab` and `w` already parse cleanly
+			// via the frontend parseHotkey layer (KEY_ALIASES in
+			// frontend/src/settings/hotkeys.ts). Each may be remapped or
+			// disabled (set to "") from Settings → General.
+			"next_tab":  "Ctrl+Tab",
+			"prev_tab":  "Ctrl+Shift+Tab",
+			"close_tab": "Ctrl+W",
 		},
 		Plugins: PluginsConfig{
 			Active:   []string{"silt-agenda", "silt-calendar", "silt-kanban"},
@@ -191,6 +214,17 @@ func Defaults() SystemConfig {
 				Sections: map[string][]string{},
 				Pages:    map[string][]string{},
 			},
+			OpenTabs: []TabRef{},
+			// EnablePreviewTabs defaults to true (VS Code parity). Stored as
+			// a *bool so "unset" is distinguishable from "explicitly false";
+			// the frontend treats nil as true.
+			EnablePreviewTabs: boolPtr(true),
+			// MaxOpenTabs caps the simultaneously-mounted editor count
+			// (#142 §3). 8 is the documented default; on overflow the
+			// frontend LRU-evicts least-recently-active preview tabs first,
+			// then oldest pinned. 0 (legacy config without the key) is
+			// normalized to 8 in normalize().
+			MaxOpenTabs: 8,
 		},
 	}
 }
@@ -384,8 +418,32 @@ func normalize(cfg SystemConfig) SystemConfig {
 	if cfg.UI.SidebarWidth < 200 {
 		cfg.UI.SidebarWidth = 256
 	}
+	if cfg.UI.OpenTabs == nil {
+		cfg.UI.OpenTabs = []TabRef{}
+	}
+	// MaxOpenTabs: 0 (legacy config without the key) → 8 (the default).
+	// Negative or absurdly-small values also fall back. An upper bound of
+	// 32 prevents a user from mounting hundreds of TipTap editors
+	// simultaneously and exhausting memory (#142 hardening).
+	if cfg.UI.MaxOpenTabs < 1 {
+		cfg.UI.MaxOpenTabs = 8
+	}
+	if cfg.UI.MaxOpenTabs > 32 {
+		cfg.UI.MaxOpenTabs = 32
+	}
+	// EnablePreviewTabs: nil → true (VS Code parity). The field is a *bool
+	// so "unset" stays distinguishable from "explicitly false" through the
+	// Load → normalize path; once normalized, the frontend reads nil as
+	// true.
+	if cfg.UI.EnablePreviewTabs == nil {
+		cfg.UI.EnablePreviewTabs = boolPtr(true)
+	}
 	return cfg
 }
+
+// boolPtr is a small helper for the Defaults() block so *bool fields can be
+// initialized inline without a temporary variable.
+func boolPtr(b bool) *bool { return &b }
 
 // writeFileAtomic writes data to a sibling temp file, fsyncs it, then renames
 // it over path. Kept local (rather than reusing parser.WriteFileAtomic) so the

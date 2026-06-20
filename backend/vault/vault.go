@@ -175,6 +175,10 @@ hotkeys:
   cycle_view_layout: "Alt+Tab"
   indent_block: "Tab"
   unindent_block: "Shift+Tab"
+  open_template_picker: "Ctrl+Shift+T"
+  next_tab: "Ctrl+Tab"
+  prev_tab: "Ctrl+Shift+Tab"
+  close_tab: "Ctrl+W"
 
 # Plugin Registry
 plugins:
@@ -191,6 +195,8 @@ plugins:
 # UI Preferences (per-vault)
 ui:
   sidebar_width: 256
+  enable_preview_tabs: true
+  max_open_tabs: 8
 `
 	configPath := filepath.Join(vaultPath, ".system", "config.yaml")
 	// Format config with absolute vault path (with forward slashes for cross platform consistency)

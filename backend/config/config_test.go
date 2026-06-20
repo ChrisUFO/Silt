@@ -395,3 +395,180 @@ func deepCopy(m map[string]any) map[string]any {
 	}
 	return out
 }
+
+// --- #142: open-tab persistence config ---
+
+// TestDefaults_TabsConfig verifies the tab-strip defaults ship in Defaults():
+// enable_preview_tabs=true, max_open_tabs=8, next_tab/prev_tab/close_tab
+// hotkeys present, and OpenTabs is a non-nil empty slice (not nil) so JSON
+// serialization over IPC never yields null.
+func TestDefaults_TabsConfig(t *testing.T) {
+	d := Defaults()
+	if d.UI.EnablePreviewTabs == nil || *d.UI.EnablePreviewTabs != true {
+		t.Errorf("defaults enable_preview_tabs should be *true, got %v", d.UI.EnablePreviewTabs)
+	}
+	if d.UI.MaxOpenTabs != 8 {
+		t.Errorf("defaults max_open_tabs should be 8, got %d", d.UI.MaxOpenTabs)
+	}
+	if d.UI.OpenTabs == nil {
+		t.Errorf("defaults open_tabs should be non-nil empty slice, got nil")
+	}
+	if len(d.UI.OpenTabs) != 0 {
+		t.Errorf("defaults open_tabs should be empty, got %v", d.UI.OpenTabs)
+	}
+	for _, key := range []string{"next_tab", "prev_tab", "close_tab"} {
+		if _, ok := d.Hotkeys[key]; !ok {
+			t.Errorf("defaults hotkeys missing %q", key)
+		}
+	}
+	if d.Hotkeys["next_tab"] != "Ctrl+Tab" {
+		t.Errorf("next_tab default: got %q", d.Hotkeys["next_tab"])
+	}
+	if d.Hotkeys["prev_tab"] != "Ctrl+Shift+Tab" {
+		t.Errorf("prev_tab default: got %q", d.Hotkeys["prev_tab"])
+	}
+	if d.Hotkeys["close_tab"] != "Ctrl+W" {
+		t.Errorf("close_tab default: got %q", d.Hotkeys["close_tab"])
+	}
+}
+
+// TestOpenTabs_RoundTrip confirms OpenTabs + ActiveTab survive Save → Load
+// with byte-for-byte fidelity, including the section-less case (Section == "").
+func TestOpenTabs_RoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	original := Defaults()
+	previewOff := false
+	original.UI.EnablePreviewTabs = &previewOff
+	original.UI.MaxOpenTabs = 12
+	original.UI.OpenTabs = []TabRef{
+		{Notebook: "Work", Section: "Projects", Page: "Site"},
+		{Notebook: "Work", Section: "", Page: "Top"},
+		{Notebook: "Personal", Section: "Journal", Page: "Daily"},
+	}
+	original.UI.ActiveTab = &TabRef{Notebook: "Work", Section: "Projects", Page: "Site"}
+
+	if err := Save(tmp, original); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(loaded.UI.OpenTabs, original.UI.OpenTabs) {
+		t.Errorf("open_tabs round-trip:\n got  %+v\n want %+v", loaded.UI.OpenTabs, original.UI.OpenTabs)
+	}
+	if loaded.UI.ActiveTab == nil || !reflect.DeepEqual(*loaded.UI.ActiveTab, *original.UI.ActiveTab) {
+		t.Errorf("active_tab round-trip:\n got  %+v\n want %+v", loaded.UI.ActiveTab, original.UI.ActiveTab)
+	}
+	if loaded.UI.EnablePreviewTabs == nil || *loaded.UI.EnablePreviewTabs != false {
+		t.Errorf("enable_preview_tabs=false round-trip: got %v", loaded.UI.EnablePreviewTabs)
+	}
+	if loaded.UI.MaxOpenTabs != 12 {
+		t.Errorf("max_open_tabs round-trip: got %d, want 12", loaded.UI.MaxOpenTabs)
+	}
+}
+
+// TestLoad_LegacyConfigMissingTabFields verifies a config.yaml authored
+// before #142 (no ui.open_tabs / enable_preview_tabs / max_open_tabs keys)
+// loads cleanly with the new fields filled from Defaults — backward compat.
+func TestLoad_LegacyConfigMissingTabFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, ConfigPath(tmp), strings.Join([]string{
+		"editor:",
+		"  font_family: Inter",
+		"ui:",
+		"  sidebar_width: 280",
+	}, "\n"))
+	cfg, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("legacy config Load: %v", err)
+	}
+	// The pre-existing ui.sidebar_width override is honored.
+	if cfg.UI.SidebarWidth != 280 {
+		t.Errorf("sidebar_width override lost: got %d", cfg.UI.SidebarWidth)
+	}
+	// The new fields default-in cleanly (not zero-value).
+	if cfg.UI.OpenTabs == nil || len(cfg.UI.OpenTabs) != 0 {
+		t.Errorf("legacy open_tabs should default to empty non-nil slice, got %v", cfg.UI.OpenTabs)
+	}
+	if cfg.UI.EnablePreviewTabs == nil || *cfg.UI.EnablePreviewTabs != true {
+		t.Errorf("legacy enable_preview_tabs should default to *true, got %v", cfg.UI.EnablePreviewTabs)
+	}
+	if cfg.UI.MaxOpenTabs != 8 {
+		t.Errorf("legacy max_open_tabs should default to 8, got %d", cfg.UI.MaxOpenTabs)
+	}
+	if cfg.UI.ActiveTab != nil {
+		t.Errorf("legacy active_tab should default to nil, got %+v", *cfg.UI.ActiveTab)
+	}
+}
+
+// TestLoad_MalformedOpenTabsEntryNotFatal confirms a malformed open_tabs
+// entry does NOT abort the entire config load — yaml.v3 decodes a
+// missing-field entry as an empty TabRef, which the App-layer GetOpenTabs
+// prunes against ListNavigation. A parse-level error is still raised for
+// genuinely broken YAML (covered by TestLoad_MalformedYAML_ReturnsError).
+func TestLoad_MalformedOpenTabsEntryNotFatal(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, ConfigPath(tmp), strings.Join([]string{
+		"ui:",
+		"  open_tabs:",
+		"    - notebook: Work",
+		"      section: Projects",
+		"      page: Site",
+		"    - notebook: Personal",
+		"      # page missing — decodes as empty string, pruned later",
+	}, "\n"))
+	cfg, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("malformed open_tabs entry should not be fatal, got %v", err)
+	}
+	if len(cfg.UI.OpenTabs) != 2 {
+		t.Fatalf("expected 2 open_tabs entries (1 valid, 1 partial), got %d", len(cfg.UI.OpenTabs))
+	}
+	// The partial entry decodes with an empty Page; the App-layer
+	// GetOpenTabs prunes it against ListNavigation.
+	if cfg.UI.OpenTabs[1].Page != "" {
+		t.Errorf("partial entry page should be empty string, got %q", cfg.UI.OpenTabs[1].Page)
+	}
+}
+
+// TestNormalize_MaxOpenTabsClamp confirms MaxOpenTabs of 0 or negative
+// (legacy/invalid) is normalized to the default 8, while positive values
+// pass through untouched (including 1 and very large values).
+func TestNormalize_MaxOpenTabsClamp(t *testing.T) {
+	cases := []struct {
+		in, want int
+	}{
+		{0, 8},        // legacy missing key → default
+		{-1, 8},       // invalid negative → default
+		{1, 1},        // minimum valid
+		{8, 8},        // the default itself
+		{20, 20},      // user-configured large value honored
+		{32, 32},      // upper bound
+		{33, 32},      // clamped to upper bound
+		{1000, 32},    // absurdly large → clamped (#142 hardening)
+	}
+	for _, c := range cases {
+		cfg := normalize(SystemConfig{UI: UIConfig{MaxOpenTabs: c.in}})
+		if cfg.UI.MaxOpenTabs != c.want {
+			t.Errorf("normalize MaxOpenTabs %d: got %d, want %d", c.in, cfg.UI.MaxOpenTabs, c.want)
+		}
+	}
+}
+
+// TestNormalize_EnablePreviewTabsNilBecomesTrue confirms the *bool field is
+// normalized to *true when nil (so the frontend reads a stable default),
+// while an explicit false survives the normalize pass unchanged.
+func TestNormalize_EnablePreviewTabsNilBecomesTrue(t *testing.T) {
+	// nil → *true
+	cfg := normalize(SystemConfig{})
+	if cfg.UI.EnablePreviewTabs == nil || *cfg.UI.EnablePreviewTabs != true {
+		t.Errorf("normalize nil → *true, got %v", cfg.UI.EnablePreviewTabs)
+	}
+	// explicit false survives
+	f := false
+	cfg = normalize(SystemConfig{UI: UIConfig{EnablePreviewTabs: &f}})
+	if cfg.UI.EnablePreviewTabs == nil || *cfg.UI.EnablePreviewTabs != false {
+		t.Errorf("normalize should preserve explicit false, got %v", cfg.UI.EnablePreviewTabs)
+	}
+}

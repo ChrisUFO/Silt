@@ -72,6 +72,7 @@ describe('Sidebar', () => {
         onSelectNotebook: () => {},
         onSelectSection: () => {},
         onSelectPage: () => {},
+        onPinPage: () => {},
         onSelectView: () => {},
         onCloseVault: () => {}
       }
@@ -95,6 +96,7 @@ describe('Sidebar', () => {
         onSelectNotebook: () => {},
         onSelectSection: () => {},
         onSelectPage: () => {},
+        onPinPage: () => {},
         onSelectView: () => {},
         onCloseVault: handler
       }
@@ -123,6 +125,7 @@ describe('Sidebar', () => {
         onSelectNotebook: () => {},
         onSelectSection: () => {},
         onSelectPage: () => {},
+        onPinPage: () => {},
         onSelectView: () => {},
         onCloseVault: () => {}
       }
