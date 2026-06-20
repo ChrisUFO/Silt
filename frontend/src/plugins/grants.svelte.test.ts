@@ -58,15 +58,17 @@ describe('grants cache (#158)', () => {
     expect(isGranted('third-party', 'editor-schema')).toBe(false)
   })
 
-  it('refreshGrants is fail-closed on IPC error', async () => {
+  it('refreshGrants is fail-open on subsequent IPC error (retains previous cache)', async () => {
     setGrantsForTests({ 'granted-plugin': ['network'] })
     mockGetGranted.mockRejectedValue(new Error('IPC failed'))
     await refreshGrants()
-    // After error, the previous cache stays in place (not cleared).
+    // After error, the previous cache stays in place (fail-open) so a
+    // transient IPC blip doesn't wipe the UI. Go's requireGrant is the
+    // authoritative enforcement; this cache only gates UI visibility.
     expect(isGranted('granted-plugin', 'network')).toBe(true)
   })
 
-  it('refreshGrants on first load with IPC error is fail-closed', async () => {
+  it('refreshGrants is fail-closed on first-load IPC error (no previous cache)', async () => {
     mockGetGranted.mockRejectedValue(new Error('IPC failed'))
     await refreshGrants()
     expect(isGranted('any-plugin', 'network')).toBe(false)

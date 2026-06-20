@@ -56,6 +56,7 @@ describe('PluginSurfaceFrame CSP (#149)', () => {
       'createBlock',
       'deleteBlock',
       'moveBlock',
+      'applyBlocks',
       'createPage',
       'createSection',
       'createNotebook',

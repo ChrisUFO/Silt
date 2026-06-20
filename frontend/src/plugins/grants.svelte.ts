@@ -60,7 +60,11 @@ export async function refreshGrants(): Promise<void> {
     }
     grantsMap = next
   } catch {
-    // Best-effort: leave the previous cache in place on error.
+    // Fail-open: retain the previous cache so a transient IPC blip doesn't
+    // wipe the UI. Authoritative enforcement is Go's requireGrant; this cache
+    // only gates UI visibility (slash commands, surfaces, decorations).
+    // On the very first load (no previous cache), all isGranted calls return
+    // false — that is naturally fail-closed.
   }
 }
 

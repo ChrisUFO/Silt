@@ -93,6 +93,7 @@
     'createBlock',
     'deleteBlock',
     'moveBlock',
+    'applyBlocks',
     'createPage',
     'createSection',
     'createNotebook',
