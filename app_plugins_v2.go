@@ -366,18 +366,24 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 			if !isPathWithinRoot(origPath, origDir) {
 				return fmt.Errorf("cross-page move: source path escapes notebook root")
 			}
-			// Read the CURRENT source-page blocks from the DB. The moved
-			// block is already absent (first-pass SaveFileBlocks re-indexed
-			// it to the target page), so filtering is typically a no-op.
-			// This prevents a stale file read from re-introducing blocks
-			// that concurrent moves already relocated.
-			srcBlocks, srcErr := a.FetchPageBlocks(sn, ss, sp)
-			if srcErr != nil {
-				return fmt.Errorf("cross-page move: fetch source %s/%s/%s: %w", sn, ss, sp, srcErr)
-			}
-			filtered := removeByID(srcBlocks, r.op.BlockID)
+			// Read + filter + write under LockFileWrite so two concurrent
+			// moves from the same source page cannot interleave a stale
+			// read with the other's write. Before this fix, the
+			// FetchPageBlocks was outside the lock, so goroutine 1 could
+			// read a snapshot that still included block B, then goroutine 2
+			// writes Source without B, then goroutine 1 writes Source WITH B
+			// (re-indexing B back to Source, stealing it from its target).
+			blockID := r.op.BlockID
 			var writeErr error
 			a.coordinator.LockFileWrite(origPath, func() {
+				// Read the CURRENT source-page blocks from the DB inside
+				// the lock so the snapshot is fresh.
+				srcBlocks, srcErr := a.FetchPageBlocks(sn, ss, sp)
+				if srcErr != nil {
+					writeErr = fmt.Errorf("cross-page move: fetch source %s/%s/%s: %w", sn, ss, sp, srcErr)
+					return
+				}
+				filtered := removeByID(srcBlocks, blockID)
 				writeErr = a.writePageFileLocked(origPath, r.origSource, sn, ss, sp, filtered)
 			})
 			if writeErr != nil {
