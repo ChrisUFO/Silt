@@ -455,3 +455,58 @@ func sha256hex(data []byte) string {
 	h := sha256.Sum256(data)
 	return hex.EncodeToString(h[:])
 }
+
+// TestInstall_PreservesUnknownManifestFields verifies the sha256 injection
+// round-trips plugin.json through a generic map so custom/unknown fields the
+// author included (repository, bugs, keywords, ...) survive on disk instead of
+// being dropped by a struct marshal.
+func TestInstall_PreservesUnknownManifestFields(t *testing.T) {
+	vault := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(vault, ".system", "plugins"), 0o755)
+	archive := filepath.Join(t.TempDir(), "custom.silt-plugin")
+	// Manifest carries custom metadata the Manifest struct does not model.
+	custom, _ := json.Marshal(map[string]any{
+		"id":        "custom",
+		"name":      "Custom",
+		"version":   "1.0.0",
+		"main":      "index.js",
+		"repository": "https://example.com/repo",
+		"keywords":  []string{"notes", "demo"},
+		"bugs":      map[string]any{"url": "https://example.com/issues"},
+	})
+	writeZip(t, archive, map[string]string{
+		"plugin.json": string(custom),
+		"index.js":    "export default {};",
+	})
+
+	if _, err := Install(vault, archive); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(vault, ".system", "plugins", "custom", "plugin.json"))
+	if err != nil {
+		t.Fatalf("read on-disk manifest: %v", err)
+	}
+	var check map[string]any
+	if err := json.Unmarshal(data, &check); err != nil {
+		t.Fatalf("parse on-disk manifest: %v", err)
+	}
+	// The injected integrity hash must be present.
+	if check["contentSha256"] == nil || check["contentSha256"] == "" {
+		t.Error("on-disk plugin.json should carry contentSha256")
+	}
+	// Custom author fields must survive the round-trip.
+	if check["repository"] != "https://example.com/repo" {
+		t.Errorf("custom field repository lost: got %v", check["repository"])
+	}
+	if keywords, ok := check["keywords"].([]any); !ok || len(keywords) != 2 {
+		t.Errorf("custom field keywords lost: got %T %v", check["keywords"], check["keywords"])
+	}
+	if bugs, ok := check["bugs"].(map[string]any); !ok || bugs["url"] != "https://example.com/issues" {
+		t.Errorf("custom field bugs lost: got %v", check["bugs"])
+	}
+	// And the modeled id is still correct.
+	if check["id"] != "custom" {
+		t.Errorf("id field corrupted: got %v", check["id"])
+	}
+}

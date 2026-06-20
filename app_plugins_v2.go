@@ -690,18 +690,23 @@ func pluginScratchSizeBytes(a *App, pluginID string) (int64, error) {
 	// Linked notebook scratch dirs: each linked root is a notebook whose
 	// scratch dir lives at <linkedRoot>/.system/plugins/<pluginID>/data/.
 	// Without this, a plugin can bypass the cap by writing into a linked
-	// notebook's scratch dir (#159).
+	// notebook's scratch dir (#159). Snapshot only the root paths under the
+	// config lock, then run the (slow) recursive dirSizeUnder walks without
+	// it so a plugin size check can't stall config readers/writers.
 	a.configMu.RLock()
+	linkedRoots := make([]string, 0, len(a.cfg.LinkedNotebooks))
 	for _, ln := range a.cfg.LinkedNotebooks {
-		linkedDir := filepath.Join(ln.RootPath, ".system", "plugins", pluginID, "data")
+		linkedRoots = append(linkedRoots, ln.RootPath)
+	}
+	a.configMu.RUnlock()
+	for _, root := range linkedRoots {
+		linkedDir := filepath.Join(root, ".system", "plugins", pluginID, "data")
 		n, err := dirSizeUnder(linkedDir)
 		if err != nil {
-			a.configMu.RUnlock()
 			return 0, err
 		}
 		total += n
 	}
-	a.configMu.RUnlock()
 	return total, nil
 }
 
@@ -1145,9 +1150,16 @@ func newSafeFetchClient(timeout time.Duration) *http.Client {
 			}
 			// Strict header allowlist (#160): strip everything except safe,
 			// non-sensitive headers so custom auth (X-Api-Key, etc.) cannot
-			// leak to the redirect target. Go's net/http only strips
-			// Authorization + Cookie on cross-host redirects automatically.
-			stripHeadersForRedirect(req)
+			// leak ACROSS hosts. Go's net/http already drops Authorization +
+			// Cookie on cross-host redirects, but custom auth headers are not
+			// covered. Same-host redirects keep custom headers so legitimate
+			// same-origin API redirects (e.g. a version path migration) that
+			// depend on X-Api-Key are not broken; cross-host is where the leak
+			// risk lives.
+			prev := via[len(via)-1]
+			if !strings.EqualFold(req.URL.Host, prev.URL.Host) {
+				stripHeadersForRedirect(req)
+			}
 			return nil
 		},
 	}
@@ -1285,6 +1297,10 @@ const defaultPluginFetchBurst = 10
 // plugin cannot declare more than this; the host rejects it at install.
 const maxPluginFetchRPS = 10.0
 
+// maxPluginFetchBurst is the hard cap on a manifest-declared burst override.
+// Mirrors the install-time validation in plugins.Validate.
+const maxPluginFetchBurst = 100
+
 // tokenBucket is a standard token-bucket rate limiter. tokens refill at rps
 // up to burst capacity. allow() consumes one token if available.
 type tokenBucket struct {
@@ -1323,21 +1339,60 @@ func newPluginRateLimiter() *pluginRateLimiter {
 }
 
 // allow checks (and consumes) one token for pluginID. Returns false if the
-// rate limit is exceeded.
-func (rl *pluginRateLimiter) allow(pluginID string) bool {
+// rate limit is exceeded. vaultPath is used only to resolve a manifest-declared
+// ratelimit override (#153) the first time a plugin's bucket is created; the
+// bucket is then cached, so the disk read happens at most once per plugin per
+// session (and is evicted on uninstall).
+func (rl *pluginRateLimiter) allow(vaultPath, pluginID string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	b, ok := rl.buckets[pluginID]
 	if !ok {
+		rps, burst := resolvePluginRatelimit(vaultPath, pluginID)
 		b = &tokenBucket{
-			tokens: float64(defaultPluginFetchBurst),
+			tokens: float64(burst),
 			last:   time.Now(),
-			rps:    defaultPluginFetchRPS,
-			burst:  defaultPluginFetchBurst,
+			rps:    rps,
+			burst:  burst,
 		}
 		rl.buckets[pluginID] = b
 	}
 	return b.allow(time.Now())
+}
+
+// resolvePluginRatelimit reads the installed plugin's manifest ratelimit
+// override (#153) and returns the effective (rps, burst). Returns the host
+// defaults when vaultPath is empty, the plugin has no manifest on disk, or the
+// declared values are out of range. This is defense in depth — Install already
+// validates the override — so a hand-edited or corrupted plugin.json falls back
+// to the safe default instead of granting an outsized quota.
+func resolvePluginRatelimit(vaultPath, pluginID string) (rps float64, burst int) {
+	rps = defaultPluginFetchRPS
+	burst = defaultPluginFetchBurst
+	if vaultPath == "" || !plugins.IsValidID(pluginID) {
+		return
+	}
+	manifestPath := filepath.Join(vaultPath, ".system", "plugins", pluginID, "plugin.json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return
+	}
+	var raw struct {
+		Ratelimit *struct {
+			RPS   float64 `json:"rps"`
+			Burst int     `json:"burst"`
+		} `json:"ratelimit"`
+	}
+	if json.Unmarshal(data, &raw) != nil || raw.Ratelimit == nil {
+		return
+	}
+	if raw.Ratelimit.RPS > 0 && raw.Ratelimit.RPS <= maxPluginFetchRPS {
+		rps = raw.Ratelimit.RPS
+	}
+	if raw.Ratelimit.Burst > 0 && raw.Ratelimit.Burst <= maxPluginFetchBurst {
+		burst = raw.Ratelimit.Burst
+	}
+	return
 }
 
 // evict removes the bucket for pluginID (called on uninstall/disable).
@@ -1401,8 +1456,8 @@ func (a *App) PluginFetch(pluginID, sessionToken string, input PluginFetchInput)
 	if err := a.requireGrant(pluginID, plugins.CapNetwork); err != nil {
 		return PluginFetchResult{}, err
 	}
-	if a.rateLimiter != nil && !a.rateLimiter.allow(pluginID) {
-		return PluginFetchResult{}, fmt.Errorf("plugin %q fetch rate limit exceeded (default %g rps, burst %d)", pluginID, defaultPluginFetchRPS, defaultPluginFetchBurst)
+	if a.rateLimiter != nil && !a.rateLimiter.allow(a.vaultPath, pluginID) {
+		return PluginFetchResult{}, fmt.Errorf("plugin %q fetch rate limit exceeded", pluginID)
 	}
 	if input.URL == "" {
 		return PluginFetchResult{}, fmt.Errorf("url is required")
@@ -1512,10 +1567,13 @@ func (a *App) GetNetworkAudit() ([]NetworkAuditEntry, error) {
 
 // ClearNetworkAudit empties the in-memory audit log AND truncates the on-disk
 // per-plugin network.log files so a clear is durable across restarts (#157).
+// The on-disk truncation runs under the same lock auditNetwork holds while
+// appending, so a concurrent fetch cannot interleave a fresh line into a file
+// we just emptied (the I/O is bounded by the small number of plugin dirs).
 func (a *App) ClearNetworkAudit() error {
 	networkAuditMu.Lock()
+	defer networkAuditMu.Unlock()
 	networkAudit = nil
-	networkAuditMu.Unlock()
 	// Best-effort on-disk truncation: walk <vault>/.system/plugins/*/network.log
 	// and empty each file. Errors are non-fatal (audit log is diagnostic).
 	if a.vaultPath != "" {
@@ -1586,23 +1644,25 @@ func seedNetworkAuditFromDisk(vaultPath string) {
 
 // parseNetworkLogLine parses one line from a network.log file into a
 // NetworkAuditEntry. The format is: `<RFC3339> <METHOD> <host> <status>
-// <pluginID>`. Returns ok=false on any parse failure (best-effort).
+// <pluginID>`. Returns ok=false on any parse failure (best-effort). Parsing
+// from the right (status = second-to-last field, pluginID = last) tolerates
+// spaces in the host/path segment, which a left-to-right split would misalign.
 func parseNetworkLogLine(line string) (NetworkAuditEntry, bool) {
 	parts := strings.Fields(line)
-	if len(parts) < 5 {
+	n := len(parts)
+	if n < 5 {
 		return NetworkAuditEntry{}, false
 	}
-	status, err := strconv.Atoi(parts[3])
+	status, err := strconv.Atoi(parts[n-2])
 	if err != nil {
 		return NetworkAuditEntry{}, false
 	}
-	// Rejoin host parts in case the host contained spaces (unlikely but safe).
 	return NetworkAuditEntry{
 		At:     parts[0],
 		Method: parts[1],
-		Host:   parts[2],
+		Host:   strings.Join(parts[2:n-2], " "),
 		Status: status,
-		Plugin: parts[4],
+		Plugin: parts[n-1],
 	}, true
 }
 

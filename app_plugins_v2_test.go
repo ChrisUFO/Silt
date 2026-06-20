@@ -1082,7 +1082,7 @@ func TestTokenBucket_AllowsBurstThenThrottles(t *testing.T) {
 func TestPluginRateLimiter_EvictOnUninstall(t *testing.T) {
 	app := newTestApp(t)
 	// Simulate a fetch that creates a bucket.
-	app.rateLimiter.allow("evict-me")
+	app.rateLimiter.allow("", "evict-me")
 	// Evict.
 	app.rateLimiter.evict("evict-me")
 	// After eviction, a new bucket starts fresh (full burst).
@@ -1102,11 +1102,80 @@ func TestPluginRateLimiter_ConcurrentNoPanic(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func() {
 			defer wg.Done()
-			app.rateLimiter.allow("concurrent-plugin")
+			app.rateLimiter.allow("", "concurrent-plugin")
 		}()
 	}
 	wg.Wait()
 	// Should not panic under -race.
+}
+
+// writeInstalledManifest writes a plugin.json (and parent dirs) at
+// <vault>/.system/plugins/<id>/plugin.json so rate-limit resolution can read
+// it the way allow() does at runtime.
+func writeInstalledManifest(t *testing.T, vaultPath, id, manifestJSONStr string) {
+	t.Helper()
+	dir := filepath.Join(vaultPath, ".system", "plugins", id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(manifestJSONStr), 0o644); err != nil {
+		t.Fatalf("write plugin.json: %v", err)
+	}
+}
+
+func TestPluginRateLimiter_HonorsManifestOverride(t *testing.T) {
+	app := newTestApp(t)
+	// A plugin that declares a 5 rps / burst 2 override.
+	writeInstalledManifest(t, app.vaultPath, "capped",
+		`{"id":"capped","name":"Capped","version":"1.0.0","ratelimit":{"rps":5,"burst":2}}`)
+	app.rateLimiter.allow(app.vaultPath, "capped")
+
+	app.rateLimiter.mu.Lock()
+	b, ok := app.rateLimiter.buckets["capped"]
+	app.rateLimiter.mu.Unlock()
+	if !ok {
+		t.Fatal("expected a bucket to be created for capped")
+	}
+	if b.rps != 5 {
+		t.Errorf("bucket rps = %g, want 5 (manifest override)", b.rps)
+	}
+	if b.burst != 2 {
+		t.Errorf("bucket burst = %d, want 2 (manifest override)", b.burst)
+	}
+}
+
+func TestPluginRateLimiter_DefaultsWhenNoManifest(t *testing.T) {
+	app := newTestApp(t)
+	// No plugin.json on disk at all -> host defaults apply.
+	app.rateLimiter.allow(app.vaultPath, "no-manifest")
+
+	app.rateLimiter.mu.Lock()
+	b, ok := app.rateLimiter.buckets["no-manifest"]
+	app.rateLimiter.mu.Unlock()
+	if !ok {
+		t.Fatal("expected a bucket to be created for no-manifest")
+	}
+	if b.rps != defaultPluginFetchRPS {
+		t.Errorf("bucket rps = %g, want default %g", b.rps, defaultPluginFetchRPS)
+	}
+	if b.burst != defaultPluginFetchBurst {
+		t.Errorf("bucket burst = %d, want default %d", b.burst, defaultPluginFetchBurst)
+	}
+}
+
+func TestResolvePluginRatelimit_ClampsOutOfRange(t *testing.T) {
+	app := newTestApp(t)
+	// An over-cap override (hand-edited / drifted) must fall back to defaults
+	// rather than granting an outsized quota (defense in depth).
+	writeInstalledManifest(t, app.vaultPath, "drifted",
+		`{"id":"drifted","name":"Drifted","version":"1.0.0","ratelimit":{"rps":999,"burst":9999}}`)
+	rps, burst := resolvePluginRatelimit(app.vaultPath, "drifted")
+	if rps != defaultPluginFetchRPS {
+		t.Errorf("out-of-range rps should clamp to default %g, got %g", defaultPluginFetchRPS, rps)
+	}
+	if burst != defaultPluginFetchBurst {
+		t.Errorf("out-of-range burst should clamp to default %d, got %d", defaultPluginFetchBurst, burst)
+	}
 }
 
 // =========================================================================
@@ -1134,6 +1203,59 @@ func TestStripHeadersForRedirect_RemovesCustomAuth(t *testing.T) {
 	}
 	if req.Header.Get("Authorization") != "" {
 		t.Error("Authorization should be stripped on redirect")
+	}
+}
+
+// newRedirectRequest builds a minimal *http.Request for CheckRedirect tests.
+func newRedirectRequest(rawurl string, headers http.Header) *http.Request {
+	req := &http.Request{
+		Method: "GET",
+		Header: headers,
+	}
+	u, err := url.Parse(rawurl)
+	if err != nil {
+		panic(err)
+	}
+	req.URL = u
+	return req
+}
+
+// TestCheckRedirect_StripsCustomAuthOnlyCrossHost verifies the #160 policy:
+// custom auth headers survive a same-host redirect (so a legit same-origin API
+// redirect that depends on X-Api-Key is not broken) but are stripped the moment
+// the redirect crosses to a different host (the actual leak risk). Hosts are
+// public TEST-NET IP literals so isSafeFetchUrl resolves them locally without
+// network access and does not flag them as internal.
+func TestCheckRedirect_StripsCustomAuthOnlyCrossHost(t *testing.T) {
+	client := newSafeFetchClient(defaultPluginFetchTimeout)
+
+	authHeaders := func() http.Header {
+		return http.Header{
+			"Accept":    {"application/json"},
+			"X-Api-Key": {"secret-key"},
+		}
+	}
+
+	// Same-host redirect: X-Api-Key must survive.
+	via := []*http.Request{newRedirectRequest("https://203.0.113.1/v1/widgets", authHeaders())}
+	sameHost := newRedirectRequest("https://203.0.113.1/v2/widgets", authHeaders())
+	if err := client.CheckRedirect(sameHost, via); err != nil {
+		t.Fatalf("same-host CheckRedirect: %v", err)
+	}
+	if sameHost.Header.Get("X-Api-Key") != "secret-key" {
+		t.Error("X-Api-Key should survive a same-host redirect")
+	}
+
+	// Cross-host redirect: X-Api-Key must be stripped, Accept kept.
+	crossHost := newRedirectRequest("https://198.51.100.5/capture", authHeaders())
+	if err := client.CheckRedirect(crossHost, via); err != nil {
+		t.Fatalf("cross-host CheckRedirect: %v", err)
+	}
+	if crossHost.Header.Get("X-Api-Key") != "" {
+		t.Error("X-Api-Key must be stripped on a cross-host redirect")
+	}
+	if crossHost.Header.Get("Accept") != "application/json" {
+		t.Error("Accept should survive the cross-host allowlist")
 	}
 }
 
@@ -1223,6 +1345,43 @@ func TestSeedNetworkAuditFromDisk_RestartPreservesEntries(t *testing.T) {
 	}
 	if entries[0].Status != 200 {
 		t.Errorf("entry status = %d, want 200", entries[0].Status)
+	}
+}
+
+func TestParseNetworkLogLine_ToleratesSpacesInHost(t *testing.T) {
+	// The audited Host field includes the URL path, which may contain spaces.
+	// Right-to-left parsing must keep status (2nd-from-last) + pluginID (last)
+	// aligned and rejoin the host/path segment.
+	entry, ok := parseNetworkLogLine("2026-06-20T10:00:00Z GET example.com/with path 200 my-plugin")
+	if !ok {
+		t.Fatal("expected line with a spaced host to parse")
+	}
+	if entry.At != "2026-06-20T10:00:00Z" {
+		t.Errorf("At = %q", entry.At)
+	}
+	if entry.Method != "GET" {
+		t.Errorf("Method = %q", entry.Method)
+	}
+	if entry.Host != "example.com/with path" {
+		t.Errorf("Host = %q, want %q", entry.Host, "example.com/with path")
+	}
+	if entry.Status != 200 {
+		t.Errorf("Status = %d, want 200", entry.Status)
+	}
+	if entry.Plugin != "my-plugin" {
+		t.Errorf("Plugin = %q", entry.Plugin)
+	}
+}
+
+func TestParseNetworkLogLine_RejectsMalformed(t *testing.T) {
+	for _, line := range []string{
+		"",                       // empty
+		"only three fields",      // too few
+		"a b c d e",             // non-numeric status
+	} {
+		if _, ok := parseNetworkLogLine(line); ok {
+			t.Errorf("expected parse failure for %q", line)
+		}
 	}
 }
 

@@ -257,10 +257,20 @@ func Install(vaultPath, archivePath string) (Manifest, error) {
 	}
 	hash := sha256.Sum256(indexData)
 	manifest.ContentSHA256 = hex.EncodeToString(hash[:])
-	// Write the updated manifest (with contentSha256) back to the extracted
-	// plugin.json so it persists on disk after the rename.
+	// Inject contentSha256 into the on-disk plugin.json via a generic map so
+	// custom/unknown fields the author included (repository, bugs, keywords,
+	// ...) are preserved instead of being dropped by a struct round-trip.
 	manifestOnDisk := filepath.Join(tmp, "plugin.json")
-	manifestJSONBytes, err := json.Marshal(manifest)
+	manifestData, err := os.ReadFile(manifestOnDisk)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("failed to read plugin.json for sha256 injection: %w", err)
+	}
+	var rawManifest map[string]any
+	if err := json.Unmarshal(manifestData, &rawManifest); err != nil {
+		return Manifest{}, fmt.Errorf("failed to parse plugin.json for sha256 injection: %w", err)
+	}
+	rawManifest["contentSha256"] = manifest.ContentSHA256
+	manifestJSONBytes, err := json.Marshal(rawManifest)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("failed to serialize manifest with sha256: %w", err)
 	}
