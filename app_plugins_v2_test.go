@@ -111,6 +111,66 @@ func TestPluginMoveBlock_ReordersInPage(t *testing.T) {
 	}
 }
 
+// PluginMoveBlock across pages: the block must be REMOVED from source AND
+// INSERTED into target. Before the fix, the block was silently deleted from
+// the source but never added to the target (data loss).
+func TestPluginMoveBlock_CrossPageInsertsInTarget(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section := "Work", "Journal"
+	srcPage, dstPage := "Source", "Dest"
+	srcPath := filepath.Join(app.vaultPath, notebook, section, srcPage+".md")
+	dstPath := filepath.Join(app.vaultPath, notebook, section, dstPage+".md")
+
+	blockA := "11111111-1111-1111-1111-111111111111"
+	blockB := "22222222-2222-2222-2222-222222222222"
+
+	srcContent := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Source\"\ndate: \"2026-06-13\"\ntags: []\n---\n" +
+		"- [ ] alpha <!-- id: " + blockA + " -->\n" +
+		"- [ ] beta <!-- id: " + blockB + " -->\n"
+	writeAndIndexFile(t, app, srcPath, srcContent, notebook, section, srcPage)
+
+	dstContent := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Dest\"\ndate: \"2026-06-13\"\ntags: []\n---\n" +
+		"- [ ] existing <!-- id: 33333333-3333-3333-3333-333333333333 -->\n"
+	writeAndIndexFile(t, app, dstPath, dstContent, notebook, section, dstPage)
+
+	// Move blockA from Source to Dest (no afterID → append).
+	if err := app.PluginMoveBlock(blockA, "", notebook, section, dstPage); err != nil {
+		t.Fatalf("PluginMoveBlock cross-page: %v", err)
+	}
+
+	// Source must have 1 block (B only).
+	srcBlocks, _ := app.FetchPageBlocks(notebook, section, srcPage)
+	if len(srcBlocks) != 1 {
+		ids := make([]string, len(srcBlocks))
+		for i, b := range srcBlocks {
+			ids[i] = b.ID
+		}
+		t.Fatalf("source should have 1 block (B), got %d: %v", len(srcBlocks), ids)
+	}
+	if srcBlocks[0].ID != blockB {
+		t.Fatalf("source should have blockB, got %s", srcBlocks[0].ID)
+	}
+
+	// Target must have 2 blocks (existing + A).
+	dstBlocks, _ := app.FetchPageBlocks(notebook, section, dstPage)
+	if len(dstBlocks) != 2 {
+		ids := make([]string, len(dstBlocks))
+		for i, b := range dstBlocks {
+			ids[i] = b.ID
+		}
+		t.Fatalf("target should have 2 blocks (existing + A), got %d: %v", len(dstBlocks), ids)
+	}
+	foundA := false
+	for _, b := range dstBlocks {
+		if b.ID == blockA {
+			foundA = true
+		}
+	}
+	if !foundA {
+		t.Fatal("blockA was not inserted into target page — data loss bug")
+	}
+}
+
 // PluginCreateBlock rejects an invalid block type.
 func TestPluginCreateBlock_RejectsInvalidType(t *testing.T) {
 	app := newTestApp(t)
@@ -359,12 +419,6 @@ func TestSafeFetchClient_CheckRedirectRejectsInternalHost(t *testing.T) {
 // newSafeFetchClient honors a 30-second timeout (matches defaultPluginFetchTimeout)
 // and rejects an http:// scheme redirect with a clear error.
 func TestSafeFetchClient_AppliesTimeoutAndRejectsBadScheme(t *testing.T) {
-	// Server that tries to 302 to a javascript: URL.
-	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "javascript:alert(1)", http.StatusFound)
-	}))
-	t.Cleanup(redirector.Close)
-
 	client := newSafeFetchClient(5_000_000_000) // 5s — generous for slow CI
 	if client.Timeout != 5*time.Second {
 		t.Errorf("client.Timeout = %v, want 5s", client.Timeout)
@@ -576,8 +630,10 @@ func TestPluginMoveBlock_ConcurrentCrossPageNoClobber(t *testing.T) {
 	var err1, err2 error
 	const rounds = 20
 	for i := 0; i < rounds; i++ {
-		// Reset source page each round.
+		// Reset source and destination pages each round.
 		writeAndIndexFile(t, app, srcPath, srcContent, notebook, section, srcPage)
+		writeAndIndexFile(t, app, dst1Path, dst1Content, notebook, section, dstPage1)
+		writeAndIndexFile(t, app, dst2Path, dst2Content, notebook, section, dstPage2)
 
 		wg.Add(2)
 		go func() {
@@ -608,6 +664,29 @@ func TestPluginMoveBlock_ConcurrentCrossPageNoClobber(t *testing.T) {
 		}
 		if srcBlocks[0].ID != blockC {
 			t.Fatalf("round %d: remaining source block should be C, got %s", i, srcBlocks[0].ID)
+		}
+
+		// Block A must be in Dest1, block B must be in Dest2 (not silently
+		// dropped — the pre-fix data-loss bug).
+		dst1Blocks, _ := app.FetchPageBlocks(notebook, section, dstPage1)
+		dst1HasA := false
+		for _, b := range dst1Blocks {
+			if b.ID == blockA {
+				dst1HasA = true
+			}
+		}
+		if !dst1HasA {
+			t.Fatalf("round %d: blockA missing from Dest1 — data loss", i)
+		}
+		dst2Blocks, _ := app.FetchPageBlocks(notebook, section, dstPage2)
+		dst2HasB := false
+		for _, b := range dst2Blocks {
+			if b.ID == blockB {
+				dst2HasB = true
+			}
+		}
+		if !dst2HasB {
+			t.Fatalf("round %d: blockB missing from Dest2 — data loss", i)
 		}
 	}
 }
@@ -705,5 +784,53 @@ func TestIsPathWithinRoot_RejectsSymlinkEscape(t *testing.T) {
 	}
 	if !isPathWithinRoot(legit, root) {
 		t.Fatal("regular file inside root should be allowed")
+	}
+}
+
+// =========================================================================
+// PluginFetch HTTP method allowlist + request body cap + truncation flag
+// =========================================================================
+
+// PluginFetch rejects non-standard HTTP methods (CONNECT, TRACE, etc.).
+func TestPluginFetch_RejectsForbiddenMethod(t *testing.T) {
+	app := newTestApp(t)
+	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
+	for _, m := range []string{"CONNECT", "TRACE", "OPTIONS", "BOGUS"} {
+		_, err := app.PluginFetch("p", PluginFetchInput{URL: "https://example.com", Method: m})
+		if err == nil {
+			t.Fatalf("expected rejection of HTTP method %q", m)
+		}
+	}
+}
+
+// PluginFetch accepts standard HTTP methods.
+func TestPluginFetch_AcceptsStandardMethods(t *testing.T) {
+	app := newTestApp(t)
+	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
+	for _, m := range []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", ""} {
+		// We don't care about the fetch result (the server may be unreachable);
+		// we just verify the method validation doesn't reject these.
+		_, err := app.PluginFetch("p", PluginFetchInput{URL: "https://example.com", Method: m})
+		// Network errors are fine — we're only checking that the METHOD was
+		// not rejected. A method-rejection returns a formatting error, not a
+		// network error. Distinguish by checking for the allowlist message.
+		if err != nil && strings.Contains(err.Error(), "is not allowed") {
+			t.Fatalf("method %q should be allowed", m)
+		}
+	}
+}
+
+// PluginFetch rejects an oversized request body.
+func TestPluginFetch_RejectsOversizedRequestBody(t *testing.T) {
+	app := newTestApp(t)
+	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
+	bigBody := strings.Repeat("x", int(maxPluginFetchRequestBytes)+1)
+	_, err := app.PluginFetch("p", PluginFetchInput{
+		URL:    "https://example.com",
+		Method: "POST",
+		Body:   bigBody,
+	})
+	if err == nil {
+		t.Fatal("expected rejection of oversized request body")
 	}
 }

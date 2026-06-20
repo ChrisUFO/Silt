@@ -112,7 +112,7 @@ export async function loadPlugins(
   loadedPlugins.plugins = plugins
   loadedPlugins.errors = errors
 
-  wireLifecycleOnce(plugins)
+  wireLifecycleOnce()
 
   return { plugins, errors }
 }
@@ -125,13 +125,18 @@ export async function loadPlugins(
  *   - window beforeunload → run onShutdown (the reliable frontend signal that
  *     the app is exiting; the Go OnShutdown may fire after IPC is gone).
  * Idempotent across repeated loadPlugins calls (lifecycleWired guard).
+ *
+ * IMPORTANT: the closures read loadedPlugins.plugins (the reactive store) at
+ * fire time, NOT the plugins parameter captured at first call. A plugin
+ * installed after the first loadPlugins call still receives onVaultClose /
+ * onShutdown on the next vault close.
  */
-function wireLifecycleOnce(plugins: Map<string, RegisteredPlugin>) {
+function wireLifecycleOnce() {
   if (lifecycleWired) return
   lifecycleWired = true
 
   EventsOn('vault:closing', () => {
-    for (const reg of plugins.values()) {
+    for (const reg of loadedPlugins.plugins.values()) {
       try {
         reg.onVaultClose?.()
       } catch (err) {
@@ -139,10 +144,16 @@ function wireLifecycleOnce(plugins: Map<string, RegisteredPlugin>) {
         console.error(`[silt] onVaultClose for ${reg.manifest.id} threw:`, err)
       }
     }
-    // Drop every plugin's event-bus subscriptions so a stale listener cannot
+    // Per-plugin event-bus cleanup before the global clear, so every
+    // plugin's subscriptions get deterministic teardown even if a plugin
+    // was removed by a path that bypassed teardownPlugin.
+    for (const reg of loadedPlugins.plugins.values()) {
+      cleanupPlugin(reg.manifest.id)
+    }
+    // Drop any remaining event-bus subscriptions so a stale listener cannot
     // fire against the next vault (#106).
     clearAllSubscribers()
-    for (const reg of plugins.values()) {
+    for (const reg of loadedPlugins.plugins.values()) {
       try {
         reg.onShutdown?.()
       } catch (err) {
@@ -156,7 +167,7 @@ function wireLifecycleOnce(plugins: Map<string, RegisteredPlugin>) {
   })
 
   window.addEventListener('beforeunload', () => {
-    for (const reg of plugins.values()) {
+    for (const reg of loadedPlugins.plugins.values()) {
       try {
         reg.onShutdown?.()
       } catch {

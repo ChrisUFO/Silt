@@ -120,9 +120,12 @@
   function handleRequest(ev: MessageEvent) {
     const msg = ev.data
     if (!msg || msg.__siltSurface !== 'request') return
-    // Only handle requests from our iframe (best-effort origin check; the
-    // sandbox attribute already prevents same-origin access).
+    // Only handle requests from our iframe. The sandbox="allow-scripts"
+    // (without allow-same-origin) makes the iframe report 'null' as its
+    // origin. Check both the source window and the origin for defense-in-
+    // depth: a future refactor to a real src URL would widen the origin.
     if (iframeEl && ev.source !== iframeEl.contentWindow) return
+    if (ev.origin !== 'null' && ev.origin !== window.location.origin) return
 
     if (
       !allowedMethods.has(msg.method) ||

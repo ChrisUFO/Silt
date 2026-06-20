@@ -4713,9 +4713,10 @@ func (a *App) emitPluginsChanged() {
 // frontend registry (frontend/src/plugins/registry.ts); Phase 5 appends
 // "silt-attachments".
 var firstPartyPluginIDs = map[string]bool{
-	"silt-agenda":   true,
-	"silt-calendar": true,
-	"silt-kanban":   true,
+	"silt-agenda":      true,
+	"silt-calendar":    true,
+	"silt-kanban":      true,
+	"silt-attachments": true,
 }
 
 // isFirstPartyPlugin reports whether pluginID is a bundled (trusted) plugin.

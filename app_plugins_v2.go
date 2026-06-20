@@ -141,6 +141,14 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 		notebook  string
 		section   string
 		page      string
+		// For cross-page moves: the block's original location before the
+		// target overwrite. Preserved so the second pass can find/remove it
+		// from the source page, and so the first pass can fetch the block's
+		// content for insertion into the target.
+		origSource  string
+		origNotebook string
+		origSection  string
+		origPage     string
 		newID     string
 		blockType parser.BlockType
 		text      string
@@ -149,6 +157,9 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 
 	// Resolve block locations for afterID / blockID lookups.
 	locOf := func(id string) (source, nb, sec, pg string, ok bool) {
+		if a.db == nil {
+			return "", "", "", "", false
+		}
 		var loc struct{ s, n, se, p string }
 		var e error
 		a.coordinator.WithDBReadResult(func() error {
@@ -202,6 +213,7 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 				return fmt.Errorf("op %d: block %s not found", i, op.BlockID)
 			}
 			r.source, r.notebook, r.section, r.page = s, n, se, p
+			r.origSource, r.origNotebook, r.origSection, r.origPage = s, n, se, p
 			if op.Kind == "move" && (op.Notebook != "" || op.Section != "" || op.Page != "") {
 				// Cross-page move: target is the explicit page.
 				tn := sanitizePathSegment(op.Notebook)
@@ -236,6 +248,14 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 	// 3. Apply per page (deterministic order).
 	for _, pk := range pageKeys {
 		pageOps := pagesByKey[pk]
+		// Sort within-page ops by kind (delete → move → create) so the
+		// mutation order is deterministic regardless of input order. This
+		// prevents a footgun where [create-after-A, move-A, delete-A] would
+		// behave differently under re-ordering (#104 hardening).
+		opOrder := map[string]int{"delete": 0, "move": 1, "create": 2}
+		sort.SliceStable(pageOps, func(i, j int) bool {
+			return opOrder[pageOps[i].op.Kind] < opOrder[pageOps[j].op.Kind]
+		})
 		first := pageOps[0]
 		blocks, err := a.FetchPageBlocks(first.notebook, first.section, first.page)
 		if err != nil {
@@ -257,8 +277,30 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 			case "delete":
 				mutated = removeByID(mutated, r.op.BlockID)
 			case "move":
-				// If same-page move, reorder; the block is already in `mutated`.
-				if r.op.AfterID != "" || r.op.BlockID != "" {
+				// Same-page move: the block is already in `mutated`, just reorder.
+				// Cross-page move: the block lives in the SOURCE page, not in
+				// `mutated` (the target page). Fetch it from source and insert.
+				isCrossPage := r.origNotebook != "" &&
+					(r.origNotebook != r.notebook ||
+						r.origSection != r.section ||
+						r.origPage != r.page)
+				if isCrossPage {
+					srcBlocks, srcErr := a.FetchPageBlocks(r.origNotebook, r.origSection, r.origPage)
+					if srcErr != nil {
+						return fmt.Errorf("cross-page move: fetch source page for block %s: %w", r.op.BlockID, srcErr)
+					}
+					found := false
+					for _, b := range srcBlocks {
+						if b.ID == r.op.BlockID {
+							mutated = insertAfter(mutated, r.op.AfterID, b)
+							found = true
+							break
+						}
+					}
+					if !found {
+						return fmt.Errorf("cross-page move: block %s not found in source page %s/%s/%s", r.op.BlockID, r.origNotebook, r.origSection, r.origPage)
+					}
+				} else if r.op.AfterID != "" || r.op.BlockID != "" {
 					mutated = moveWithin(mutated, r.op.BlockID, r.op.AfterID)
 				}
 			}
@@ -266,48 +308,51 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 		if err := a.SaveFileBlocks(first.notebook, first.section, first.page, mutated); err != nil {
 			return fmt.Errorf("save page %s/%s/%s: %w", first.notebook, first.section, first.page, err)
 		}
-	// For cross-page moves, remove the block from its source page too.
-	// The entire read-parse-filter-write happens under LockFileWrite on the
-	// source file so two concurrent moves off the same page cannot race
-	// (TOCTOU: one move's stale snapshot would re-introduce a block the
-	// other move just removed). Errors are NOT swallowed — a failed
-	// source-removal would leave the block duplicated, so we surface it
-	// (#104 hardening).
+	// For cross-page moves, remove the block from its source page.
+	//
+	// The source-page block list is read from the DB (FetchPageBlocks), NOT
+	// from the file. The first-pass SaveFileBlocks already re-indexed the
+	// moved block into the TARGET page, so the DB no longer lists it under
+	// the source page. Reading the file instead would see stale content
+	// (the file hasn't been rewritten yet) and IndexFileBlocks would
+	// re-insert the block under the source page, stealing it back from the
+	// target — silent data loss under concurrency.
+	//
+	// LockFileWrite serializes concurrent source-page writes so the file
+	// never has a torn write. Errors are NOT swallowed — a failed
+	// source-removal would leave the block duplicated.
 	for _, r := range pageOps {
-		if r.op.Kind == "move" {
-			origSource, origNb, origSec, origPg, ok := locOf(r.op.BlockID)
-			if ok && origPg != "" && !(origNb == r.notebook && origSec == r.section && origPg == r.page) {
-				sn := sanitizePathSegment(origNb)
-				ss := sanitizePathSegment(origSec)
-				sp := sanitizePathSegment(origPg)
-				origDir, dirErr := a.resolveNotebookDir(sn, origSource)
-				if dirErr != nil {
-					return fmt.Errorf("cross-page move: resolve source dir %s: %w", sn, dirErr)
-				}
-				origPath := filepath.Join(origDir, ss, sp+".md")
-				if !isPathWithinRoot(origPath, origDir) {
-					return fmt.Errorf("cross-page move: source path escapes notebook root")
-				}
-				var srcErr error
-				a.coordinator.LockFileWrite(origPath, func() {
-					content, readErr := os.ReadFile(origPath)
-					if readErr != nil && !os.IsNotExist(readErr) {
-						srcErr = fmt.Errorf("cross-page move: read source %s/%s/%s: %w", sn, ss, sp, readErr)
-						return
-					}
-					parsed, _, _, _, parseErr := parser.ParseFileContent(string(content), sn, ss, sp, fileOrDefaultDate(origPath), a.spacesPerTab)
-					if parseErr != nil {
-						srcErr = fmt.Errorf("cross-page move: parse source %s/%s/%s: %w", sn, ss, sp, parseErr)
-						return
-					}
-					filtered := removeByID(parsed, r.op.BlockID)
-					if writeErr := a.writePageFileLocked(origPath, origSource, sn, ss, sp, filtered); writeErr != nil {
-						srcErr = fmt.Errorf("cross-page move: save source %s/%s/%s: %w", sn, ss, sp, writeErr)
-					}
-				})
-				if srcErr != nil {
-					return srcErr
-				}
+		if r.op.Kind == "move" && r.origNotebook != "" &&
+			(r.origNotebook != r.notebook ||
+				r.origSection != r.section ||
+				r.origPage != r.page) {
+			sn := sanitizePathSegment(r.origNotebook)
+			ss := sanitizePathSegment(r.origSection)
+			sp := sanitizePathSegment(r.origPage)
+			origDir, dirErr := a.resolveNotebookDir(sn, r.origSource)
+			if dirErr != nil {
+				return fmt.Errorf("cross-page move: resolve source dir %s: %w", sn, dirErr)
+			}
+			origPath := filepath.Join(origDir, ss, sp+".md")
+			if !isPathWithinRoot(origPath, origDir) {
+				return fmt.Errorf("cross-page move: source path escapes notebook root")
+			}
+			// Read the CURRENT source-page blocks from the DB. The moved
+			// block is already absent (first-pass SaveFileBlocks re-indexed
+			// it to the target page), so filtering is typically a no-op.
+			// This prevents a stale file read from re-introducing blocks
+			// that concurrent moves already relocated.
+			srcBlocks, srcErr := a.FetchPageBlocks(sn, ss, sp)
+			if srcErr != nil {
+				return fmt.Errorf("cross-page move: fetch source %s/%s/%s: %w", sn, ss, sp, srcErr)
+			}
+			filtered := removeByID(srcBlocks, r.op.BlockID)
+			var writeErr error
+			a.coordinator.LockFileWrite(origPath, func() {
+				writeErr = a.writePageFileLocked(origPath, r.origSource, sn, ss, sp, filtered)
+			})
+			if writeErr != nil {
+				return fmt.Errorf("cross-page move: save source %s/%s/%s: %w", sn, ss, sp, writeErr)
 			}
 		}
 	}
@@ -480,19 +525,11 @@ func (a *App) PluginWriteFile(pluginID, notebook, relPath string, data []byte) e
 	if !pluginWritePathAllowed(pluginID, relPath) {
 		return fmt.Errorf("write path %q is outside the allowed directories (attachments/ or this plugin's scratch dir)", relPath)
 	}
-	// Enforce the scratch-dir cumulative cap before any disk I/O. attachments/
-	// writes are bounded by maxAttachmentBytes (100 MB per file, enforced in
-	// the coordinator) and the 100 MB attachment cap, so this check is only
-	// meaningful for the .system/plugins/<id>/ scratch tree.
-	if isPluginScratchRelPath(pluginID, relPath) {
-		used, sizeErr := pluginScratchSizeBytes(a, pluginID)
-		if sizeErr != nil {
-			return fmt.Errorf("check scratch usage: %w", sizeErr)
-		}
-		if used+int64(len(data)) > maxPluginScratchBytes {
-			return fmt.Errorf("scratch usage would exceed the %d-byte per-plugin cap (currently %d bytes, +%d bytes)", maxPluginScratchBytes, used, len(data))
-		}
-	}
+	// Enforce the scratch-dir cumulative cap inside the file write lock so
+	// two concurrent writes from the same plugin cannot both pass the check
+	// and exceed the cap (TOCTOU). attachments/ writes are bounded by
+	// maxAttachmentBytes (100 MB per file) and are exempt.
+	checkScratch := isPluginScratchRelPath(pluginID, relPath)
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return fmt.Errorf("create dir: %w", err)
 	}
@@ -500,6 +537,17 @@ func (a *App) PluginWriteFile(pluginID, notebook, relPath string, data []byte) e
 	defer a.wg.Done()
 	var writeErr error
 	a.coordinator.LockFileWrite(abs, func() {
+		if checkScratch {
+			used, sizeErr := pluginScratchSizeBytes(a, pluginID)
+			if sizeErr != nil {
+				writeErr = fmt.Errorf("check scratch usage: %w", sizeErr)
+				return
+			}
+			if used+int64(len(data)) > maxPluginScratchBytes {
+				writeErr = fmt.Errorf("scratch usage would exceed the %d-byte per-plugin cap (currently %d bytes, +%d bytes)", maxPluginScratchBytes, used, len(data))
+				return
+			}
+		}
 		a.tracker.RegisterWrite(abs)
 		writeErr = parser.WriteFileAtomic(abs, data)
 	})
@@ -1054,6 +1102,11 @@ func notifyDesktop(title, body string) error {
 // in-depth memory guard, mirroring maxPluginQueryRows).
 const maxPluginFetchBytes = 10 * 1024 * 1024 // 10 MB
 
+// maxPluginFetchRequestBytes bounds the request body a plugin can send through
+// the fetch proxy, mirroring the response-side cap. Without this, a plugin can
+// pass a multi-hundred-megabyte string and force the host to allocate it.
+const maxPluginFetchRequestBytes = 10 * 1024 * 1024 // 10 MB
+
 // isForbiddenPluginHeader reports whether a (lower-cased) header name must
 // NOT be settable by a plugin. These headers are controlled by the transport
 // layer or carry security-sensitive semantics:
@@ -1088,10 +1141,11 @@ const defaultPluginFetchTimeout = 30 * time.Second
 
 // PluginFetchResult is the envelope returned by PluginFetch.
 type PluginFetchResult struct {
-	Status  int               `json:"status"`
-	Headers map[string]string `json:"headers"`
-	Body    string            `json:"body"` // raw body (may be truncated to maxPluginFetchBytes)
-	Ok      bool              `json:"ok"`
+	Status    int               `json:"status"`
+	Headers   map[string]string `json:"headers"`
+	Body      string            `json:"body"` // raw body (may be truncated to maxPluginFetchBytes)
+	Ok        bool              `json:"ok"`
+	Truncated bool              `json:"truncated"` // true when body exceeded maxPluginFetchBytes
 }
 
 // PluginFetchInput is the request envelope for PluginFetch.
@@ -1137,6 +1191,11 @@ func (a *App) PluginFetch(pluginID string, input PluginFetchInput) (PluginFetchR
 	if method == "" {
 		method = "GET"
 	}
+	switch method {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD":
+	default:
+		return PluginFetchResult{}, fmt.Errorf("HTTP method %q is not allowed (recognized: GET, POST, PUT, PATCH, DELETE, HEAD)", method)
+	}
 	timeout := defaultPluginFetchTimeout
 	if input.Timeout > 0 {
 		requested := time.Duration(input.Timeout) * time.Millisecond
@@ -1149,6 +1208,9 @@ func (a *App) PluginFetch(pluginID string, input PluginFetchInput) (PluginFetchR
 
 	var reqBody io.Reader
 	if input.Body != "" {
+		if int64(len(input.Body)) > maxPluginFetchRequestBytes {
+			return PluginFetchResult{}, fmt.Errorf("request body exceeds %d-byte cap", maxPluginFetchRequestBytes)
+		}
 		reqBody = strings.NewReader(input.Body)
 	}
 	req, err := http.NewRequest(method, input.URL, reqBody)
@@ -1176,8 +1238,10 @@ func (a *App) PluginFetch(pluginID string, input PluginFetchInput) (PluginFetchR
 		a.auditNetwork(pluginID, method, input.URL, resp.StatusCode)
 		return PluginFetchResult{}, fmt.Errorf("read body: %w", err)
 	}
+	truncated := false
 	if int64(len(body)) > maxPluginFetchBytes {
 		body = body[:maxPluginFetchBytes]
+		truncated = true
 	}
 
 	headers := make(map[string]string, len(resp.Header))
@@ -1190,10 +1254,11 @@ func (a *App) PluginFetch(pluginID string, input PluginFetchInput) (PluginFetchR
 	a.auditNetwork(pluginID, method, input.URL, resp.StatusCode)
 
 	return PluginFetchResult{
-		Status:  resp.StatusCode,
-		Headers: headers,
-		Body:    string(body),
-		Ok:      resp.StatusCode >= 200 && resp.StatusCode < 300,
+		Status:    resp.StatusCode,
+		Headers:   headers,
+		Body:      string(body),
+		Ok:        resp.StatusCode >= 200 && resp.StatusCode < 300,
+		Truncated: truncated,
 	}, nil
 }
 
@@ -1284,6 +1349,7 @@ const maxAttachmentBytes = 100 * 1024 * 1024 // 100 MB
 var blockedAttachmentExtensions = map[string]bool{
 	".exe": true, ".bat": true, ".cmd": true, ".com": true, ".scr": true,
 	".sh": true, ".msi": true, ".dll": true, ".app": true,
+	".ps1": true, ".vbs": true, ".wsf": true, ".hta": true,
 }
 
 func (a *App) AddAttachment(srcPath, notebook string) (string, error) {
@@ -1345,6 +1411,13 @@ func (a *App) AddAttachment(srcPath, notebook string) (string, error) {
 	// never resolve to the same path and clobber each other (the previous
 	// Stat-then-write loop had a TOCTOU window). The placeholder is filled by
 	// the atomic write below; the OS guarantees only one caller wins a name.
+	//
+	// Known limitation: the O_EXCL creates a zero-byte file that briefly
+	// exists on disk before WriteFileAtomic fills it. A concurrent reader
+	// (e.g. the file watcher) could observe the empty file. The window is
+	// sub-millisecond, the file is inside the vault's attachments/ dir, and
+	// the watcher skips attachments/. A temp-then-rename approach would close
+	// the window but adds cross-filesystem rename complexity.
 	destExt := filepath.Ext(base)
 	stem := strings.TrimSuffix(base, destExt)
 	destName := base
