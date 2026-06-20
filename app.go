@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	goruntime "runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -1840,16 +1841,27 @@ func splitFrontmatter(content string) (frontmatter, body string) {
 // root. Generalized from the vault-only check for #100: callers pass the
 // resolved notebook root (vault root, an in-vault notebook dir, or a linked
 // notebook root) so the same traversal guard covers external notebooks.
-// Both paths are cleaned and made absolute before comparison so that `..`
-// segments in the joined path are resolved before the check.
+//
+// Both paths are cleaned, made absolute, and resolved through EvalSymlinks
+// (mirroring backend/plugins/installer.go:isWithin) so a symlink planted
+// inside a notebook that points outside it cannot mask an escape. The
+// comparison is case-insensitive on Windows where the filesystem itself is
+// case-insensitive. EvalSymlinks errors (e.g. non-existent target during
+// construction) fall back to the lexical form.
 func isPathWithinRoot(target, root string) bool {
-	absTarget, err := filepath.Abs(target)
+	absTarget, err := filepath.Abs(filepath.Clean(target))
 	if err != nil {
 		return false
 	}
-	absRoot, err := filepath.Abs(root)
+	absRoot, err := filepath.Abs(filepath.Clean(root))
 	if err != nil {
 		return false
+	}
+	if resolved, err := filepath.EvalSymlinks(absTarget); err == nil {
+		absTarget = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
+		absRoot = resolved
 	}
 	absTarget = filepath.Clean(absTarget)
 	absRoot = filepath.Clean(absRoot)
@@ -1857,6 +1869,9 @@ func isPathWithinRoot(target, root string) bool {
 		return true
 	}
 	prefix := absRoot + string(os.PathSeparator)
+	if goruntime.GOOS == "windows" {
+		return strings.HasPrefix(strings.ToLower(absTarget), strings.ToLower(prefix))
+	}
 	return strings.HasPrefix(absTarget, prefix)
 }
 
@@ -2968,6 +2983,49 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 // With the per-day file model removed, a page is a single file. Each block
 // carries its own file_date. The notebook's source is resolved server-side
 // from its (globally-unique) name (#100).
+// writePageFileLocked reads the existing file content, renders the new block
+// list through the single serializer (preserving unmanaged lines), writes
+// atomically, and re-indexes in SQLite. The caller MUST already hold
+// LockFileWrite for filePath — this method does NOT acquire the per-file lock
+// (it would deadlock against a re-entrant LockFileWrite on the same path).
+// Extracted from SaveFileBlocks so the cross-page source-removal path in
+// applyBlocksOps can do an atomic read-parse-filter-write under a single
+// LockFileWrite scope (#104 TOCTOU fix).
+func (a *App) writePageFileLocked(filePath, source, notebook, section, page string, blocks []parser.ParsedBlock) error {
+	contentBytes, err := os.ReadFile(filePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read existing file: %w", err)
+	}
+
+	frontmatter, body := splitFrontmatter(string(contentBytes))
+
+	if frontmatter == "" {
+		today := time.Now().Format("2006-01-02")
+		frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(notebook), strconv.Quote(section), strconv.Quote(page), strconv.Quote(today))
+		body = string(contentBytes)
+	}
+
+	newContent := parser.RenderFileContent(blocks, body, frontmatter, a.spacesPerTab)
+
+	a.tracker.RegisterWrite(filePath)
+
+	if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+		return err
+	}
+
+	parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab)
+	if err == nil {
+		var idxErr error
+		a.coordinator.WithDBWrite(func() {
+			idxErr = a.db.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta.Tags, meta.Warnings...)
+		})
+		if idxErr != nil {
+			log.Printf("writePageFileLocked: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
+		}
+	}
+	return nil
+}
+
 func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.ParsedBlock) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -3018,47 +3076,7 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 	var writeErr error
 	a.coordinator.LockBlocksWrite(blockIDs, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
-			contentBytes, err := os.ReadFile(filePath)
-			if err != nil && !os.IsNotExist(err) {
-				writeErr = fmt.Errorf("failed to read existing file: %w", err)
-				return
-			}
-
-			// Split frontmatter from body. The body (frontmatter stripped) is
-			// handed to RenderFileContent so it can preserve unmanaged lines
-			// (code fences, blanks, prose) in their relative position to the
-			// managed blocks. The frontmatter is emitted verbatim; if the file
-			// had none, synthesize the default so the note stays self-describing.
-			frontmatter, body := splitFrontmatter(string(contentBytes))
-
-			if frontmatter == "" {
-				today := time.Now().Format("2006-01-02")
-				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(today))
-				body = string(contentBytes)
-			}
-
-			// RenderFileContent is the single serializer: it assigns any missing
-			// block IDs, weaves preserved unmanaged lines around the managed
-			// blocks, and emits the canonical per-block format.
-			newContent := parser.RenderFileContent(blocks, body, frontmatter, a.spacesPerTab)
-
-			a.tracker.RegisterWrite(filePath)
-
-			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
-				writeErr = err
-				return
-			}
-
-			parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab)
-			if err == nil {
-				var idxErr error
-				a.coordinator.WithDBWrite(func() {
-					idxErr = a.db.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta.Tags, meta.Warnings...)
-				})
-				if idxErr != nil {
-					log.Printf("SaveFileBlocks: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
-				}
-			}
+			writeErr = a.writePageFileLocked(filePath, source, safeNotebook, safeSection, safePage, blocks)
 		})
 	}) // LockBlocksWrite
 
@@ -4889,16 +4907,14 @@ func enforceMinVersion(minSiltVersion string) error {
 //     plugins cannot match a trust list, which is the correct
 //     defense-in-depth default).
 //
-// The function is fail-closed for any I/O error reading settings: a vault
+// The function is fail-open for any I/O error reading settings: a vault
 // whose settings cannot be read is treated as if the trust list is empty
-// (a transient settings read error must not brick plugin installs).
+// (a transient settings read error must not brick plugin installs). The
+// error is logged at warn level so the user can investigate.
 func enforcePublisherTrust(author string) error {
 	settings, err := vault.LoadSettings()
 	if err != nil {
-		// Fail-open on settings read errors so a transient I/O issue cannot
-		// brick plugin installs. The error is logged so a future PR can
-		// surface it in the UI; for now the contract is "load failure =
-		// behave as if no trust list is configured".
+		log.Printf("enforcePublisherTrust: settings read failed — temporarily allowing all authors: %v", err)
 		return nil
 	}
 	trusted := settings.TrustedPublishers

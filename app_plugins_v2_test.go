@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -535,4 +536,174 @@ func contains(slice []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// =========================================================================
+// TOCTOU: concurrent cross-page moves (#104 review fix)
+// =========================================================================
+
+// Two concurrent PluginMoveBlock calls removing DIFFERENT blocks from the
+// same source page must not re-introduce a block the other call removed.
+// Before the fix, the source-page read (FetchPageBlocks) was outside the
+// per-file lock, so the second writer's stale snapshot overwrote the first
+// writer's removal. Now both the read and write happen under LockFileWrite
+// on the source file.
+func TestPluginMoveBlock_ConcurrentCrossPageNoClobber(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, srcPage := "Work", "Journal", "Source"
+	dstPage1, dstPage2 := "Dest1", "Dest2"
+	srcPath := filepath.Join(app.vaultPath, notebook, section, srcPage+".md")
+	dst1Path := filepath.Join(app.vaultPath, notebook, section, dstPage1+".md")
+	dst2Path := filepath.Join(app.vaultPath, notebook, section, dstPage2+".md")
+
+	blockA := "11111111-1111-1111-1111-111111111111"
+	blockB := "22222222-2222-2222-2222-222222222222"
+	blockC := "33333333-3333-3333-3333-333333333333"
+
+	srcContent := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Source\"\ndate: \"2026-06-13\"\ntags: []\n---\n" +
+		"- [ ] alpha <!-- id: " + blockA + " -->\n" +
+		"- [ ] beta <!-- id: " + blockB + " -->\n" +
+		"- [ ] gamma <!-- id: " + blockC + " -->\n"
+	writeAndIndexFile(t, app, srcPath, srcContent, notebook, section, srcPage)
+
+	dst1Content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Dest1\"\ndate: \"2026-06-13\"\ntags: []\n---\n- [ ] dst1-anchor <!-- id: dddddddd-dddd-dddd-dddd-dddddddddddd -->\n"
+	writeAndIndexFile(t, app, dst1Path, dst1Content, notebook, section, dstPage1)
+
+	dst2Content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Dest2\"\ndate: \"2026-06-13\"\ntags: []\n---\n- [ ] dst2-anchor <!-- id: eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee -->\n"
+	writeAndIndexFile(t, app, dst2Path, dst2Content, notebook, section, dstPage2)
+
+	var wg sync.WaitGroup
+	var err1, err2 error
+	const rounds = 20
+	for i := 0; i < rounds; i++ {
+		// Reset source page each round.
+		writeAndIndexFile(t, app, srcPath, srcContent, notebook, section, srcPage)
+
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			err1 = app.PluginMoveBlock(blockA, "", notebook, section, dstPage1)
+		}()
+		go func() {
+			defer wg.Done()
+			err2 = app.PluginMoveBlock(blockB, "", notebook, section, dstPage2)
+		}()
+		wg.Wait()
+
+		if err1 != nil {
+			t.Fatalf("round %d: move A failed: %v", i, err1)
+		}
+		if err2 != nil {
+			t.Fatalf("round %d: move B failed: %v", i, err2)
+		}
+
+		// After both moves, the source page must have exactly ONE block (C).
+		srcBlocks, _ := app.FetchPageBlocks(notebook, section, srcPage)
+		if len(srcBlocks) != 1 {
+			srcIDs := make([]string, len(srcBlocks))
+			for j, b := range srcBlocks {
+				srcIDs[j] = b.ID
+			}
+			t.Fatalf("round %d: source page should have 1 block (C), got %d: %v", i, len(srcBlocks), srcIDs)
+		}
+		if srcBlocks[0].ID != blockC {
+			t.Fatalf("round %d: remaining source block should be C, got %s", i, srcBlocks[0].ID)
+		}
+	}
+}
+
+// =========================================================================
+// PluginListNavigation capability gate (#104 review fix)
+// =========================================================================
+
+// PluginListNavigation is denied without a read-files grant.
+func TestPluginListNavigation_DeniedWithoutGrant(t *testing.T) {
+	app := newTestApp(t)
+	_, err := app.PluginListNavigation("third-party")
+	if err == nil {
+		t.Fatal("expected capability denial without read-files grant")
+	}
+}
+
+// PluginListNavigation succeeds after a read-files grant.
+func TestPluginListNavigation_GrantThenList(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "Work", "Journal", "Daily"
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n- [ ] task <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n"
+	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
+
+	if err := app.RequestCapability("third-party", string(plugins.CapReadFiles), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	tree, err := app.PluginListNavigation("third-party")
+	if err != nil {
+		t.Fatalf("PluginListNavigation: %v", err)
+	}
+	found := false
+	for _, nb := range tree.Notebooks {
+		if nb.Name == notebook {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected notebook %q in navigation tree, got %d notebooks", notebook, len(tree.Notebooks))
+	}
+}
+
+// =========================================================================
+// PluginFetch forbidden-header denylist (#115 review fix)
+// =========================================================================
+
+// PluginFetch rejects caller-supplied headers that are controlled by the
+// transport layer (Host, Connection, Content-Length, Transfer-Encoding,
+// Proxy-*, Sec-*, Cookie, Authorization).
+func TestPluginFetch_RejectsForbiddenHeaders(t *testing.T) {
+	app := newTestApp(t)
+	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
+
+	dangerous := []string{
+		"Host", "Connection", "Content-Length", "Transfer-Encoding",
+		"Cookie", "Authorization", "Proxy-Authorization",
+		"Sec-Fetch-Mode", "X-Forwarded-For",
+	}
+	for _, h := range dangerous {
+		_, err := app.PluginFetch("p", PluginFetchInput{
+			URL:     "https://example.com",
+			Headers: map[string]string{h: "evil"},
+		})
+		if err == nil {
+			t.Fatalf("expected rejection of forbidden header %q", h)
+		}
+	}
+}
+
+// =========================================================================
+// isPathWithinRoot symlink resolution (#100 review fix)
+// =========================================================================
+
+// isPathWithinRoot rejects a symlink inside the root that points outside it.
+func TestIsPathWithinRoot_RejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	target := filepath.Join(outside, "secret.md")
+	if err := os.WriteFile(target, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(root, "escape.md")
+	if err := os.Symlink(target, linkPath); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+	if isPathWithinRoot(linkPath, root) {
+		t.Fatal("symlink pointing outside root should be rejected")
+	}
+	// A legitimate file inside the root is still allowed.
+	legit := filepath.Join(root, "note.md")
+	if err := os.WriteFile(legit, []byte("ok"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !isPathWithinRoot(legit, root) {
+		t.Fatal("regular file inside root should be allowed")
+	}
 }

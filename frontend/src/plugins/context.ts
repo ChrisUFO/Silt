@@ -34,7 +34,7 @@ import {
   PluginResolveAsset,
   PluginVaultScratchDir,
   PluginReadPluginAsset,
-  ListNavigation,
+  PluginListNavigation,
   GetNetworkAudit,
   ClearNetworkAudit
 } from '../../wailsjs/go/main/App.js'
@@ -249,7 +249,7 @@ export function makePluginContext(pluginID: string): PluginContext {
       PluginResolveAsset(pluginID, notebook, relPath),
     readPluginAsset: (relPath) => PluginReadPluginAsset(pluginID, relPath),
     getNavigationTree: () =>
-      ListNavigation().then((tree) => tree ?? { notebooks: [] }),
+      PluginListNavigation(pluginID).then((tree) => tree ?? { notebooks: [] }),
     // --- OS integration (#114) — capability-gated ---------------------------
     openInNativeHandler: (notebook, relPath) =>
       PluginOpenInNativeHandler(pluginID, notebook, relPath).then(() => true),

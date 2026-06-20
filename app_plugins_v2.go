@@ -266,24 +266,51 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 		if err := a.SaveFileBlocks(first.notebook, first.section, first.page, mutated); err != nil {
 			return fmt.Errorf("save page %s/%s/%s: %w", first.notebook, first.section, first.page, err)
 		}
-		// For cross-page moves, remove the block from its source page too.
-		// Errors are NOT swallowed — a failed source-removal would leave the
-		// block duplicated, so we surface it (#104 hardening).
-		for _, r := range pageOps {
-			if r.op.Kind == "move" {
-				_, origNb, origSec, origPg, ok := locOf(r.op.BlockID)
-				if ok && origPg != "" && !(origNb == r.notebook && origSec == r.section && origPg == r.page) {
-					srcBlocks, srcErr := a.FetchPageBlocks(origNb, origSec, origPg)
-					if srcErr != nil {
-						return fmt.Errorf("cross-page move: fetch source %s/%s/%s: %w", origNb, origSec, origPg, srcErr)
+	// For cross-page moves, remove the block from its source page too.
+	// The entire read-parse-filter-write happens under LockFileWrite on the
+	// source file so two concurrent moves off the same page cannot race
+	// (TOCTOU: one move's stale snapshot would re-introduce a block the
+	// other move just removed). Errors are NOT swallowed — a failed
+	// source-removal would leave the block duplicated, so we surface it
+	// (#104 hardening).
+	for _, r := range pageOps {
+		if r.op.Kind == "move" {
+			origSource, origNb, origSec, origPg, ok := locOf(r.op.BlockID)
+			if ok && origPg != "" && !(origNb == r.notebook && origSec == r.section && origPg == r.page) {
+				sn := sanitizePathSegment(origNb)
+				ss := sanitizePathSegment(origSec)
+				sp := sanitizePathSegment(origPg)
+				origDir, dirErr := a.resolveNotebookDir(sn, origSource)
+				if dirErr != nil {
+					return fmt.Errorf("cross-page move: resolve source dir %s: %w", sn, dirErr)
+				}
+				origPath := filepath.Join(origDir, ss, sp+".md")
+				if !isPathWithinRoot(origPath, origDir) {
+					return fmt.Errorf("cross-page move: source path escapes notebook root")
+				}
+				var srcErr error
+				a.coordinator.LockFileWrite(origPath, func() {
+					content, readErr := os.ReadFile(origPath)
+					if readErr != nil && !os.IsNotExist(readErr) {
+						srcErr = fmt.Errorf("cross-page move: read source %s/%s/%s: %w", sn, ss, sp, readErr)
+						return
 					}
-					srcFiltered := removeByID(srcBlocks, r.op.BlockID)
-					if saveErr := a.SaveFileBlocks(origNb, origSec, origPg, srcFiltered); saveErr != nil {
-						return fmt.Errorf("cross-page move: save source %s/%s/%s: %w", origNb, origSec, origPg, saveErr)
+					parsed, _, _, _, parseErr := parser.ParseFileContent(string(content), sn, ss, sp, fileOrDefaultDate(origPath), a.spacesPerTab)
+					if parseErr != nil {
+						srcErr = fmt.Errorf("cross-page move: parse source %s/%s/%s: %w", sn, ss, sp, parseErr)
+						return
 					}
+					filtered := removeByID(parsed, r.op.BlockID)
+					if writeErr := a.writePageFileLocked(origPath, origSource, sn, ss, sp, filtered); writeErr != nil {
+						srcErr = fmt.Errorf("cross-page move: save source %s/%s/%s: %w", sn, ss, sp, writeErr)
+					}
+				})
+				if srcErr != nil {
+					return srcErr
 				}
 			}
 		}
+	}
 		for _, id := range createdIDs {
 			a.emitBlockChanged(id, first.notebook, first.section, first.page, "")
 		}
@@ -387,6 +414,19 @@ func (a *App) PluginResolveNotebookRoot(pluginID, notebook string) (string, erro
 		return "", err
 	}
 	return dir, nil
+}
+
+// PluginListNavigation returns the Notebook > Section > Page tree for a
+// plugin. Gated by read-files (the full vault tree reveals content shape:
+// notebook names, section names, page names, and per-page block counts —
+// a plugin with read-files already has file-listing access, so the tree is
+// the same info in structured form, not an escalation). A plugin without
+// the grant gets a CapabilityDeniedError.
+func (a *App) PluginListNavigation(pluginID string) (parser.NavigationTree, error) {
+	if err := a.requireGrant(pluginID, plugins.CapReadFiles); err != nil {
+		return parser.NavigationTree{}, err
+	}
+	return a.ListNavigation()
 }
 
 // PluginReadFile reads a file within a notebook (relative path, traversal-
@@ -1014,6 +1054,31 @@ func notifyDesktop(title, body string) error {
 // in-depth memory guard, mirroring maxPluginQueryRows).
 const maxPluginFetchBytes = 10 * 1024 * 1024 // 10 MB
 
+// isForbiddenPluginHeader reports whether a (lower-cased) header name must
+// NOT be settable by a plugin. These headers are controlled by the transport
+// layer or carry security-sensitive semantics:
+//   - Host / Connection / Content-Length / Transfer-Encoding: request
+//     smuggling vectors or would subvert the SSRF dial-time IP check.
+//   - Proxy-* / Sec-*: hop-by-hop or browser-fetch metadata that a plugin
+//     must not forge.
+//   - Cookie / Authorization: would let a plugin exfiltrate or reuse host
+//     credentials.
+func isForbiddenPluginHeader(lowerKey string) bool {
+	switch lowerKey {
+	case "host", "connection", "content-length", "transfer-encoding",
+		"cookie", "authorization", "proxy-authorization",
+		"x-forwarded-for", "x-forwarded-host", "x-forwarded-proto",
+		"x-real-ip",
+		"sec-fetch-mode", "sec-fetch-site", "sec-fetch-user", "sec-fetch-dest",
+		"sec-websocket-key", "sec-websocket-version":
+		return true
+	}
+	if strings.HasPrefix(lowerKey, "proxy-") || strings.HasPrefix(lowerKey, "sec-") {
+		return true
+	}
+	return false
+}
+
 // maxPluginFetchRedirects caps redirect hops so a plugin can't be tricked into
 // an infinite redirect loop.
 const maxPluginFetchRedirects = 5
@@ -1091,6 +1156,10 @@ func (a *App) PluginFetch(pluginID string, input PluginFetchInput) (PluginFetchR
 		return PluginFetchResult{}, fmt.Errorf("build request: %w", err)
 	}
 	for k, v := range input.Headers {
+		lk := strings.ToLower(k)
+		if isForbiddenPluginHeader(lk) {
+			return PluginFetchResult{}, fmt.Errorf("header %q is forbidden (controlled by the transport layer)", k)
+		}
 		req.Header.Set(k, v)
 	}
 
