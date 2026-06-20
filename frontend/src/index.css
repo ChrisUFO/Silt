@@ -38,37 +38,48 @@
   --color-on-secondary-fixed: #07006c;
   --color-secondary-fixed-dim: #c0c1ff;
 
-  /* Background scale — runtime overridable via theme injector. */
-  --color-void: var(--bg-void);
-  --color-surface: var(--bg-surface);
-  --color-panel: var(--bg-panel);
-  --color-hover: var(--bg-hover);
-  --color-active: var(--bg-active);
+  /*
+   * Semantic theme tokens — Cyber Forest dark as the STARTUP FALLBACK.
+   *
+   * These are the SINGLE source of truth for themeable colors (#146).
+   * The runtime theme injector (<style id="silt-theme">) overrides these
+   * same --color-* custom properties on :root at runtime, so Tailwind's
+   * generated utilities (bg-void, text-accent-primary-start, etc.) track
+   * the live theme with zero per-component changes. There is no separate
+   * unprefixed namespace and no bridge/alias layer.
+   */
 
-  /* Border scale — runtime overridable via theme injector. */
-  --color-border-muted: var(--border-muted);
-  --color-border-zinc: var(--border-zinc);
-  --color-border-active: var(--border-active);
-  --color-border-focus: var(--border-focus);
+  /* Background scale */
+  --color-void: #0c0c0e;
+  --color-surface: #121215;
+  --color-panel: #161619;
+  --color-hover: #1c1c21;
+  --color-active: #222226;
 
-  /* Text scale — runtime overridable via theme injector. */
-  --color-text-primary: var(--text-primary);
-  --color-text-muted: var(--text-muted);
-  --color-text-disabled: var(--text-disabled);
+  /* Border scale */
+  --color-border-muted: #1e1e23;
+  --color-border-zinc: #27272a;
+  --color-border-active: #3f3f46;
+  --color-border-focus: #52525b;
 
-  /* Accent Gradients & Tones (semantic: primary=teal, secondary=indigo).
-     Runtime overridable via theme injector. */
-  --color-accent-primary-start: var(--accent-primary-start);
-  --color-accent-primary-end: var(--accent-primary-end);
-  --color-accent-primary-glow: var(--accent-primary-glow);
-  --color-accent-secondary-start: var(--accent-secondary-start);
-  --color-accent-secondary-end: var(--accent-secondary-end);
-  --color-accent-secondary-glow: var(--accent-secondary-glow);
+  /* Text scale */
+  --color-text-primary: #dee3e6;
+  --color-text-muted: #8b8b94;
+  --color-text-disabled: #4b5563;
 
-  /* Status (semantic: warn/danger/success). */
-  --color-status-warn: var(--status-warn);
-  --color-status-danger: var(--status-danger);
-  --color-status-success: var(--status-success);
+  /* Accent Gradients & Tones (semantic: primary=teal, secondary=indigo) */
+  --color-accent-primary-start: #2dd4bf;
+  --color-accent-primary-end: #0d9488;
+  --color-accent-primary-glow: rgba(20, 184, 166, 0.15);
+  --color-accent-secondary-start: #6366f1;
+  --color-accent-secondary-end: #a855f7;
+  --color-accent-secondary-glow: rgba(168, 85, 247, 0.12);
+
+  /* Status (semantic: warn/danger/success). success has a fallback so
+     legacy themes without it still resolve (#165). */
+  --color-status-warn: #fbbf24;
+  --color-status-danger: #f43f5e;
+  --color-status-success: #22c55e;
 
   /* Spacing */
   --spacing-guide-offset: -12px;
@@ -81,41 +92,7 @@
   /* Transition timings */
   --transition-standard: cubic-bezier(0.16, 1, 0.3, 1);
 
-  /* Color Palette (Refined Cyber-Ink / Deep Dark Theme) */
-  --bg-void: #0c0c0e;
-  --bg-surface: #121215;
-  --bg-panel: #161619;
-  --bg-hover: #1c1c21;
-  --bg-active: #222226;
-
-  --border-muted: #1e1e23;
-  --border-zinc: #27272a;
-  --border-active: #3f3f46;
-  --border-focus: #52525b;
-
-  --text-primary: #dee3e6;
-  --text-muted: #8b8b94;
-  --text-disabled: #4b5563;
-
-  /* Accent Gradients & Tones (semantic: primary=teal, secondary=indigo).
-     These values are STARTUP FALLBACKS only; the runtime theme injector
-     (frontend/src/theme/inject.ts) overrides them on :root once the active
-     theme is resolved over IPC. Kept here so the first paint is correct
-     before the IPC round-trip completes. */
-  --accent-primary-start: #2dd4bf;
-  --accent-primary-end: #0d9488;
-  --accent-primary-glow: rgba(20, 184, 166, 0.15);
-
-  --accent-secondary-start: #6366f1;
-  --accent-secondary-end: #a855f7;
-  --accent-secondary-glow: rgba(168, 85, 247, 0.12);
-
-  /* Status tones (canonical token set). */
-  --status-warn: #fbbf24;
-  --status-danger: #f43f5e;
-  --status-success: #22c55e;
-
-  /* Task Priority Tones */
+  /* Task Priority Tones (not theme-driven; static) */
   --error: #ffb4ab;
   --error-bg: rgba(255, 180, 171, 0.08);
   --error-border: rgba(255, 180, 171, 0.2);
@@ -137,8 +114,8 @@
 
 html,
 body {
-  background-color: var(--bg-void);
-  color: var(--text-primary);
+  background-color: var(--color-void);
+  color: var(--color-text-primary);
   margin: 0;
   padding: 0;
   width: 100%;
@@ -199,14 +176,14 @@ body::before {
   height: 4px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--bg-void);
+  background: var(--color-void);
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border-muted);
+  background: var(--color-border-muted);
   border-radius: 2px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--border-active);
+  background: var(--color-border-active);
 }
 
 .custom-scrollbar::-webkit-scrollbar {
@@ -216,7 +193,7 @@ body::before {
   background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: var(--border-muted);
+  background: var(--color-border-muted);
 }
 
 /* Typography styles — font families resolve through the theme pipeline
@@ -267,7 +244,7 @@ body::before {
   top: 0;
   bottom: 0;
   width: 1px;
-  background-color: var(--border-muted);
+  background-color: var(--color-border-muted);
   transition: all 220ms var(--transition-standard);
 }
 
@@ -275,11 +252,11 @@ body::before {
   width: 1.5px;
   background: linear-gradient(
     to bottom,
-    var(--accent-primary-start),
-    var(--accent-primary-end)
+    var(--color-accent-primary-start),
+    var(--color-accent-primary-end)
   );
   box-shadow: 0 0 4px
-    color-mix(in srgb, var(--accent-primary-start) 40%, transparent);
+    color-mix(in srgb, var(--color-accent-primary-start) 40%, transparent);
 }
 
 /* Frosted glass palette style */
@@ -290,23 +267,23 @@ body::before {
 
 /* Custom checkbox states */
 .todo-check {
-  border: 1px solid var(--border-zinc);
+  border: 1px solid var(--color-border-zinc);
   transition: all 120ms var(--transition-standard);
   background-color: transparent;
 }
 .todo-check:hover {
-  border-color: var(--accent-primary-start);
-  box-shadow: 0 0 8px var(--accent-primary-glow);
+  border-color: var(--color-accent-primary-start);
+  box-shadow: 0 0 8px var(--color-accent-primary-glow);
 }
 
 .doing-check {
   border: 1px solid transparent;
   background:
-    linear-gradient(var(--bg-surface), var(--bg-surface)) padding-box,
+    linear-gradient(var(--color-surface), var(--color-surface)) padding-box,
     linear-gradient(
         to right,
-        var(--accent-secondary-start),
-        var(--accent-secondary-end)
+        var(--color-accent-secondary-start),
+        var(--color-accent-secondary-end)
       )
       border-box;
 }
@@ -316,9 +293,9 @@ body::before {
 }
 
 .done-check {
-  background-color: var(--accent-primary-glow);
+  background-color: var(--color-accent-primary-glow);
   border: 1px solid
-    color-mix(in srgb, var(--accent-primary-start) 30%, transparent);
+    color-mix(in srgb, var(--color-accent-primary-start) 30%, transparent);
 }
 
 /* Drag State Styling */
@@ -341,14 +318,14 @@ body::before {
   background: radial-gradient(
     circle at center,
     #131a18 0%,
-    var(--bg-void) 100%
+    var(--color-void) 100%
   );
   padding: 2rem;
 }
 
 .onboarding-card {
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-muted);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border-muted);
   border-radius: 12px;
   padding: 2.5rem;
   width: 100%;
@@ -356,7 +333,8 @@ body::before {
   text-align: center;
   box-shadow:
     0 20px 40px rgba(0, 0, 0, 0.5),
-    0 0 2px color-mix(in srgb, var(--accent-primary-start) 10%, transparent);
+    0 0 2px
+      color-mix(in srgb, var(--color-accent-primary-start) 10%, transparent);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -366,7 +344,7 @@ body::before {
 .onboarding-logo {
   width: 80px;
   height: 80px;
-  filter: drop-shadow(0 0 8px var(--accent-primary-glow));
+  filter: drop-shadow(0 0 8px var(--color-accent-primary-glow));
 }
 
 .onboarding-title {
@@ -376,15 +354,15 @@ body::before {
   margin: 0;
   background: linear-gradient(
     135deg,
-    var(--text-primary) 30%,
-    var(--accent-primary-start) 100%
+    var(--color-text-primary) 30%,
+    var(--color-accent-primary-start) 100%
   );
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
 .onboarding-description {
-  color: var(--text-muted);
+  color: var(--color-text-muted);
   font-size: 0.95rem;
   line-height: 1.5;
   margin: 0;
@@ -394,24 +372,24 @@ body::before {
 .onboarding-btn {
   background: linear-gradient(
     135deg,
-    var(--accent-primary-start) 0%,
-    var(--accent-primary-end) 100%
+    var(--color-accent-primary-start) 0%,
+    var(--color-accent-primary-end) 100%
   );
-  color: var(--bg-void);
+  color: var(--color-void);
   font-weight: 600;
   font-size: 0.95rem;
   border: none;
   padding: 0.8rem 1.75rem;
   border-radius: 8px;
   cursor: pointer;
-  box-shadow: 0 4px 12px var(--accent-primary-glow);
+  box-shadow: 0 4px 12px var(--color-accent-primary-glow);
   outline: none;
 }
 
 .onboarding-btn:hover {
   filter: brightness(1.1);
   box-shadow: 0 6px 16px
-    color-mix(in srgb, var(--accent-primary-start) 30%, transparent);
+    color-mix(in srgb, var(--color-accent-primary-start) 30%, transparent);
   transform: translateY(-1px);
 }
 
@@ -424,7 +402,7 @@ body::before {
   font-family: var(--editor-font-family);
   font-size: var(--editor-font-size);
   line-height: var(--editor-line-height);
-  color: var(--text-primary);
+  color: var(--color-text-primary);
   outline: none;
   min-height: 60px;
 }
@@ -484,7 +462,7 @@ body::before {
 .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   float: left;
-  color: var(--text-muted);
+  color: var(--color-text-muted);
   opacity: 0.5;
   pointer-events: none;
   height: 0;
@@ -492,12 +470,16 @@ body::before {
 
 /* Task blocks: DONE tasks get strikethrough + muted text. */
 .ProseMirror > div[data-type='task'][data-status='DONE'] {
-  color: var(--text-muted);
+  color: var(--color-text-muted);
   text-decoration: line-through;
   opacity: 0.7;
 }
 
 /* Selection highlight uses the theme accent. */
 .ProseMirror ::selection {
-  background: color-mix(in srgb, var(--accent-primary-start) 25%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--color-accent-primary-start) 25%,
+    transparent
+  );
 }

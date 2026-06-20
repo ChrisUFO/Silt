@@ -105,11 +105,11 @@ The canonical theme schema is modes-based (`modes.dark` / `modes.light`) with hu
 }
 
 
-**Token usage convention (when to reach for `--text-primary` vs `--accent-primary-*`).**
+**Token usage convention (when to reach for `--color-text-primary` vs `--accent-primary-*`).**
 The "Surgical Accents" doctrine above (accents are *signposts*, < 3% of the
 viewport) decides which token a given element binds to:
 
-- **`--text-primary`** → plain text chrome: wordmarks, headings, static labels,
+- **`--color-text-primary`** → plain text chrome: wordmarks, headings, static labels,
   and body copy. These must follow each theme's body-text hue so a theme switch
   is visibly perceptible everywhere text appears.
 - **`--accent-primary-*`** → signposts and interactive/selected state only:
@@ -121,7 +121,7 @@ The split matters because three first-class themes share **cool** accents
 like the wordmark or the active-notebook header is bound to the accent token,
 switching between those themes barely shifts its hue and the theme change reads
 as inert even though the palette swapped correctly (#138). Binding such
-elements to `--text-primary` surfaces each theme's distinct body-text color
+elements to `--color-text-primary` surfaces each theme's distinct body-text color
 (neutral white / warm oatmeal / cool blue-gray) in the most eye-catching chrome.
 The brand `<img>` logo (not the wordmark text) carries the brand identity; the
 accent token is never used as a decorative text color.
@@ -213,7 +213,7 @@ Custom checkbox rendering mimics the structural rounded-corner boundaries (rx="1
    │               │           │    └─────┘    │           │      \ /      │
    └───────────────┘           └───────────────┘           └───────────────┘
        Border: zinc-400            Border: indigo-500          Border: teal-500
-   BG: --bg-surface            BG: --bg-surface            BG: --accent-primary-glow
+   BG: --color-surface            BG: --color-surface            BG: --color-accent-primary-glow
                                Inside: secondary-grad      Inside: primary-check SVG
 
 
@@ -221,27 +221,27 @@ Token Rules
 
 Inactive State (TODO):
 
-Border: var(--border-zinc)
+Border: var(--color-border-zinc)
 
-Background: var(--bg-surface)
+Background: var(--color-surface)
 
 Hover Transition: border-color 150ms ease, box-shadow 150ms ease
 
-Hover Style: Border: var(--accent-primary-start), Glow: 0 0 8px var(--accent-primary-glow)
+Hover Style: Border: var(--color-accent-primary-start), Glow: 0 0 8px var(--color-accent-primary-glow)
 
 In-Progress State (DOING):
 
-Border: linear-gradient(to bottom right, var(--accent-secondary-start), var(--accent-secondary-end))
+Border: linear-gradient(to bottom right, var(--color-accent-secondary-start), var(--color-accent-secondary-end))
 
 Content: Inner indicator square rotated $12^\circ$ to match the logo slant (M 28,14 L 20,50).
 
 Completed State (DONE):
 
-Border: var(--accent-primary-end)
+Border: var(--color-accent-primary-end)
 
-Background: var(--accent-primary-glow)
+Background: var(--color-accent-primary-glow)
 
-Content: SVG checkmark colored in var(--accent-primary-start). Text within the block is struck through and shifted to color var(--text-disabled).
+Content: SVG checkmark colored in var(--color-accent-primary-start). Text within the block is struck through and shifted to color var(--color-text-disabled).
 
 4.2 Dynamic Guideline Guide Rails
 
@@ -253,9 +253,9 @@ To prevent visual disorientation in deeply nested lists, the vertical guidelines
  |   - [ ] Unfocused Block Node            <-- Fallback guide rail
 
 
-Standard Guide Rail: Width: $1\text{px}$ solid, offset by $-12\text{px}$ to the left of the child text node. Color: var(--border-muted).
+Standard Guide Rail: Width: $1\text{px}$ solid, offset by $-12\text{px}$ to the left of the child text node. Color: var(--color-border-muted).
 
-Active Ancestral Path Guide Rail: Width: $1.5\text{px}$ solid. Undergoes color-blend shift to linear-gradient(to bottom, var(--accent-primary-start), var(--accent-primary-end)) when a child node receives active keyboard or mouse focus.
+Active Ancestral Path Guide Rail: Width: $1.5\text{px}$ solid. Undergoes color-blend shift to linear-gradient(to bottom, var(--color-accent-primary-start), var(--color-accent-primary-end)) when a child node receives active keyboard or mouse focus.
 
 Path-Trace Duration: 250ms cubic-bezier(0.16, 1, 0.3, 1).
 
@@ -275,7 +275,7 @@ Style: Background: rgba(244, 63, 94, 0.08), Border: 1px solid rgba(244, 63, 94, 
 
 Priority Chip (Low / #3):
 
-Style: Background: var(--bg-panel), Border: 1px solid var(--border-zinc), Color: var(--text-muted).
+Style: Background: var(--color-panel), Border: 1px solid var(--color-border-zinc), Color: var(--color-text-muted).
 
 4.4 Glassmorphism Contextual Menu
 
@@ -283,7 +283,7 @@ The slash command menu uses clear, frosted glass visual styling, maintaining bac
 
 .command-palette {
   background-color: rgba(22, 22, 25, 0.75);
-  border: 1px solid var(--border-active);
+  border: 1px solid var(--color-border-active);
   border-radius: 8px;
   backdrop-filter: blur(12px) saturate(140%);
   -webkit-backdrop-filter: blur(12px) saturate(140%);
@@ -311,17 +311,17 @@ Document Block Line
 
 Transparent background, standard guide rails
 
-Light background highlight (var(--bg-hover)), shows line grab icon
+Light background highlight (var(--color-hover)), shows line grab icon
 
-var(--bg-surface), guideline color transitions to the primary accent
+var(--color-surface), guideline color transitions to the primary accent
 
 N/A
 
 Checklist Toggle
 
-var(--border-zinc) border
+var(--color-border-zinc) border
 
-var(--accent-primary-start) border, subtle glow
+var(--color-accent-primary-start) border, subtle glow
 
 Standard glow ring
 
@@ -329,9 +329,9 @@ Transitions status to next cycle
 
 Kanban Task Card
 
-var(--bg-panel) base, no offset
+var(--color-panel) base, no offset
 
-var(--bg-hover) base, $1\text{px}$ upward translate
+var(--color-hover) base, $1\text{px}$ upward translate
 
 Highlighted outer border
 
@@ -389,7 +389,7 @@ Silt is built for complete hands-on-keyboard efficiency, complying directly with
 
 Contrast Ratios: Text-to-background contrast ratios are strictly maintained above 7:1 for primary elements, and above 4.5:1 for secondary tags.
 
-Focus States: Every interactive element features an explicit :focus-visible outline ring of $2\text{px}$ var(--border-focus) offset by $1\text{px}$ to prevent overlapping with components.
+Focus States: Every interactive element features an explicit :focus-visible outline ring of $2\text{px}$ var(--color-border-focus) offset by $1\text{px}$ to prevent overlapping with components.
 
 Keyboard Navigation Paths: Users can navigate the entire interface using standard shortcut triggers:
 

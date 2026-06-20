@@ -67,15 +67,15 @@ func TestGetActiveTheme_DefaultOnFreshVault(t *testing.T) {
 		t.Errorf("expected default mode dark, got %q", res.Mode)
 	}
 	// Effective first-paint tokens must be the dark set.
-	if res.Tokens["--bg-void"] != "#0c0c0e" {
-		t.Errorf("expected dark bg.void #0c0c0e, got %q", res.Tokens["--bg-void"])
+	if res.Tokens["--color-void"] != "#0c0c0e" {
+		t.Errorf("expected dark bg.void #0c0c0e, got %q", res.Tokens["--color-void"])
 	}
 	// Both maps present so the frontend can resolve "system" locally.
-	if res.DarkTokens["--bg-void"] != "#0c0c0e" {
-		t.Errorf("DarkTokens bg.void wrong: %q", res.DarkTokens["--bg-void"])
+	if res.DarkTokens["--color-void"] != "#0c0c0e" {
+		t.Errorf("DarkTokens bg.void wrong: %q", res.DarkTokens["--color-void"])
 	}
-	if res.LightTokens["--bg-void"] != "#f8fafc" {
-		t.Errorf("LightTokens bg.void wrong: %q", res.LightTokens["--bg-void"])
+	if res.LightTokens["--color-void"] != "#f8fafc" {
+		t.Errorf("LightTokens bg.void wrong: %q", res.LightTokens["--color-void"])
 	}
 	if res.BGVoid != "#0c0c0e" {
 		t.Errorf("BGVoid wrong: %q", res.BGVoid)
@@ -148,8 +148,8 @@ func TestApplyTheme_SwitchesAndPersists(t *testing.T) {
 		t.Errorf("expected mode light, got %q", res.Mode)
 	}
 	// Effective tokens reflect the light mode of the selected theme.
-	if res.Tokens["--bg-void"] != "#faf6f2" {
-		t.Errorf("light bg.void wrong: %q", res.Tokens["--bg-void"])
+	if res.Tokens["--color-void"] != "#faf6f2" {
+		t.Errorf("light bg.void wrong: %q", res.Tokens["--color-void"])
 	}
 
 	// The selection persisted across a fresh settings load.
@@ -169,7 +169,7 @@ func TestApplyTheme_SwitchesAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetActiveTheme after apply: %v", err)
 	}
-	if res2.ID != "terra-test" || res2.Tokens["--bg-void"] != "#faf6f2" {
+	if res2.ID != "terra-test" || res2.Tokens["--color-void"] != "#faf6f2" {
 		t.Errorf("GetActiveTheme did not reflect persisted light theme: %+v", res2)
 	}
 }
@@ -239,12 +239,12 @@ func TestApplyTheme_SystemModeResolvesFirstPaintDark(t *testing.T) {
 	if res.Mode != "system" {
 		t.Errorf("mode = %q, want system", res.Mode)
 	}
-	if res.Tokens["--bg-void"] != "#0c0c0e" {
-		t.Errorf("system should first-paint dark bg.void, got %q", res.Tokens["--bg-void"])
+	if res.Tokens["--color-void"] != "#0c0c0e" {
+		t.Errorf("system should first-paint dark bg.void, got %q", res.Tokens["--color-void"])
 	}
 	// But both maps are present so the frontend can resolve the real preference.
-	if res.LightTokens["--bg-void"] != "#f8fafc" {
-		t.Errorf("system mode must still ship light tokens, got %q", res.LightTokens["--bg-void"])
+	if res.LightTokens["--color-void"] != "#f8fafc" {
+		t.Errorf("system mode must still ship light tokens, got %q", res.LightTokens["--color-void"])
 	}
 }
 
@@ -317,22 +317,22 @@ func TestBuildThemeResult_DarkFirstPaint(t *testing.T) {
 	if res.Mode != "system" {
 		t.Errorf("mode = %q, want system", res.Mode)
 	}
-	if res.Tokens["--bg-void"] != "#0c0c0e" {
-		t.Errorf("system first-paint should be dark bg.void, got %q", res.Tokens["--bg-void"])
+	if res.Tokens["--color-void"] != "#0c0c0e" {
+		t.Errorf("system first-paint should be dark bg.void, got %q", res.Tokens["--color-void"])
 	}
-	if res.DarkTokens["--accent-primary-start"] != "#2dd4bf" {
-		t.Errorf("dark primary-start wrong: %q", res.DarkTokens["--accent-primary-start"])
+	if res.DarkTokens["--color-accent-primary-start"] != "#2dd4bf" {
+		t.Errorf("dark primary-start wrong: %q", res.DarkTokens["--color-accent-primary-start"])
 	}
-	if res.LightTokens["--accent-primary-start"] != "#0d9488" {
-		t.Errorf("light primary-start wrong: %q", res.LightTokens["--accent-primary-start"])
+	if res.LightTokens["--color-accent-primary-start"] != "#0d9488" {
+		t.Errorf("light primary-start wrong: %q", res.LightTokens["--color-accent-primary-start"])
 	}
 	if res.BGVoid != "#0c0c0e" {
 		t.Errorf("BGVoid wrong: %q", res.BGVoid)
 	}
 	// light mode: effective tokens are light.
 	lightRes := buildThemeResult(th, "light")
-	if lightRes.Tokens["--bg-void"] != "#f8fafc" {
-		t.Errorf("light effective bg.void wrong: %q", lightRes.Tokens["--bg-void"])
+	if lightRes.Tokens["--color-void"] != "#f8fafc" {
+		t.Errorf("light effective bg.void wrong: %q", lightRes.Tokens["--color-void"])
 	}
 	if lightRes.BGVoid != "#f8fafc" {
 		t.Errorf("light BGVoid wrong: %q", lightRes.BGVoid)

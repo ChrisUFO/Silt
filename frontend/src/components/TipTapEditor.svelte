@@ -509,19 +509,23 @@
     margin: 0 0 0.5rem;
     padding: 0.125rem 0.5rem;
     border-radius: 9999px;
-    border: 1px solid var(--border-muted, #3a3f4b);
-    background: color-mix(in srgb, var(--bg-surface, #1a1d24) 90%, transparent);
-    color: var(--text-muted, #8b95a3);
+    border: 1px solid var(--color-border-muted, #3a3f4b);
+    background: color-mix(
+      in srgb,
+      var(--color-surface, #1a1d24) 90%,
+      transparent
+    );
+    color: var(--color-text-muted, #8b95a3);
     font-size: 11px;
     backdrop-filter: blur(4px);
   }
   .unsaved-indicator.error {
     border-color: color-mix(
       in srgb,
-      var(--status-danger, #e5484d) 60%,
+      var(--color-status-danger, #e5484d) 60%,
       transparent
     );
-    color: var(--status-danger, #e5484d);
+    color: var(--color-status-danger, #e5484d);
   }
 
   /* The ProseMirror editable surface. Global styles (typography vars, guide
@@ -539,7 +543,7 @@
     margin-top: 4px;
     padding: 4px;
     border-radius: 8px;
-    background: var(--bg-surface, #1e1e22);
+    background: var(--color-surface, #1e1e22);
     border: 1px solid var(--border-subtle, #33333a);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
     display: flex;
@@ -554,14 +558,14 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--text-primary, #e6e6e6);
+    color: var(--color-text-primary, #e6e6e6);
     text-align: left;
     cursor: pointer;
     font-family: inherit;
   }
 
   .meta-suggest-item.selected {
-    background: var(--accent-primary-start, #4f7cff);
+    background: var(--color-accent-primary-start, #4f7cff);
     color: #fff;
   }
 

@@ -110,7 +110,7 @@ describe('Sidebar', () => {
   it('renders the active-notebook label in text-primary (not accent) per #138', async () => {
     // The notebook-selector header label (Sidebar.svelte:680) used the accent
     // token, which masked theme switches on the 3 cool-accent themes (#138).
-    // It now follows --text-primary so each theme's body-text hue shows up in
+    // It now follows --color-text-primary so each theme's body-text hue shows up in
     // the sidebar. The "No Notebook" fallback only appears in this label, so
     // getByText uniquely targets it (independent of the nav tree load).
     render(Sidebar, {

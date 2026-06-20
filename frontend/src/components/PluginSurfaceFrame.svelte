@@ -63,7 +63,7 @@
     const decls = Object.entries(tokens)
       .map(([k, v]) => `${k}: ${v};`)
       .join(' ')
-    return `:root { ${decls} } body { margin: 0; font-family: var(--font-body, system-ui, sans-serif); color: var(--text-primary, #e4e4e7); background: var(--bg-panel, #161619); }`
+    return `:root { ${decls} } body { margin: 0; font-family: var(--font-body, system-ui, sans-serif); color: var(--color-text-primary, #e4e4e7); background: var(--color-panel, #161619); }`
   }
 
   // CSP meta tag from the shared constant (plugin-surface-csp.ts). See the

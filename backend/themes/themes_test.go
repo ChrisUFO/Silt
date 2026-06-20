@@ -183,8 +183,8 @@ func TestValidate_MissingLightMode(t *testing.T) {
 			t.Errorf("unexpected non-light error: %+v", e)
 		}
 	}
-	if lightErrs != len(requiredTokens)-1 {
-		t.Errorf("expected all %d required light tokens flagged (status.success backfilled), got %d", len(requiredTokens)-1, lightErrs)
+	if lightErrs != len(requiredTokens) {
+		t.Errorf("expected all %d required light tokens flagged, got %d", len(requiredTokens), lightErrs)
 	}
 }
 
@@ -235,12 +235,12 @@ func TestParseDefault_IsValid(t *testing.T) {
 	// Flatten must produce all 19 canonical CSS tokens.
 	tokens := th.Flatten("dark")
 	expected := []string{
-		"--bg-void", "--bg-surface", "--bg-panel", "--bg-hover", "--bg-active",
-		"--border-muted", "--border-zinc", "--border-active", "--border-focus",
-		"--text-primary", "--text-muted", "--text-disabled",
-		"--accent-primary-start", "--accent-primary-end", "--accent-primary-glow",
-		"--accent-secondary-start", "--accent-secondary-end", "--accent-secondary-glow",
-		"--status-warn", "--status-danger", "--status-success",
+		"--color-void", "--color-surface", "--color-panel", "--color-hover", "--color-active",
+		"--color-border-muted", "--color-border-zinc", "--color-border-active", "--color-border-focus",
+		"--color-text-primary", "--color-text-muted", "--color-text-disabled",
+		"--color-accent-primary-start", "--color-accent-primary-end", "--color-accent-primary-glow",
+		"--color-accent-secondary-start", "--color-accent-secondary-end", "--color-accent-secondary-glow",
+		"--color-status-warn", "--color-status-danger", "--color-status-success",
 	}
 	for _, k := range expected {
 		if _, ok := tokens[k]; !ok {
@@ -253,11 +253,11 @@ func TestFlatten_DarkLightDiffer(t *testing.T) {
 	th, _ := ParseDefault()
 	dark := th.Flatten("dark")
 	light := th.Flatten("light")
-	if dark["--bg-void"] == light["--bg-void"] {
-		t.Errorf("dark/light bg.void should differ (dark=%s light=%s)", dark["--bg-void"], light["--bg-void"])
+	if dark["--color-void"] == light["--color-void"] {
+		t.Errorf("dark/light bg.void should differ (dark=%s light=%s)", dark["--color-void"], light["--color-void"])
 	}
-	if dark["--bg-void"] != "#0c0c0e" {
-		t.Errorf("dark bg.void = %s, want #0c0c0e (pixel-identity)", dark["--bg-void"])
+	if dark["--color-void"] != "#0c0c0e" {
+		t.Errorf("dark bg.void = %s, want #0c0c0e (pixel-identity)", dark["--color-void"])
 	}
 }
 
@@ -672,10 +672,11 @@ func TestIsValidFontFamily(t *testing.T) {
 }
 
 // TestParseAndValidate_BackfillsMissingSuccess: a legacy theme (exported
-// before the status.success schema change) must still load. ParseAndValidate
-// backfills a default so the theme doesn't fail validation and silently
-// revert to the embedded default on next launch.
-func TestParseAndValidate_BackfillsMissingSuccess(t *testing.T) {
+// before the status.success schema change) must still load. status.success is
+// optional (#165): ParseAndValidate no longer backfills it, but validation
+// passes and Flatten simply omits the token so the @theme static fallback
+// (#22c55e / #16a34a) applies.
+func TestParseAndValidate_OptionalSuccess(t *testing.T) {
 	// Strip success from both mode status blocks. Each appears as:
 	//   ,"success":"<color>"   (second key, has leading comma)
 	legacy := strings.ReplaceAll(minimalValidJSON, `,"success":"#22c55e"`, "")
@@ -685,11 +686,17 @@ func TestParseAndValidate_BackfillsMissingSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("legacy theme without success should still load: %v", err)
 	}
-	if th.Modes.Dark.Status.Success != "#22c55e" {
-		t.Errorf("expected dark success backfill #22c55e, got %q", th.Modes.Dark.Status.Success)
+	// Success is not backfilled — it stays empty and Flatten omits it.
+	if th.Modes.Dark.Status.Success != "" {
+		t.Errorf("dark success should be empty (optional, no backfill), got %q", th.Modes.Dark.Status.Success)
 	}
-	if th.Modes.Light.Status.Success != "#16a34a" {
-		t.Errorf("expected light success backfill #16a34a, got %q", th.Modes.Light.Status.Success)
+	if th.Modes.Light.Status.Success != "" {
+		t.Errorf("light success should be empty (optional, no backfill), got %q", th.Modes.Light.Status.Success)
+	}
+	// Flatten must NOT emit --color-status-success when it's empty.
+	dark := th.Flatten("dark")
+	if _, ok := dark["--color-status-success"]; ok {
+		t.Errorf("Flatten should not emit --color-status-success when success is empty")
 	}
 }
 

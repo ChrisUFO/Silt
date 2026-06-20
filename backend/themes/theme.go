@@ -104,49 +104,58 @@ type AccentTriple struct {
 	Glow  string `json:"glow"`
 }
 
-// Status holds warn/danger/success semantic colors.
+// Status holds warn/danger semantic colors plus an optional success token.
+// Success is not required (#165): legacy themes without it fall through to
+// the @theme static fallback (#22c55e).
 type Status struct {
 	Warn    string `json:"warn"`
 	Danger  string `json:"danger"`
-	Success string `json:"success"`
+	Success string `json:"success,omitempty"`
 }
 
 // Flatten produces the flat map of CSS custom-property names → values for
-// the given mode ("dark" or "light"). The keys are exactly the names the
-// frontend injects on :root (--bg-void, --accent-primary-start, …). An
-// unknown mode falls back to "dark".
+// the given mode ("dark" or "light"). The keys are the --color-* names that
+// Tailwind v4's @theme block declares (and generates utilities from), so the
+// runtime injector overrides the SAME custom properties the utility classes
+// read — one namespace, no bridge/alias layer (#146). An unknown mode falls
+// back to "dark".
+//
+// status.success is OPTIONAL (#165): emitted only when non-empty so legacy
+// themes without it fall through to the @theme static fallback (#22c55e).
 func (t *Theme) Flatten(mode string) map[string]string {
 	m := t.Modes.Dark
 	if mode == "light" {
 		m = t.Modes.Light
 	}
 	out := map[string]string{}
-	out["--bg-void"] = m.BG.Void
-	out["--bg-surface"] = m.BG.Surface
-	out["--bg-panel"] = m.BG.Panel
-	out["--bg-hover"] = m.BG.Hover
-	out["--bg-active"] = m.BG.Active
+	out["--color-void"] = m.BG.Void
+	out["--color-surface"] = m.BG.Surface
+	out["--color-panel"] = m.BG.Panel
+	out["--color-hover"] = m.BG.Hover
+	out["--color-active"] = m.BG.Active
 
-	out["--border-muted"] = m.Border.Muted
-	out["--border-zinc"] = m.Border.Zinc
-	out["--border-active"] = m.Border.Active
-	out["--border-focus"] = m.Border.Focus
+	out["--color-border-muted"] = m.Border.Muted
+	out["--color-border-zinc"] = m.Border.Zinc
+	out["--color-border-active"] = m.Border.Active
+	out["--color-border-focus"] = m.Border.Focus
 
-	out["--text-primary"] = m.Text.Primary
-	out["--text-muted"] = m.Text.Muted
-	out["--text-disabled"] = m.Text.Disabled
+	out["--color-text-primary"] = m.Text.Primary
+	out["--color-text-muted"] = m.Text.Muted
+	out["--color-text-disabled"] = m.Text.Disabled
 
-	out["--accent-primary-start"] = m.Accent.Primary.Start
-	out["--accent-primary-end"] = m.Accent.Primary.End
-	out["--accent-primary-glow"] = m.Accent.Primary.Glow
+	out["--color-accent-primary-start"] = m.Accent.Primary.Start
+	out["--color-accent-primary-end"] = m.Accent.Primary.End
+	out["--color-accent-primary-glow"] = m.Accent.Primary.Glow
 
-	out["--accent-secondary-start"] = m.Accent.Secondary.Start
-	out["--accent-secondary-end"] = m.Accent.Secondary.End
-	out["--accent-secondary-glow"] = m.Accent.Secondary.Glow
+	out["--color-accent-secondary-start"] = m.Accent.Secondary.Start
+	out["--color-accent-secondary-end"] = m.Accent.Secondary.End
+	out["--color-accent-secondary-glow"] = m.Accent.Secondary.Glow
 
-	out["--status-warn"] = m.Status.Warn
-	out["--status-danger"] = m.Status.Danger
-	out["--status-success"] = m.Status.Success
+	out["--color-status-warn"] = m.Status.Warn
+	out["--color-status-danger"] = m.Status.Danger
+	if v := strings.TrimSpace(m.Status.Success); v != "" {
+		out["--color-status-success"] = v
+	}
 
 	// Optional decorative surface texture (e.g. Linen's woven paper grain).
 	// Emitted only when the mode declares a texture block; absent on the

@@ -21,8 +21,8 @@ const mocks = vi.hoisted(() => ({
     id: 'cyber_forest',
     name: 'Cyber Forest',
     mode: 'dark' as 'dark' | 'light' | 'system',
-    darkTokens: { '--bg-void': '#0c0c0e' } as Record<string, string>,
-    lightTokens: { '--bg-void': '#f8fafc' } as Record<string, string>,
+    darkTokens: { '--color-void': '#0c0c0e' } as Record<string, string>,
+    lightTokens: { '--color-void': '#f8fafc' } as Record<string, string>,
     error: null as string | null
   },
   themesState: {
@@ -44,11 +44,18 @@ const mocks = vi.hoisted(() => ({
         source: 'disk'
       }
     ],
-    flatTokens: {} as Record<string, { dark: Record<string, string>; light: Record<string, string> }>,
+    flatTokens: {} as Record<
+      string,
+      { dark: Record<string, string>; light: Record<string, string> }
+    >,
     loadError: null as string | null,
     loading: false
   },
-  themeStatus: { kind: 'info' as const, message: '', fields: [] as { field: string; message: string }[] },
+  themeStatus: {
+    kind: 'info' as const,
+    message: '',
+    fields: [] as { field: string; message: string }[]
+  },
   applyTheme: vi.fn(),
   restoreActiveTheme: vi.fn(),
   injectTokens: vi.fn(),
@@ -203,7 +210,10 @@ describe('AppearanceTab picker a11y (#50)', () => {
     // instead of the active theme's. Empty flatTokens short-circuits the
     // preview to null, so we must provide data to exercise the path.
     mocks.themesState.flatTokens = {
-      'terra-test': { dark: { '--bg-void': '#1a0f0a' }, light: { '--bg-void': '#faf6f2' } }
+      'terra-test': {
+        dark: { '--color-void': '#1a0f0a' },
+        light: { '--color-void': '#faf6f2' }
+      }
     }
     render(AppearanceTab)
     // Let the initial mount effect (restoreActiveTheme for the null
@@ -215,7 +225,9 @@ describe('AppearanceTab picker a11y (#50)', () => {
     terra.focus()
     await tick()
     // The preview theme's dark tokens are injected in place of the active.
-    expect(mocks.injectTokens).toHaveBeenCalledWith({ '--bg-void': '#1a0f0a' })
+    expect(mocks.injectTokens).toHaveBeenCalledWith({
+      '--color-void': '#1a0f0a'
+    })
 
     // Escape cancels the preview (onRowKey → previewId = null).
     await fireEvent.keyDown(terra, { key: 'Escape' })
@@ -228,7 +240,7 @@ describe('AppearanceTab picker a11y (#50)', () => {
     // Give the active theme a typography block: the indicator derives from
     // themeState.darkTokens '--font-*' keys (theme-level, both modes).
     mocks.themeState.darkTokens = {
-      '--bg-void': '#0c0c0e',
+      '--color-void': '#0c0c0e',
       '--font-body': "'Plus Jakarta Sans', sans-serif",
       '--font-mono': "'JetBrains Mono', monospace",
       '--font-headline': "'Hanken Grotesk', sans-serif"
@@ -246,9 +258,11 @@ describe('AppearanceTab picker a11y (#50)', () => {
 
   it('hides the theme-typography indicator when the theme defines no fonts (#82)', () => {
     // No '--font-*' tokens → no indicator section.
-    mocks.themeState.darkTokens = { '--bg-void': '#0c0c0e' }
+    mocks.themeState.darkTokens = { '--color-void': '#0c0c0e' }
     render(AppearanceTab)
 
-    expect(screen.queryByRole('heading', { name: /Theme typography/i })).toBeNull()
+    expect(
+      screen.queryByRole('heading', { name: /Theme typography/i })
+    ).toBeNull()
   })
 })

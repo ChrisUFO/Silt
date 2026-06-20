@@ -187,9 +187,12 @@
   let themeTypographyOverrides = $derived.by(() => {
     const tokens = themeState.darkTokens
     const out: { label: string; value: string }[] = []
-    if (tokens['--font-body']) out.push({ label: 'Body', value: tokens['--font-body'] })
-    if (tokens['--font-mono']) out.push({ label: 'Mono', value: tokens['--font-mono'] })
-    if (tokens['--font-headline']) out.push({ label: 'Headline', value: tokens['--font-headline'] })
+    if (tokens['--font-body'])
+      out.push({ label: 'Body', value: tokens['--font-body'] })
+    if (tokens['--font-mono'])
+      out.push({ label: 'Mono', value: tokens['--font-mono'] })
+    if (tokens['--font-headline'])
+      out.push({ label: 'Headline', value: tokens['--font-headline'] })
     return out
   })
 
@@ -321,17 +324,11 @@
         >
       </div>
     {:else if themesState.items.length === 0}
-      <div
-        class="text-text-muted text-[12px] font-body-md py-8 text-center"
-      >
+      <div class="text-text-muted text-[12px] font-body-md py-8 text-center">
         No themes available. Import a theme .json to get started.
       </div>
     {:else}
-      <div
-        role="listbox"
-        aria-label="Available themes"
-        class="space-y-2"
-      >
+      <div role="listbox" aria-label="Available themes" class="space-y-2">
         {#each themesState.items as theme, i (theme.id)}
           {@const active = isActive(theme)}
           <button
@@ -367,13 +364,13 @@
                 aria-hidden="true"
                 class="block w-4 h-8 rounded-sm border border-border-muted"
                 style="background-color: {theme.swatches?.[0] ??
-                  'var(--accent-primary-start)'}"
+                  'var(--color-accent-primary-start)'}"
               ></span>
               <span
                 aria-hidden="true"
                 class="block w-4 h-8 rounded-sm border border-border-muted"
                 style="background-color: {theme.swatches?.[1] ??
-                  'var(--accent-secondary-start)'}"
+                  'var(--color-accent-secondary-start)'}"
               ></span>
             </div>
             <div class="flex-1 min-w-0">

@@ -36,14 +36,25 @@ vi.mock('./inject', () => ({
   injectTokens: injectTokensMock
 }))
 
-import { _resetForTests, applyTheme, initTheme, themeState } from './store.svelte'
+import {
+  _resetForTests,
+  applyTheme,
+  initTheme,
+  themeState
+} from './store.svelte'
 
 const sampleResult = {
   id: 'cyber_forest',
   name: 'Cyber Forest',
   mode: 'dark',
-  dark_tokens: { '--bg-void': '#0c0c0e', '--accent-primary-start': '#2dd4bf' },
-  light_tokens: { '--bg-void': '#f8fafc', '--accent-primary-start': '#0d9488' }
+  dark_tokens: {
+    '--color-void': '#0c0c0e',
+    '--color-accent-primary-start': '#2dd4bf'
+  },
+  light_tokens: {
+    '--color-void': '#f8fafc',
+    '--color-accent-primary-start': '#0d9488'
+  }
 }
 
 describe('theme store', () => {
@@ -65,7 +76,7 @@ describe('theme store', () => {
     await initTheme()
     expect(getActiveThemeMock).toHaveBeenCalled()
     expect(themeState.id).toBe('cyber_forest')
-    expect(themeState.darkTokens['--bg-void']).toBe('#0c0c0e')
+    expect(themeState.darkTokens['--color-void']).toBe('#0c0c0e')
     expect(injectTokensMock).toHaveBeenCalled()
   })
 
@@ -88,7 +99,7 @@ describe('theme store', () => {
     expect(ok).toBe(true)
     expect(themeState.id).toBe('terra-test')
     expect(themeState.mode).toBe('light')
-    expect(themeState.lightTokens['--bg-void']).toBe('#f8fafc')
+    expect(themeState.lightTokens['--color-void']).toBe('#f8fafc')
     expect(injectTokensMock).toHaveBeenCalled()
   })
 
@@ -104,6 +115,9 @@ describe('theme store', () => {
     // The first arg to EventsOn is the event name; the second is the
     // handler. We just check that the event name is "theme:changed"
     // (the one the store listens to) and that a handler was passed.
-    expect(eventsOnMock).toHaveBeenCalledWith('theme:changed', expect.any(Function))
+    expect(eventsOnMock).toHaveBeenCalledWith(
+      'theme:changed',
+      expect.any(Function)
+    )
   })
 })

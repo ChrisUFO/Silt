@@ -658,7 +658,7 @@
   style:width={collapsed ? '0px' : sidebarWidth + 'px'}
   style:transition={sidebarDragging ? 'none' : 'all 200ms ease-out'}
   style:overflow={collapsed ? 'hidden' : 'visible'}
-  style:border-right={collapsed ? '0' : '1px solid var(--border-muted)'}
+  style:border-right={collapsed ? '0' : '1px solid var(--color-border-muted)'}
 >
   <div
     class="px-3 py-3 flex flex-col gap-1 relative flex-1 overflow-hidden flex"
@@ -702,7 +702,7 @@
         ></button>
         <div
           class="absolute left-1 right-1 top-14 glass-palette border border-accent-primary-start/20 rounded-lg shadow-2xl z-[70] py-2 max-h-[60vh] overflow-y-auto custom-scrollbar"
-          style="backdrop-filter: blur(16px); background: color-mix(in srgb, var(--bg-panel) 92%, transparent);"
+          style="backdrop-filter: blur(16px); background: color-mix(in srgb, var(--color-panel) 92%, transparent);"
         >
           {#if tree.notebooks.length === 0}
             <div class="px-4 py-3 text-text-muted text-[12px] font-body-md">
@@ -904,7 +904,7 @@
           : `New ${createMode}`}
         tabindex="-1"
         class="relative w-full max-w-md glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
-        style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--bg-panel) 90%, transparent);"
+        style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 90%, transparent);"
       >
         <div class="px-5 py-4 border-b border-border-muted">
           <h2 class="font-headline-md text-headline-md text-text-primary">
@@ -1101,7 +1101,7 @@
   .context-menu-card {
     background-color: rgba(22, 22, 25, 0.9);
     backdrop-filter: blur(12px) saturate(140%);
-    border: 1px solid var(--border-active);
+    border: 1px solid var(--color-border-active);
     border-radius: 8px;
     box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
     padding: 4px;
@@ -1116,7 +1116,7 @@
     padding: 8px 12px;
     border: none;
     background: transparent;
-    color: var(--text-primary);
+    color: var(--color-text-primary);
     font-size: 13px;
     font-family: var(--font-body, inherit);
     text-align: left;
@@ -1125,12 +1125,12 @@
     transition: background-color 120ms ease-out;
   }
   .context-menu-item:hover {
-    background-color: var(--bg-hover);
+    background-color: var(--color-hover);
   }
   :global(.drag-over-top) {
-    box-shadow: inset 0 2px 0 var(--accent-primary-start);
+    box-shadow: inset 0 2px 0 var(--color-accent-primary-start);
   }
   :global(.drag-over-bottom) {
-    box-shadow: inset 0 -2px 0 var(--accent-primary-start);
+    box-shadow: inset 0 -2px 0 var(--color-accent-primary-start);
   }
 </style>

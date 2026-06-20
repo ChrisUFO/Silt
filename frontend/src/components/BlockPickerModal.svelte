@@ -65,7 +65,9 @@
   })
 </script>
 
-<div class="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[170] flex items-start justify-center pt-32">
+<div
+  class="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[170] flex items-start justify-center pt-32"
+>
   <button
     tabindex="-1"
     aria-label="Close block picker"
@@ -78,7 +80,7 @@
     aria-label="Embed a block"
     tabindex="-1"
     class="relative w-full max-w-2xl glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
-    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--bg-panel) 92%, transparent);"
+    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 92%, transparent);"
   >
     <div class="px-5 py-3 border-b border-border-muted">
       <h2 class="font-headline-md text-headline-md text-text-primary">

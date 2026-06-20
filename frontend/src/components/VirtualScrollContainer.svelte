@@ -267,14 +267,14 @@
 
 <style>
   h1[contenteditable]:hover {
-    border-bottom-color: var(--border-muted) !important;
+    border-bottom-color: var(--color-border-muted) !important;
   }
   h1[contenteditable]:focus {
-    border-bottom-color: var(--accent-primary-start) !important;
+    border-bottom-color: var(--color-accent-primary-start) !important;
   }
   h1[contenteditable]:empty::before {
     content: 'Untitled';
-    color: var(--text-muted);
+    color: var(--color-text-muted);
     opacity: 0.4;
   }
 </style>

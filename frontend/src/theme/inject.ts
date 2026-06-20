@@ -1,7 +1,7 @@
 // Runtime theme injector (#46).
 //
 // Receives a flat token map (CSS custom-property name -> value, e.g.
-// { "--bg-void": "#0c0c0e", "--accent-primary-start": "#2dd4bf", ... }) and
+// { "--color-void": "#0c0c0e", "--color-accent-primary-start": "#2dd4bf", ... }) and
 // applies it to :root by rewriting a single generated <style> element.
 //
 // A single textContent rewrite is ONE DOM write -> ONE style recalculation,
@@ -49,7 +49,7 @@ function injectTokensInner(tokens: Record<string, string>): void {
 /**
  * Read the currently-injected value of a token from the live computed style.
  * Used by the theme-swap verification (a representative computed value,
- * e.g. --bg-void, should change without remounting the app).
+ * e.g. --color-void, should change without remounting the app).
  */
 export function readToken(name: string): string {
   return getComputedStyle(document.documentElement)

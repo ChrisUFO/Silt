@@ -99,7 +99,7 @@
     width: 4px;
     height: 100%;
     cursor: col-resize;
-    background-color: var(--border-muted);
+    background-color: var(--color-border-muted);
     border: none;
     padding: 0;
     margin: 0;
@@ -112,10 +112,10 @@
   }
   .sidebar-resize-handle:hover,
   .sidebar-resize-handle.dragging {
-    background-color: var(--accent-primary-start);
+    background-color: var(--color-accent-primary-start);
   }
   .sidebar-resize-handle:focus-visible {
-    outline: 2px solid var(--accent-primary-start);
+    outline: 2px solid var(--color-accent-primary-start);
     outline-offset: -1px;
   }
 </style>

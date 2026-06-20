@@ -21,7 +21,11 @@ const mocks = vi.hoisted(() => {
       auto_save_delay_ms: 500,
       focus_highlight_ancestors: true
     },
-    parsing: { auto_inject_uuid: true, shorthand_regex: '.*', default_task_priority: 3 },
+    parsing: {
+      auto_inject_uuid: true,
+      shorthand_regex: '.*',
+      default_task_priority: 3
+    },
     hotkeys: { open_search: 'Ctrl+P' },
     plugins: { active: [], disabled: [], plugin_settings: {} }
   }
@@ -43,7 +47,7 @@ const mocks = vi.hoisted(() => {
       name: 'Cyber Forest',
       mode: 'dark' as 'dark' | 'light' | 'system',
       darkTokens: {
-        '--bg-void': '#0c0c0e',
+        '--color-void': '#0c0c0e',
         '--font-body': "'Plus Jakarta Sans', sans-serif",
         '--font-mono': "'JetBrains Mono', monospace",
         '--font-headline': "'Hanken Grotesk', sans-serif"
@@ -93,11 +97,11 @@ import GeneralTab from './GeneralTab.svelte'
 function resetThemeState(withTypography: boolean) {
   mocks.themeState.darkTokens = withTypography
     ? {
-        '--bg-void': '#0c0c0e',
+        '--color-void': '#0c0c0e',
         '--font-body': "'Plus Jakarta Sans', sans-serif",
         '--font-mono': "'JetBrains Mono', monospace"
       }
-    : { '--bg-void': '#0c0c0e' }
+    : { '--color-void': '#0c0c0e' }
 }
 
 describe('GeneralTab font picker (#82)', () => {
@@ -124,15 +128,21 @@ describe('GeneralTab font picker (#82)', () => {
     resetThemeState(true)
     render(GeneralTab)
     await tick()
-    expect(screen.getByLabelText('Reset body font to theme default')).toBeInTheDocument()
+    expect(
+      screen.getByLabelText('Reset body font to theme default')
+    ).toBeInTheDocument()
   })
 
   it('hides the Reset button when the active theme has no typography override', async () => {
     resetThemeState(false)
     render(GeneralTab)
     await tick()
-    expect(screen.queryByLabelText('Reset body font to theme default')).toBeNull()
-    expect(screen.queryByLabelText('Reset monospace font to theme default')).toBeNull()
+    expect(
+      screen.queryByLabelText('Reset body font to theme default')
+    ).toBeNull()
+    expect(
+      screen.queryByLabelText('Reset monospace font to theme default')
+    ).toBeNull()
   })
 
   it('clicking Reset clears the config field (so the CSS fallback resolves to the theme font)', async () => {
@@ -176,9 +186,7 @@ describe('GeneralTab vault relocate menu (#141)', () => {
   it('opening the menu reveals Move, Copy, Export, and Import actions', async () => {
     render(GeneralTab)
     await tick()
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Vault actions' })
-    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
     expect(
       screen.getByRole('menuitem', { name: /Move vault/ })
@@ -197,13 +205,9 @@ describe('GeneralTab vault relocate menu (#141)', () => {
   it('selecting Move opens the VaultActionModal in move mode', async () => {
     render(GeneralTab)
     await tick()
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Vault actions' })
-    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
-    await fireEvent.click(
-      screen.getByRole('menuitem', { name: /Move vault/ })
-    )
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Move vault/ }))
     await tick()
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(
@@ -214,9 +218,7 @@ describe('GeneralTab vault relocate menu (#141)', () => {
   it('selecting Export opens the VaultArchiveModal in export mode', async () => {
     render(GeneralTab)
     await tick()
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Vault actions' })
-    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
     await fireEvent.click(
       screen.getByRole('menuitem', { name: /Export vault/ })
@@ -231,9 +233,7 @@ describe('GeneralTab vault relocate menu (#141)', () => {
   it('selecting Import opens the VaultArchiveModal in import mode', async () => {
     render(GeneralTab)
     await tick()
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Vault actions' })
-    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
     await fireEvent.click(
       screen.getByRole('menuitem', { name: /Import vault/ })
@@ -248,25 +248,19 @@ describe('GeneralTab vault relocate menu (#141)', () => {
   it('Escape on a menu item collapses the menu', async () => {
     render(GeneralTab)
     await tick()
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Vault actions' })
-    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
     const moveItem = screen.getByRole('menuitem', { name: /Move vault/ })
     moveItem.focus()
     await fireEvent.keyDown(moveItem, { key: 'Escape' })
     await tick()
-    expect(
-      screen.queryByRole('menuitem', { name: /Move vault/ })
-    ).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /Move vault/ })).toBeNull()
   })
 
   it('clicking outside the menu collapses it', async () => {
     render(GeneralTab)
     await tick()
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Vault actions' })
-    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
     expect(
       screen.getByRole('menuitem', { name: /Move vault/ })
@@ -274,8 +268,6 @@ describe('GeneralTab vault relocate menu (#141)', () => {
     // A window click outside the menu wrapper closes it.
     await fireEvent.click(document.body)
     await tick()
-    expect(
-      screen.queryByRole('menuitem', { name: /Move vault/ })
-    ).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /Move vault/ })).toBeNull()
   })
 })

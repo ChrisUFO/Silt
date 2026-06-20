@@ -50,7 +50,7 @@
 <!-- Command Palette Container (Frosted glass) -->
 <div
   class="absolute top-8 left-6 w-64 glass-palette border border-border-zinc rounded shadow-2xl z-[100] overflow-hidden py-2 scale-100 origin-top-left transition-transform"
-  style="backdrop-filter: blur(12px) saturate(140%); background: color-mix(in srgb, var(--bg-panel) 85%, transparent);"
+  style="backdrop-filter: blur(12px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 85%, transparent);"
 >
   {#each commands as cmd, idx}
     {#if cmd.pluginID && (idx === 0 || !commands[idx - 1].pluginID)}

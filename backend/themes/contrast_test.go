@@ -104,8 +104,8 @@ func themePairs(t *Theme) map[string][]contrastPair {
 		// 3-background matrix missed bg.hover/bg.active, where a
 		// medium-gray muted text can dip below AA on the lighter
 		// active/hover surfaces — exactly the gap the audit caught.
-		bgs := []string{"--bg-void", "--bg-surface", "--bg-panel", "--bg-hover", "--bg-active"}
-		textFgs := []string{"--text-primary", "--text-muted"}
+		bgs := []string{"--color-void", "--color-surface", "--color-panel", "--color-hover", "--color-active"}
+		textFgs := []string{"--color-text-primary", "--color-text-muted"}
 		var ps []contrastPair
 		for _, fg := range textFgs {
 			for _, bg := range bgs {
@@ -114,8 +114,8 @@ func themePairs(t *Theme) map[string][]contrastPair {
 		}
 		// Accents are non-text UI (focus rings, swatches, icons): AA
 		// non-text threshold is 3:1, measured against the canvas.
-		for _, fg := range []string{"--accent-primary-start", "--accent-secondary-start"} {
-			ps = append(ps, contrastPair{fg + " on --bg-void", flat[fg], flat["--bg-void"]})
+		for _, fg := range []string{"--color-accent-primary-start", "--color-accent-secondary-start"} {
+			ps = append(ps, contrastPair{fg + " on --bg-void", flat[fg], flat["--color-void"]})
 		}
 		pairs[mode] = ps
 	}
@@ -148,8 +148,8 @@ func TestWCAG_DefaultTheme_PrimaryTextAAA(t *testing.T) {
 	const min = 7.0
 	for _, mode := range []string{"dark", "light"} {
 		flat := th.Flatten(mode)
-		for _, bg := range []string{"--bg-void", "--bg-surface", "--bg-panel", "--bg-hover", "--bg-active"} {
-			r := approxRatio(t, flat["--text-primary"], flat[bg])
+		for _, bg := range []string{"--color-void", "--color-surface", "--color-panel", "--color-hover", "--color-active"} {
+			r := approxRatio(t, flat["--color-text-primary"], flat[bg])
 			if r < min {
 				t.Errorf("%s: text.primary on %s = %.2f:1, want >= %.1f:1 (AAA)", mode, bg, r, min)
 			}
@@ -168,8 +168,8 @@ func TestWCAG_DefaultTheme_AccentsNonTextAA(t *testing.T) {
 	const min = 3.0
 	for _, mode := range []string{"dark", "light"} {
 		flat := th.Flatten(mode)
-		for _, fg := range []string{"--accent-primary-start", "--accent-secondary-start"} {
-			r := approxRatio(t, flat[fg], flat["--bg-void"])
+		for _, fg := range []string{"--color-accent-primary-start", "--color-accent-secondary-start"} {
+			r := approxRatio(t, flat[fg], flat["--color-void"])
 			if r < min {
 				t.Errorf("%s: %s on bg.void = %.2f:1, want >= %.1f:1 (AA non-text)", mode, fg, r, min)
 			}
@@ -192,8 +192,8 @@ func TestWCAG_DefaultTheme_MutedTextAA(t *testing.T) {
 	const min = 4.5
 	for _, mode := range []string{"dark", "light"} {
 		flat := th.Flatten(mode)
-		for _, bg := range []string{"--bg-void", "--bg-surface", "--bg-panel", "--bg-hover", "--bg-active"} {
-			r := approxRatio(t, flat["--text-muted"], flat[bg])
+		for _, bg := range []string{"--color-void", "--color-surface", "--color-panel", "--color-hover", "--color-active"} {
+			r := approxRatio(t, flat["--color-text-muted"], flat[bg])
 			if r < min {
 				t.Errorf("%s: text.muted on %s = %.2f:1, want >= %.1f:1 (AA). "+
 					"Muted/metadata text is below the documented 4.5:1 target; "+
@@ -223,22 +223,22 @@ func TestWCAG_DefaultTheme_MutedTextAA(t *testing.T) {
 // direction so a failing palette is actionable.
 func assertWCAG(t *testing.T, th *Theme) {
 	t.Helper()
-	backgrounds := []string{"--bg-void", "--bg-surface", "--bg-panel", "--bg-hover", "--bg-active"}
+	backgrounds := []string{"--color-void", "--color-surface", "--color-panel", "--color-hover", "--color-active"}
 	for _, mode := range []string{"dark", "light"} {
 		flat := th.Flatten(mode)
 		for _, bg := range backgrounds {
-			if r := approxRatio(t, flat["--text-primary"], flat[bg]); r < 7.0 {
+			if r := approxRatio(t, flat["--color-text-primary"], flat[bg]); r < 7.0 {
 				t.Errorf("%s [%s]: text.primary on %s = %.2f:1, want >= 7.1 (AAA)",
 					th.ID, mode, bg, r)
 			}
-			if r := approxRatio(t, flat["--text-muted"], flat[bg]); r < 4.5 {
+			if r := approxRatio(t, flat["--color-text-muted"], flat[bg]); r < 4.5 {
 				t.Errorf("%s [%s]: text.muted on %s = %.2f:1, want >= 4.5 (AA). "+
 					"Bump modes.%s.text.muted lighter (dark) / darker (light).",
 					th.ID, mode, bg, r, mode)
 			}
 		}
-		for _, fg := range []string{"--accent-primary-start", "--accent-secondary-start"} {
-			if r := approxRatio(t, flat[fg], flat["--bg-void"]); r < 3.0 {
+		for _, fg := range []string{"--color-accent-primary-start", "--color-accent-secondary-start"} {
+			if r := approxRatio(t, flat[fg], flat["--color-void"]); r < 3.0 {
 				t.Errorf("%s [%s]: %s on bg.void = %.2f:1, want >= 3.0 (AA non-text)",
 					th.ID, mode, fg, r)
 			}
@@ -282,10 +282,10 @@ func TestWCAG_Stark_FocusStatesUnmistakable(t *testing.T) {
 		t.Fatal("silt-stark not embedded")
 	}
 	const min = 3.0
-	backgrounds := []string{"--bg-void", "--bg-surface", "--bg-panel", "--bg-hover", "--bg-active"}
+	backgrounds := []string{"--color-void", "--color-surface", "--color-panel", "--color-hover", "--color-active"}
 	for _, mode := range []string{"dark", "light"} {
 		flat := th.Flatten(mode)
-		focus := flat["--border-focus"]
+		focus := flat["--color-border-focus"]
 		for _, bg := range backgrounds {
 			r := approxRatio(t, focus, flat[bg])
 			if r < min {
@@ -312,7 +312,7 @@ func TestAccentDistinctness_AllFirstClassThemes(t *testing.T) {
 	for _, th := range all {
 		for _, mode := range []string{"dark", "light"} {
 			flat := th.Flatten(mode)
-			d := rgbDistance(t, flat["--accent-primary-start"], flat["--accent-secondary-start"])
+			d := rgbDistance(t, flat["--color-accent-primary-start"], flat["--color-accent-secondary-start"])
 			if d < minDist {
 				t.Errorf("%s [%s]: primary/secondary accent distance = %.1f, want >= %.1f (accents must stay distinct)",
 					th.ID, mode, d, minDist)
@@ -351,12 +351,12 @@ func TestTextPrimaryDistinctFromDefault_AllFirstClassThemes(t *testing.T) {
 		t.Fatalf("default theme %q not in EmbeddedThemes", DefaultThemeID)
 	}
 	for _, mode := range []string{"dark", "light"} {
-		anchor := defaults.Flatten(mode)["--text-primary"]
+		anchor := defaults.Flatten(mode)["--color-text-primary"]
 		for _, th := range all {
 			if th.ID == DefaultThemeID {
 				continue
 			}
-			got := th.Flatten(mode)["--text-primary"]
+			got := th.Flatten(mode)["--color-text-primary"]
 			d := rgbDistance(t, anchor, got)
 			if d < minDist {
 				t.Errorf("%s [%s]: --text-primary %s is only %.1f sRGB units from default %s (%s), want >= %.1f (themes must read visibly distinct from Cyber Forest per #138)",

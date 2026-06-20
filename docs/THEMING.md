@@ -64,46 +64,46 @@ Every theme is a JSON object. The table below lists **every token the validator 
 
 | JSON path | CSS variable | Meaning | Format |
 | :--- | :--- | :--- | :--- |
-| `bg.void` | `--bg-void` | The deepest canvas. Also seeds the native window background (the pre-CSS paint color). | color |
-| `bg.surface` | `--bg-surface` | Raised surface (cards, inputs). | color |
-| `bg.panel` | `--bg-panel` | Panels and sidebars. | color |
-| `bg.hover` | `--bg-hover` | Hovered-row background. | color |
-| `bg.active` | `--bg-active` | Pressed / active-row background. | color |
+| `bg.void` | `--color-void` | The deepest canvas. Also seeds the native window background (the pre-CSS paint color). | color |
+| `bg.surface` | `--color-surface` | Raised surface (cards, inputs). | color |
+| `bg.panel` | `--color-panel` | Panels and sidebars. | color |
+| `bg.hover` | `--color-hover` | Hovered-row background. | color |
+| `bg.active` | `--color-active` | Pressed / active-row background. | color |
 
 ### `border` — hairline isolation
 
 | JSON path | CSS variable | Meaning | Format |
 | :--- | :--- | :--- | :--- |
-| `border.muted` | `--border-muted` | Faintest divider. | color |
-| `border.zinc` | `--border-zinc` | Standard hairline. | color |
-| `border.active` | `--border-active` | Emphasized border (hovered). | color |
-| `border.focus` | `--border-focus` | Focus-trace border. | color |
+| `border.muted` | `--color-border-muted` | Faintest divider. | color |
+| `border.zinc` | `--color-border-zinc` | Standard hairline. | color |
+| `border.active` | `--color-border-active` | Emphasized border (hovered). | color |
+| `border.focus` | `--color-border-focus` | Focus-trace border. | color |
 
 ### `text` — foreground type scale
 
 | JSON path | CSS variable | Meaning | Format |
 | :--- | :--- | :--- | :--- |
-| `text.primary` | `--text-primary` | Body copy; highest-contrast text. | color |
-| `text.muted` | `--text-muted` | Metadata, labels, secondary text. | color |
-| `text.disabled` | `--text-disabled` | Disabled / struck-through text. | color |
+| `text.primary` | `--color-text-primary` | Body copy; highest-contrast text. | color |
+| `text.muted` | `--color-text-muted` | Metadata, labels, secondary text. | color |
+| `text.disabled` | `--color-text-disabled` | Disabled / struck-through text. | color |
 
 ### `accent` — semantic accents (×2 triples)
 
 | JSON path | CSS variable | Meaning | Format |
 | :--- | :--- | :--- | :--- |
-| `accent.primary.start` | `--accent-primary-start` | "go/done" gradient start. | color |
-| `accent.primary.end` | `--accent-primary-end` | "go/done" gradient end. | color |
-| `accent.primary.glow` | `--accent-primary-glow` | "go/done" soft halo (usually `rgba(...)`). | color |
-| `accent.secondary.start` | `--accent-secondary-start` | "in-progress" gradient start. | color |
-| `accent.secondary.end` | `--accent-secondary-end` | "in-progress" gradient end. | color |
-| `accent.secondary.glow` | `--accent-secondary-glow` | "in-progress" soft halo. | color |
+| `accent.primary.start` | `--color-accent-primary-start` | "go/done" gradient start. | color |
+| `accent.primary.end` | `--color-accent-primary-end` | "go/done" gradient end. | color |
+| `accent.primary.glow` | `--color-accent-primary-glow` | "go/done" soft halo (usually `rgba(...)`). | color |
+| `accent.secondary.start` | `--color-accent-secondary-start` | "in-progress" gradient start. | color |
+| `accent.secondary.end` | `--color-accent-secondary-end` | "in-progress" gradient end. | color |
+| `accent.secondary.glow` | `--color-accent-secondary-glow` | "in-progress" soft halo. | color |
 
 ### `status` — warn / danger
 
 | JSON path | CSS variable | Meaning | Format |
 | :--- | :--- | :--- | :--- |
-| `status.warn` | `--status-warn` | Warnings. | color |
-| `status.danger` | `--status-danger` | Errors / destructive. | color |
+| `status.warn` | `--color-status-warn` | Warnings. | color |
+| `status.danger` | `--color-status-danger` | Errors / destructive. | color |
 
 ### `typography` (optional, theme-level — not per-mode)
 

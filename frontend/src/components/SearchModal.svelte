@@ -164,7 +164,9 @@
 </script>
 
 <!-- Positioning wrapper (scrim + dialog as siblings per SettingsShell pattern) -->
-  <div class="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[150] flex items-start justify-center pt-28">
+<div
+  class="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[150] flex items-start justify-center pt-28"
+>
   <button
     tabindex="-1"
     aria-label="Close search"
@@ -178,7 +180,7 @@
     aria-label="Search blocks"
     tabindex="-1"
     class="relative w-full max-w-2xl glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
-    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--bg-panel) 80%, transparent);"
+    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 80%, transparent);"
   >
     <!-- Search Input Area -->
     <div
@@ -296,10 +298,10 @@
   :global(mark) {
     background: color-mix(
       in srgb,
-      var(--accent-primary-start) 30%,
+      var(--color-accent-primary-start) 30%,
       transparent
     );
-    color: var(--text-primary);
+    color: var(--color-text-primary);
     border-radius: 3px;
     padding: 0 2px;
   }

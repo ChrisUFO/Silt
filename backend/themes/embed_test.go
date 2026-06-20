@@ -110,7 +110,7 @@ func TestListThemes_OnDiskDefaultWinsDedup(t *testing.T) {
 	}
 	// The on-disk sentinel bg.void must be the one surfaced (proves dedup
 	// picked disk over embed, not just that the id is present).
-	if got := res.FlatTokens[DefaultThemeID].Dark["--bg-void"]; got != "#abcdef" {
+	if got := res.FlatTokens[DefaultThemeID].Dark["--color-void"]; got != "#abcdef" {
 		t.Errorf("on-disk cyber_forest dark bg.void = %q, want #abcdef (disk wins)", got)
 	}
 }

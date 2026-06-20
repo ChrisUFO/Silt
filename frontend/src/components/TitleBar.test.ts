@@ -2,7 +2,7 @@
 //
 // The "Silt" wordmark used the accent token, which masked theme switches on
 // the three cool-accent themes (Cyber Forest teal / Graphite blue / Linen
-// slate-blue all read similarly). It now follows --text-primary so each
+// slate-blue all read similarly). It now follows --color-text-primary so each
 // theme's body-text hue is visible in the titlebar chrome. This test pins
 // the class so the accent-token relapse is caught.
 
