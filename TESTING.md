@@ -602,14 +602,14 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 
 | Package | Tests | What is covered |
 |---|---|---|
-| `backend/config` | `TestDefaults_TabsConfig`, `TestOpenTabs_RoundTrip`, `TestLoad_LegacyConfigMissingTabFields` (backward-compat), `TestLoad_MalformedOpenTabsEntryNotFatal`, `TestNormalize_MaxOpenTabsClamp`, `TestNormalize_EnablePreviewTabsNilBecomesTrue` | #142 UIConfig schema: TabRef, OpenTabs, ActiveTab, EnablePreviewTabs (*bool), MaxOpenTabs; defaults (preview=true, max=8); YAML round-trip; legacy config backward-compat; malformed entry handling; normalization clamps |
-| `silt` (main) | `TestGetSetOpenTabs_RoundTrip`, `TestGetOpenTabs_PruneStaleTabs` (delete page → tab dropped), `TestGetOpenTabs_PruneMalformedEntries` (empty Page dropped), `TestSetOpenTabs_AtomicWrite` (no leftover .tmp), `TestSetOpenTabs_NilBecomesEmptySlice`, `TestGetOpenTabs_EmptyVault` | #142 IPC: GetOpenTabs/SetOpenTabs (OpenTabsResult struct), stale-tab pruning against ListNavigation, atomic write + self-write suppression |
+| `backend/config` | `TestDefaults_TabsConfig`, `TestOpenTabs_RoundTrip`, `TestLoad_LegacyConfigMissingTabFields` (backward-compat), `TestLoad_MalformedOpenTabsEntryNotFatal`, `TestNormalize_MaxOpenTabsClamp` (incl. upper-bound 32 clamp), `TestNormalize_EnablePreviewTabsNilBecomesTrue` | #142 UIConfig schema: TabRef, OpenTabs, ActiveTab, EnablePreviewTabs (*bool), MaxOpenTabs; defaults (preview=true, max=8); YAML round-trip; legacy config backward-compat; malformed entry handling; normalization clamps [1, 32] |
+| `silt` (main) | `TestGetSetOpenTabs_RoundTrip`, `TestGetOpenTabs_PruneStaleTabs` (delete page → tab dropped), `TestGetOpenTabs_PruneMalformedEntries` (empty Page dropped), `TestSetOpenTabs_AtomicWrite` (no leftover .tmp), `TestSetOpenTabs_NilBecomesEmptySlice`, `TestGetOpenTabs_EmptyVault`, `TestSetOpenTabs_SelfWriteSuppressed` (RegisterSelfWrite end-to-end via real ConfigWatcher) | #142 IPC: GetOpenTabs/SetOpenTabs (OpenTabsResult struct), stale-tab pruning against ListNavigation, atomic write, self-write suppression |
 
 ### Frontend coverage
 
 | File | Tests | What is covered |
 |---|---|---|
-| `frontend/src/lib/tabs.test.ts` (new, 34) | openPage all 7 rules (pinned-exists→activate, preview-slot-reuse, pin→new/promote, activate-only, enable_preview_tabs=false, LRU eviction preview-first/pinned), closeTab MRU neighbor, promotePreview, cycleTab MRU, mruOrder, pickEvictionVictim, tabMatches/findTab, generateTabId | #142 pure state machine — every VS Code transition + edge case |
+| `frontend/src/lib/tabs.test.ts` (new, 35) | openPage all 7 rules (pinned-exists→activate, preview-same-page→activate-or-PROMOTE-on-pin, pin→new, activate-only, enable_preview_tabs=false, LRU eviction preview-first/pinned), closeTab MRU neighbor, promotePreview, cycleTab MRU, mruOrder, pickEvictionVictim, tabMatches/findTab, generateTabId | #142 pure state machine — every VS Code transition + edge case, incl. dblclick-pin promotion fix |
 | `frontend/src/components/TabStrip.test.ts` (new, 16) | role=tablist/tab/tabpanel ARIA, aria-selected, aria-controls, roving tabindex, Arrow/Home/End/Enter/Space/Delete keyboard nav, click→onSelectTab, × →onCloseTab, dblclick→onPromoteTab, middle-click→onCloseTab, preview-italic class, pinned/preview distinction | #142 TabStrip component — full ARIA + keyboard contract |
 | `frontend/src/components/SidebarSection.test.ts` (+2) | dblclick→onPinPage, middle-click→onPinPage | #142 sidebar click modes (preview vs pin) |
 | `frontend/src/lib/editor/nodeview-test-harness.test.ts` (new, 5) | boots editor with NodeViews in jsdom, NoteBlock data-node-view-wrapper, embedNode NodeView, blockReferenceNode NodeView, mkBlock defaults | #127 reusable NodeView test harness + Smart Graph rendering smoke gate |
@@ -617,4 +617,4 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 | `frontend/src/components/BlockReferenceChip.test.ts` (new, 6) | loading state, happy-path text render, navigate-to-block on click, navigate-to-block on Enter, unresolved state, breadcrumb tooltip | #127 BlockReferenceChip component: resolve/navigate/unresolved/tooltip |
 | `frontend/src/components/TipTapEditor.test.ts` (new, 5) | embedNode NodeView for sole {{embed:uuid}}, blockReferenceNode for inline ((uuid)), both in same block, data-node-view-wrapper presence, multiple NoteBlock NodeViews | #127 TipTapEditor smart-graph content via the NodeView pipeline |
 
-`npm test` now runs **340+ vitest tests** across **43 files**. `npm run check` reports **0 errors, 0 warnings**.
+`npm test` now runs **336 vitest tests** across **43 files**. `npm run check` reports **0 errors, 0 warnings**.

@@ -738,6 +738,16 @@ selection); only the active tab is visible and holds the focus lease. The tab
 set + active tab persist across restarts via `ui.open_tabs` / `ui.active_tab`
 in `config.yaml` (pinned-only; preview tabs are ephemeral).
 
+**Per-notebook tab scoping.** Tabs are scoped per-notebook: the tab strip and
+editor surface display only tabs whose `notebook` matches `activeNotebook`
+(the `displayedTabs` derived in `App.svelte`). The full `openTabs` array
+(tabs from ALL notebooks) persists to config.yaml, so switching notebooks
+preserves each notebook's tab set — the sidebar notebook selector activates
+the MRU tab for the newly-selected notebook (or shows the blank state if no
+tabs exist for it). Cross-notebook navigation (block references, search jumps)
+switches `activeNotebook` via `syncActiveFromTab()`, which in turn updates the
+displayed tab set.
+
 The editor's transaction lifecycle is wired to the Go backend:
 - **Load:** `FetchPageBlocks(notebook, section, page)` returns a flat `[]ParsedBlock`; `blocksToDoc(blocks)` converts to ProseMirror doc JSON; `editor.commands.setContent(doc)` populates the editor.
 - **Save:** `editor.on('update')` (debounced via `editor.auto_save_delay_ms`) → `docToBlocks(editor.getJSON())` → `SaveFileBlocks(notebook, section, page, blocks)`. Go's `RenderFileContent` remains the single on-disk serializer.
