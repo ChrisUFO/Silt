@@ -42,6 +42,16 @@ type Manifest struct {
 	// UpdateURL is an optional URL that returns a JSON manifest with the latest
 	// version + download URL, for update checks (#111).
 	UpdateURL string `json:"updateUrl,omitempty"`
+	// Ratelimit is an optional per-plugin fetch rate-limit override (#153).
+	// If absent, the host default (1 rps, burst 10) applies. If present, rps
+	// must be > 0 and <= the hard cap (10); burst must be > 0 and <= 100.
+	Ratelimit *RatelimitConfig `json:"ratelimit,omitempty"`
+}
+
+// RatelimitConfig is the manifest-declared per-plugin fetch rate limit (#153).
+type RatelimitConfig struct {
+	RPS   float64 `json:"rps"`
+	Burst int     `json:"burst"`
 }
 
 var idRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
@@ -140,6 +150,17 @@ func Validate(archivePath string) (Manifest, []string, error) {
 	// the generated settings form never renders a broken field.
 	if serr := validateSettingsSchema(manifest.Settings); serr != nil {
 		return Manifest{}, warnings, fmt.Errorf("invalid settings schema: %w", serr)
+	}
+
+	// Validate the optional per-plugin fetch rate-limit override (#153).
+	// rps must be > 0 and <= the hard cap; burst must be > 0 and <= 100.
+	if manifest.Ratelimit != nil {
+		if manifest.Ratelimit.RPS <= 0 || manifest.Ratelimit.RPS > 10 {
+			return Manifest{}, warnings, fmt.Errorf("ratelimit.rps must be between 0 (exclusive) and 10 (inclusive), got %g", manifest.Ratelimit.RPS)
+		}
+		if manifest.Ratelimit.Burst <= 0 || manifest.Ratelimit.Burst > 100 {
+			return Manifest{}, warnings, fmt.Errorf("ratelimit.burst must be between 1 and 100, got %d", manifest.Ratelimit.Burst)
+		}
 	}
 
 	// Second pass: zip-slip / absolute-path guard + main-file presence +

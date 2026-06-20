@@ -1,7 +1,9 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -935,4 +937,262 @@ func TestPluginFetch_RejectsOversizedRequestBody(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected rejection of oversized request body")
 	}
+}
+
+// =========================================================================
+// Per-plugin rate limiter (#153)
+// =========================================================================
+
+func TestTokenBucket_AllowsBurstThenThrottles(t *testing.T) {
+	tb := &tokenBucket{tokens: 3, last: time.Now(), rps: 1, burst: 3}
+	// 3 tokens available → 3 immediate allows.
+	for i := 0; i < 3; i++ {
+		if !tb.allow(time.Now()) {
+			t.Fatalf("expected allow on burst call %d", i)
+		}
+	}
+	// 4th call should be denied (bucket empty, no time elapsed).
+	if tb.allow(time.Now()) {
+		t.Fatal("expected deny after burst exhausted")
+	}
+	// After 1 second, 1 token refills.
+	if !tb.allow(time.Now().Add(time.Second)) {
+		t.Fatal("expected allow after 1s refill")
+	}
+}
+
+func TestPluginRateLimiter_EvictOnUninstall(t *testing.T) {
+	app := newTestApp(t)
+	// Simulate a fetch that creates a bucket.
+	app.rateLimiter.allow("evict-me")
+	// Evict.
+	app.rateLimiter.evict("evict-me")
+	// After eviction, a new bucket starts fresh (full burst).
+	app.rateLimiter.mu.Lock()
+	_, exists := app.rateLimiter.buckets["evict-me"]
+	app.rateLimiter.mu.Unlock()
+	if exists {
+		t.Fatal("bucket should not exist after eviction")
+	}
+}
+
+func TestPluginRateLimiter_ConcurrentNoPanic(t *testing.T) {
+	app := newTestApp(t)
+	const n = 100
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			app.rateLimiter.allow("concurrent-plugin")
+		}()
+	}
+	wg.Wait()
+	// Should not panic under -race.
+}
+
+// =========================================================================
+// Redirect header hygiene (#160)
+// =========================================================================
+
+func TestStripHeadersForRedirect_RemovesCustomAuth(t *testing.T) {
+	req := &http.Request{
+		Header: http.Header{
+			"Accept":        {"text/html"},
+			"X-Api-Key":     {"secret-key"},
+			"Authorization": {"Bearer token"},
+			"User-Agent":    {"Silt/1.0"},
+		},
+	}
+	stripHeadersForRedirect(req)
+	if req.Header.Get("Accept") != "text/html" {
+		t.Error("Accept should survive the redirect allowlist")
+	}
+	if req.Header.Get("User-Agent") != "Silt/1.0" {
+		t.Error("User-Agent should survive the redirect allowlist")
+	}
+	if req.Header.Get("X-Api-Key") != "" {
+		t.Error("X-Api-Key should be stripped on redirect")
+	}
+	if req.Header.Get("Authorization") != "" {
+		t.Error("Authorization should be stripped on redirect")
+	}
+}
+
+// =========================================================================
+// Persistent network audit log (#157)
+// =========================================================================
+
+func TestSeedNetworkAuditFromDisk_PopulatesFromLogFile(t *testing.T) {
+	app := newTestApp(t)
+	// Write a network.log file for a fake plugin.
+	logDir := filepath.Join(app.vaultPath, ".system", "plugins", "test-plugin")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	logPath := filepath.Join(logDir, "network.log")
+	logContent := "2026-06-20T10:00:00Z GET example.com/api 200 test-plugin\n" +
+		"2026-06-20T10:01:00Z POST example.com/data 201 test-plugin\n"
+	if err := os.WriteFile(logPath, []byte(logContent), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	// Clear in-memory, then seed.
+	networkAuditMu.Lock()
+	networkAudit = nil
+	networkAuditMu.Unlock()
+	seedNetworkAuditFromDisk(app.vaultPath)
+
+	entries, _ := app.GetNetworkAudit()
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 seeded entries, got %d", len(entries))
+	}
+	if entries[0].Host != "example.com/api" {
+		t.Errorf("entry[0] host = %q", entries[0].Host)
+	}
+	if entries[0].Status != 200 {
+		t.Errorf("entry[0] status = %d", entries[0].Status)
+	}
+}
+
+func TestClearNetworkAudit_TruncatesOnDiskFiles(t *testing.T) {
+	app := newTestApp(t)
+	logDir := filepath.Join(app.vaultPath, ".system", "plugins", "clear-test")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	logPath := filepath.Join(logDir, "network.log")
+	if err := os.WriteFile(logPath, []byte("2026-06-20T10:00:00Z GET example.com 200 clear-test\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := app.ClearNetworkAudit(); err != nil {
+		t.Fatalf("ClearNetworkAudit: %v", err)
+	}
+	data, _ := os.ReadFile(logPath)
+	if len(data) != 0 {
+		t.Errorf("on-disk log should be empty after ClearNetworkAudit, got %q", string(data))
+	}
+	entries, _ := app.GetNetworkAudit()
+	if len(entries) != 0 {
+		t.Errorf("in-memory log should be empty after ClearNetworkAudit, got %d entries", len(entries))
+	}
+}
+
+func TestSeedNetworkAuditFromDisk_RestartPreservesEntries(t *testing.T) {
+	app := newTestApp(t)
+	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
+	// Simulate a fetch that writes to the audit log (both in-memory + disk).
+	// We call auditNetwork directly to avoid a real HTTP request.
+	app.auditNetwork("p", "GET", "https://api.example.com/health", 200)
+
+	// Verify it was written to disk.
+	logPath := filepath.Join(app.vaultPath, ".system", "plugins", "p", "network.log")
+	if _, err := os.Stat(logPath); err != nil {
+		t.Fatalf("on-disk log not written: %v", err)
+	}
+
+	// Simulate a restart: clear in-memory, then seed from disk.
+	networkAuditMu.Lock()
+	networkAudit = nil
+	networkAuditMu.Unlock()
+	seedNetworkAuditFromDisk(app.vaultPath)
+
+	entries, _ := app.GetNetworkAudit()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 seeded entry after restart, got %d", len(entries))
+	}
+	if entries[0].Plugin != "p" {
+		t.Errorf("entry plugin = %q, want p", entries[0].Plugin)
+	}
+	if entries[0].Status != 200 {
+		t.Errorf("entry status = %d, want 200", entries[0].Status)
+	}
+}
+
+// =========================================================================
+// Manifest ratelimit validation (#153)
+// =========================================================================
+
+func TestValidate_RejectsInvalidRatelimit(t *testing.T) {
+	tests := []struct {
+		name   string
+		rl     *plugins.RatelimitConfig
+		errMsg string
+	}{
+		{"negative rps", &plugins.RatelimitConfig{RPS: -1, Burst: 10}, "rps"},
+		{"zero rps", &plugins.RatelimitConfig{RPS: 0, Burst: 10}, "rps"},
+		{"over-cap rps", &plugins.RatelimitConfig{RPS: 11, Burst: 10}, "rps"},
+		{"zero burst", &plugins.RatelimitConfig{RPS: 1, Burst: 0}, "burst"},
+		{"negative burst", &plugins.RatelimitConfig{RPS: 1, Burst: -1}, "burst"},
+		{"over-cap burst", &plugins.RatelimitConfig{RPS: 1, Burst: 101}, "burst"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Build a valid archive with the bad ratelimit.
+			archive := buildPluginArchive(t, "ratelimit-test", manifestJSON(t, "ratelimit-test", tc.rl))
+			_, _, err := plugins.Validate(archive)
+			if err == nil {
+				t.Fatal("expected validation error for invalid ratelimit")
+			}
+			if !strings.Contains(err.Error(), tc.errMsg) {
+				t.Errorf("error should mention %q: %v", tc.errMsg, err)
+			}
+		})
+	}
+}
+
+func TestValidate_AcceptsValidRatelimit(t *testing.T) {
+	rl := &plugins.RatelimitConfig{RPS: 5, Burst: 20}
+	archive := buildPluginArchive(t, "ratelimit-ok", manifestJSON(t, "ratelimit-ok", rl))
+	_, _, err := plugins.Validate(archive)
+	if err != nil {
+		t.Fatalf("valid ratelimit should pass: %v", err)
+	}
+}
+
+// manifestJSON builds a minimal valid plugin.json with an optional ratelimit.
+func manifestJSON(t *testing.T, id string, rl *plugins.RatelimitConfig) string {
+	t.Helper()
+	base := fmt.Sprintf(`{"id":"%s","name":"%s","version":"1.0.0"`, id, id)
+	if rl != nil {
+		base += fmt.Sprintf(`,"ratelimit":{"rps":%g,"burst":%d}`, rl.RPS, rl.Burst)
+	}
+	return base + "}"
+}
+
+// buildPluginArchive creates a valid .silt-plugin ZIP at a temp path and
+// returns the path. The manifest is the JSON string; index.js is a minimal
+// stub.
+func buildPluginArchive(t *testing.T, id, manifestJSONStr string) string {
+	t.Helper()
+	tmp := t.TempDir()
+	archivePath := filepath.Join(tmp, id+".silt-plugin")
+	manifestPath := filepath.Join(tmp, "plugin.json")
+	if err := os.WriteFile(manifestPath, []byte(manifestJSONStr), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	indexPath := filepath.Join(tmp, "index.js")
+	if err := os.WriteFile(indexPath, []byte("export default {};"), 0o644); err != nil {
+		t.Fatalf("write index.js: %v", err)
+	}
+	// Build the ZIP.
+	r, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatalf("create archive: %v", err)
+	}
+	defer r.Close()
+	zw := zip.NewWriter(r)
+	for _, name := range []string{"plugin.json", "index.js"} {
+		data, _ := os.ReadFile(filepath.Join(tmp, name))
+		f, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("zip create %s: %v", name, err)
+		}
+		if _, err := f.Write(data); err != nil {
+			t.Fatalf("zip write %s: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zip close: %v", err)
+	}
+	return archivePath
 }

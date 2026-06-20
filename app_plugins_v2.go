@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1060,6 +1061,11 @@ func newSafeFetchClient(timeout time.Duration) *http.Client {
 			if err := blockInternalHost(req.URL.Host); err != nil {
 				return fmt.Errorf("redirect to internal host: %w", err)
 			}
+			// Strict header allowlist (#160): strip everything except safe,
+			// non-sensitive headers so custom auth (X-Api-Key, etc.) cannot
+			// leak to the redirect target. Go's net/http only strips
+			// Authorization + Cookie on cross-host redirects automatically.
+			stripHeadersForRedirect(req)
 			return nil
 		},
 	}
@@ -1123,8 +1129,10 @@ func notifyDesktop(title, body string) error {
 // =========================================================================
 
 // maxPluginFetchBytes bounds a single plugin fetch response body (defense-
-// in-depth memory guard, mirroring maxPluginQueryRows).
-const maxPluginFetchBytes = 10 * 1024 * 1024 // 10 MB
+// in-depth memory guard, mirroring maxPluginQueryRows). Reduced from 10 MB to
+// 2 MB in #153: the per-plugin rate limiter is now the primary throttle, and
+// 2 MB is generous for real plugin API responses.
+const maxPluginFetchBytes = 2 * 1024 * 1024 // 2 MB
 
 // maxPluginFetchRequestBytes bounds the request body a plugin can send through
 // the fetch proxy, mirroring the response-side cap. Without this, a plugin can
@@ -1154,6 +1162,107 @@ func isForbiddenPluginHeader(lowerKey string) bool {
 		return true
 	}
 	return false
+}
+
+// redirectSafeHeaders is the strict allowlist of request headers that survive
+// a cross-host redirect (#160). Go's net/http strips only Authorization and
+// Cookie automatically; custom auth headers (X-Api-Key, etc.) that are not in
+// isForbiddenPluginHeader would otherwise leak to the redirect target. This
+// allowlist is applied in CheckRedirect so ONLY safe, non-sensitive headers
+// are forwarded.
+var redirectSafeHeaders = map[string]bool{
+	"accept":          true,
+	"accept-language": true,
+	"content-type":    true,
+	"user-agent":      true,
+}
+
+// stripHeadersForRedirect removes every header from req that is NOT in the
+// redirectSafeHeaders allowlist (#160). Called from CheckRedirect on every
+// redirect hop so custom auth headers cannot leak to the redirect target.
+func stripHeadersForRedirect(req *http.Request) {
+	for k := range req.Header {
+		if !redirectSafeHeaders[strings.ToLower(k)] {
+			req.Header.Del(k)
+		}
+	}
+}
+
+// =========================================================================
+// Per-plugin token-bucket rate limiter (#153)
+// =========================================================================
+
+// defaultPluginFetchRPS is the default refill rate (1 request/sec).
+const defaultPluginFetchRPS = 1.0
+
+// defaultPluginFetchBurst is the default bucket capacity (10 requests instantly,
+// then throttled to rps).
+const defaultPluginFetchBurst = 10
+
+// maxPluginFetchRPS is the hard cap on a manifest-declared rps override. A
+// plugin cannot declare more than this; the host rejects it at install.
+const maxPluginFetchRPS = 10.0
+
+// tokenBucket is a standard token-bucket rate limiter. tokens refill at rps
+// up to burst capacity. allow() consumes one token if available.
+type tokenBucket struct {
+	tokens float64
+	last   time.Time
+	rps    float64
+	burst  int
+}
+
+// allow reports whether one token is available, consuming it if so.
+func (tb *tokenBucket) allow(now time.Time) bool {
+	elapsed := now.Sub(tb.last).Seconds()
+	tb.tokens += elapsed * tb.rps
+	if tb.tokens > float64(tb.burst) {
+		tb.tokens = float64(tb.burst)
+	}
+	tb.last = now
+	if tb.tokens >= 1 {
+		tb.tokens--
+		return true
+	}
+	return false
+}
+
+// pluginRateLimiter is a per-plugin token-bucket map guarded by a mutex.
+// A network-granted plugin's fetch calls consult this before hitting the
+// network (#153). Buckets are evicted on uninstall so uninstalled plugins
+// don't leak entries.
+type pluginRateLimiter struct {
+	mu      sync.Mutex
+	buckets map[string]*tokenBucket
+}
+
+func newPluginRateLimiter() *pluginRateLimiter {
+	return &pluginRateLimiter{buckets: make(map[string]*tokenBucket)}
+}
+
+// allow checks (and consumes) one token for pluginID. Returns false if the
+// rate limit is exceeded.
+func (rl *pluginRateLimiter) allow(pluginID string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	b, ok := rl.buckets[pluginID]
+	if !ok {
+		b = &tokenBucket{
+			tokens: float64(defaultPluginFetchBurst),
+			last:   time.Now(),
+			rps:    defaultPluginFetchRPS,
+			burst:  defaultPluginFetchBurst,
+		}
+		rl.buckets[pluginID] = b
+	}
+	return b.allow(time.Now())
+}
+
+// evict removes the bucket for pluginID (called on uninstall/disable).
+func (rl *pluginRateLimiter) evict(pluginID string) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	delete(rl.buckets, pluginID)
 }
 
 // maxPluginFetchRedirects caps redirect hops so a plugin can't be tricked into
@@ -1201,9 +1310,13 @@ type NetworkAuditEntry struct {
 // PluginFetch performs an HTTP request through the Go backend (CORS-free),
 // with timeout / size / redirect caps. Gated by the network capability.
 // The host + status are appended to the in-memory audit log (never the body).
+// Per-plugin rate-limited (#153): a network-granted plugin's RPS is capped.
 func (a *App) PluginFetch(pluginID string, input PluginFetchInput) (PluginFetchResult, error) {
 	if err := a.requireGrant(pluginID, plugins.CapNetwork); err != nil {
 		return PluginFetchResult{}, err
+	}
+	if a.rateLimiter != nil && !a.rateLimiter.allow(pluginID) {
+		return PluginFetchResult{}, fmt.Errorf("plugin %q fetch rate limit exceeded (default %g rps, burst %d)", pluginID, defaultPluginFetchRPS, defaultPluginFetchBurst)
 	}
 	if input.URL == "" {
 		return PluginFetchResult{}, fmt.Errorf("url is required")
@@ -1311,12 +1424,100 @@ func (a *App) GetNetworkAudit() ([]NetworkAuditEntry, error) {
 	return out, nil
 }
 
-// ClearNetworkAudit empties the audit log.
+// ClearNetworkAudit empties the in-memory audit log AND truncates the on-disk
+// per-plugin network.log files so a clear is durable across restarts (#157).
 func (a *App) ClearNetworkAudit() error {
 	networkAuditMu.Lock()
-	defer networkAuditMu.Unlock()
 	networkAudit = nil
+	networkAuditMu.Unlock()
+	// Best-effort on-disk truncation: walk <vault>/.system/plugins/*/network.log
+	// and empty each file. Errors are non-fatal (audit log is diagnostic).
+	if a.vaultPath != "" {
+		pluginsDir := filepath.Join(a.vaultPath, ".system", "plugins")
+		entries, err := os.ReadDir(pluginsDir)
+		if err == nil {
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				logPath := filepath.Join(pluginsDir, e.Name(), "network.log")
+				if _, err := os.Stat(logPath); err == nil {
+					_ = os.WriteFile(logPath, []byte{}, 0o644)
+				}
+			}
+		}
+	}
 	return nil
+}
+
+// seedNetworkAuditFromDisk reads every on-disk network.log file under the
+// vault's .system/plugins/ tree and seeds the in-memory audit log so entries
+// survive a restart (#157). Called once during initializeVaultServices. The
+// on-disk format is one line per entry: `<RFC3339> <METHOD> <host> <status>
+// <pluginID>`. The in-memory log is capped at 500 entries (most recent).
+func seedNetworkAuditFromDisk(vaultPath string) {
+	if vaultPath == "" {
+		return
+	}
+	pluginsDir := filepath.Join(vaultPath, ".system", "plugins")
+	entries, err := os.ReadDir(pluginsDir)
+	if err != nil {
+		return
+	}
+	var seeded []NetworkAuditEntry
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		logPath := filepath.Join(pluginsDir, e.Name(), "network.log")
+		data, err := os.ReadFile(logPath)
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+		for _, line := range lines {
+			entry, ok := parseNetworkLogLine(line)
+			if ok {
+				seeded = append(seeded, entry)
+			}
+		}
+	}
+	// Sort by timestamp (oldest first) so we can trim to the last 500.
+	sort.Slice(seeded, func(i, j int) bool {
+		return seeded[i].At < seeded[j].At
+	})
+	if len(seeded) > 500 {
+		seeded = seeded[len(seeded)-500:]
+	}
+	networkAuditMu.Lock()
+	// Only seed if the in-memory log is empty (don't overwrite entries that
+	// may have been added between vault open and this call).
+	if len(networkAudit) == 0 {
+		networkAudit = seeded
+	}
+	networkAuditMu.Unlock()
+}
+
+// parseNetworkLogLine parses one line from a network.log file into a
+// NetworkAuditEntry. The format is: `<RFC3339> <METHOD> <host> <status>
+// <pluginID>`. Returns ok=false on any parse failure (best-effort).
+func parseNetworkLogLine(line string) (NetworkAuditEntry, bool) {
+	parts := strings.Fields(line)
+	if len(parts) < 5 {
+		return NetworkAuditEntry{}, false
+	}
+	status, err := strconv.Atoi(parts[3])
+	if err != nil {
+		return NetworkAuditEntry{}, false
+	}
+	// Rejoin host parts in case the host contained spaces (unlikely but safe).
+	return NetworkAuditEntry{
+		At:     parts[0],
+		Method: parts[1],
+		Host:   parts[2],
+		Status: status,
+		Plugin: parts[4],
+	}, true
 }
 
 // auditNetwork appends a {plugin, host, status, time} row. The body is NEVER

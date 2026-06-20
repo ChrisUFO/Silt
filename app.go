@@ -93,6 +93,11 @@ type App struct {
 	pluginRODBMu sync.Mutex
 	pluginRODB   *sql.DB
 
+	// rateLimiter caps per-plugin PluginFetch RPS so a network-granted plugin
+	// cannot hammer external services (#153). Guarded by its own internal
+	// mutex; eviction happens on uninstall.
+	rateLimiter *pluginRateLimiter
+
 	// vaultMu guards the lifecycle of the vault-scoped service pointers (db,
 	// coordinator, watcher, tracker, vaultPath) against concurrent IPC access.
 	// Wails dispatches each bound method on its own goroutine, so without this
@@ -124,6 +129,7 @@ type linkedConfigEntry struct {
 func NewApp() *App {
 	return &App{
 		spacesPerTab: 4,
+		rateLimiter:  newPluginRateLimiter(),
 	}
 }
 
@@ -437,6 +443,10 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 			a.templateWatcher = tw
 		}
 	}
+
+	// Seed the in-memory network audit log from the on-disk per-plugin
+	// network.log files so entries survive a restart (#157).
+	seedNetworkAuditFromDisk(vaultPath)
 
 	// Report any paths the watcher could not subscribe to (fsnotify
 	// limits, permissions, etc.) so the UI can inform the user.
@@ -4672,6 +4682,10 @@ func (a *App) UninstallPlugin(pluginID string) error {
 	}
 	if err := plugins.Uninstall(a.vaultPath, pluginID); err != nil {
 		return err
+	}
+	// Evict the rate-limiter bucket so uninstalled plugins don't leak entries (#153).
+	if a.rateLimiter != nil {
+		a.rateLimiter.evict(pluginID)
 	}
 	// Best-effort grant cleanup; a failure here must not mask the successful
 	// uninstall (the folder is already gone). The grants block is harmless if

@@ -42,6 +42,7 @@ func newTestApp(t *testing.T) *App {
 		tracker:      tracker,
 		vaultPath:    vaultPath,
 		spacesPerTab: 4,
+		rateLimiter:  newPluginRateLimiter(),
 	}
 	// Load the scaffolded config.yaml so config-backed bindings
 	// (GetPluginRegistry, GetSystemConfig) behave as in production.
