@@ -65,8 +65,23 @@
     return `:root { ${decls} } body { margin: 0; font-family: var(--font-body, system-ui, sans-serif); color: var(--text-primary, #e4e4e7); background: var(--bg-panel, #161619); }`
   }
 
+  // CSP meta tag injected into the iframe srcdoc (#149). connect-src 'none'
+  // blocks fetch(), XMLHttpRequest, WebSocket, EventSource, and
+  // navigator.sendBeacon from inside the iframe, so a plugin surface cannot
+  // bypass the host's SSRF-defended, audit-logged ctx.fetch proxy with a
+  // direct network request. default-src 'none' blocks all other resource
+  // types (images, fonts, media). script-src 'unsafe-inline' allows the
+  // bridge script to run (it is inline in the srcdoc). style-src 'unsafe-
+  // inline' allows the injected theme CSS.
+  const cspMeta =
+    '<meta http-equiv="Content-Security-Policy" content="' +
+    "default-src 'none'; " +
+    "script-src 'unsafe-inline'; " +
+    "style-src 'unsafe-inline'; " +
+    "connect-src 'none'\">"
+
   const srcdoc = $derived(
-    `<html><head><style>${themeCss()}</style></head><body>${surface.html}${bridgeScript}</body></html>`
+    `<html><head>${cspMeta}<style>${themeCss()}</style></head><body>${surface.html}${bridgeScript}</body></html>`
   )
 
   // Explicit allowlist of proxiable PluginContext method names. Anything not
