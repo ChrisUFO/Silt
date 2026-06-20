@@ -7,9 +7,12 @@
 // the union (grouped: Built-ins / Plugins). When a command is selected, the
 // editor calls its handler with the live editor + cursor position.
 //
-// Registration is user-driven (a menu item) so it is not capability-gated; the
-// handler's own privileged calls (file I/O, network, etc.) route through the
-// normal capability gates.
+// Capability gate (#158): plugin commands (with a pluginID) are checked
+// against the trusted Go-provided grant cache before registration. Built-in
+// commands (no pluginID) bypass the gate. This closes the advisory-gap: a
+// plugin importing registerSlashCommand directly still hits the gate.
+
+import { isGranted } from '../../plugins/grants.svelte'
 
 export interface SlashCommand {
   /** Unique id. Plugin commands are namespaced as `<pluginID>:<id>`. */
@@ -37,10 +40,22 @@ const registry = new Map<string, SlashCommand>()
  * Register a slash command. A plugin command's id is namespaced as
  * `<pluginID>:<id>` to avoid collisions with built-ins. Re-registering the
  * same namespaced id replaces the prior entry (idempotent on reload).
+ *
+ * Capability gate (#158): if the command has a pluginID, the registry checks
+ * isGranted(pluginID, 'editor-schema') from the trusted Go grant cache. An
+ * ungranted plugin's command is silently dropped (warn). Built-in commands
+ * (no pluginID) bypass the gate.
  */
 export function registerSlashCommand(cmd: SlashCommand): void {
   if (!cmd.id || !cmd.label) {
     throw new Error('SlashCommand requires id + label')
+  }
+  if (cmd.pluginID && !isGranted(cmd.pluginID, 'editor-schema')) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[silt] plugin ${cmd.pluginID} cannot register slash commands without the editor-schema capability`
+    )
+    return
   }
   registry.set(cmd.id, cmd)
 }

@@ -59,14 +59,6 @@ function getPluginSchemaDefault(pluginID: string, key: string): unknown {
   return field?.default
 }
 
-// hasCapability checks whether a plugin DECLARED a capability in its manifest.
-// Used for client-side gating of editor-schema (slash commands, decorations).
-// The manifest was validated at install time, so this is a trusted check.
-function hasCapability(pluginID: string, cap: string): boolean {
-  const reg = loadedPlugins.plugins.get(pluginID)
-  return !!reg?.manifest?.capabilities?.[cap]
-}
-
 /**
  * Build a PluginContext whose `activeNotebook/Section/Page` are live reactive
  * getters backed by the module-scoped $state in location.svelte.ts (#69).
@@ -284,17 +276,10 @@ export function makePluginContext(pluginID: string): PluginContext {
       })),
 
     // --- Editor extension points (#110) — plugin slash commands -------------
-    // editor-schema capability check: only plugins that DECLARED editor-schema
-    // in their manifest can register slash commands / decorations. The manifest
-    // was validated at install time (installer.go), so this is a trusted
-    // client-side gate.
+    // The capability gate lives INSIDE the registry now (#158): the registry
+    // checks isGranted(pluginID, 'editor-schema') from the trusted Go grant
+    // cache. The SDK closure just delegates.
     registerSlashCommand: (cmd) => {
-      if (!hasCapability(pluginID, 'editor-schema')) {
-        console.warn(
-          `[silt] plugin ${pluginID} cannot register slash commands without the editor-schema capability`
-        )
-        return () => {}
-      }
       const namespacedId = `${pluginID}:${cmd.id}`
       registerSlashCommand({
         id: namespacedId,
@@ -308,13 +293,8 @@ export function makePluginContext(pluginID: string): PluginContext {
     },
 
     // --- Editor decorations (#110) — read-only overlays --------------------
+    // Capability gate lives INSIDE the registry (#158).
     provideDecorations: (id, provider) => {
-      if (!hasCapability(pluginID, 'editor-schema')) {
-        console.warn(
-          `[silt] plugin ${pluginID} cannot provide decorations without the editor-schema capability`
-        )
-        return () => {}
-      }
       return registerDecorationProvider(id, pluginID, provider as any)
     },
 

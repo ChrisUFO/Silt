@@ -10,6 +10,7 @@ import { cleanupPlugin, clearAllSubscribers } from './events'
 import { unregisterPluginSlashCommands } from '../lib/editor/slash-registry'
 import { unregisterPluginSurfaces } from './surfaces'
 import { unregisterPluginDecorations } from '../lib/editor/decorations'
+import { initGrants } from './grants.svelte'
 import DiskPluginNotice from './DiskPluginNotice.svelte'
 
 // Whether the lifecycle wiring (vault:closing subscription) has been installed.
@@ -41,6 +42,10 @@ export async function loadPlugins(
   // Keep the reactive location state in sync (#69). Plugins that read
   // ctx.activeNotebook at query time see the live value.
   setActiveLocation(activeNotebook, activeSection, activePage)
+  // Initialize the granted-capabilities cache BEFORE plugins load, so the
+  // registry-internal gates (#158) see the correct grants when plugins call
+  // registerSlashCommand / registerSurface / provideDecorations during init.
+  initGrants()
   const plugins = new Map<string, RegisteredPlugin>()
   const errors: { id: string; message: string }[] = []
 

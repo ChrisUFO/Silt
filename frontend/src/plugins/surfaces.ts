@@ -8,6 +8,13 @@
 // gated by ui-surface). The host mounts each surface into the appropriate slot
 // (sidebar panel, modal, status-bar item). This module tracks active surfaces
 // and their cleanup.
+//
+// Capability gate (#158): registerSurface checks isGranted(pluginID,
+// 'ui-surface') from the trusted Go grant cache BEFORE adding to the
+// registry. This is the client-side mirror of the Go-side
+// PluginRegisterSurface gate (#154) — defense in depth.
+
+import { isGranted } from './grants.svelte'
 
 export type SurfaceKind =
   | 'sidebar-panel'
@@ -40,11 +47,24 @@ function notify() {
 /**
  * Register a plugin surface. The plugin's HTML runs in a sandboxed iframe; the
  * bridge SDK (injected by SurfaceFrame) proxies PluginContext over postMessage.
+ *
+ * Capability gate (#158): checks isGranted(pluginID, 'ui-surface') from the
+ * trusted Go grant cache. An ungranted plugin's surface is silently dropped
+ * (warn). This is defense-in-depth alongside the Go-side
+ * PluginRegisterSurface gate (#154).
+ *
  * Returns an unregister function.
  */
 export function registerSurface(surface: PluginSurface): () => void {
   if (!surface.id || !surface.pluginID || !surface.html) {
     throw new Error('Surface requires id, pluginID, and html')
+  }
+  if (!isGranted(surface.pluginID, 'ui-surface')) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[silt] plugin ${surface.pluginID} cannot register surfaces without the ui-surface capability`
+    )
+    return () => {}
   }
   surfaces.set(surface.id, surface)
   notify()

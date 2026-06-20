@@ -1,5 +1,16 @@
-// Slash-command registry tests (#110).
-import { describe, expect, it, beforeEach } from 'vitest'
+// Slash-command registry tests (#110, #158).
+import { describe, expect, it, beforeEach, vi } from 'vitest'
+
+// Mock the grants module so the registry-internal gate can be controlled
+// per-test without hitting wailsjs IPC (#158).
+vi.mock('../../plugins/grants.svelte', () => ({
+  isGranted: vi.fn(() => true),
+  initGrants: vi.fn(),
+  refreshGrants: vi.fn(),
+  resetGrantsForTests: vi.fn(),
+  setGrantsForTests: vi.fn()
+}))
+
 import {
   registerSlashCommand,
   unregisterSlashCommand,
@@ -7,10 +18,12 @@ import {
   getSlashCommands,
   resetSlashRegistryForTests
 } from './slash-registry'
+import { isGranted } from '../../plugins/grants.svelte'
 
-describe('slash-command registry (#110)', () => {
+describe('slash-command registry (#110, #158)', () => {
   beforeEach(() => {
     resetSlashRegistryForTests()
+    vi.mocked(isGranted).mockReturnValue(true)
   })
 
   it('registers and retrieves a command', () => {
@@ -62,5 +75,24 @@ describe('slash-command registry (#110)', () => {
   it('rejects a command without id or label', () => {
     expect(() => registerSlashCommand({ id: '', label: 'X' })).toThrow()
     expect(() => registerSlashCommand({ id: 'x', label: '' } as any)).toThrow()
+  })
+
+  // --- #158: registry-internal capability gate -------------------------------
+
+  it('refuses plugin commands without editor-schema grant', () => {
+    vi.mocked(isGranted).mockReturnValue(false)
+    registerSlashCommand({
+      id: 'ungranted:cmd',
+      label: 'Blocked',
+      pluginID: 'ungranted'
+    })
+    expect(getSlashCommands()).toHaveLength(0)
+  })
+
+  it('built-in commands (no pluginID) bypass the gate even when ungranted', () => {
+    vi.mocked(isGranted).mockReturnValue(false)
+    registerSlashCommand({ id: 'builtin', label: 'Built-in' })
+    expect(getSlashCommands()).toHaveLength(1)
+    expect(getSlashCommands()[0].id).toBe('builtin')
   })
 })

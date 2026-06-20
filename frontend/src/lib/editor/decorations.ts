@@ -3,6 +3,12 @@
 // decorations (read-only overlays — highlight ranges, lint markers, spell-
 // underline). Decorations are transient: recomputed each render, never
 // persisted.
+//
+// Capability gate (#158): registerDecorationProvider checks
+// isGranted(pluginID, 'editor-schema') from the trusted Go grant cache before
+// adding the provider. An ungranted plugin's provider is silently dropped.
+
+import { isGranted } from '../../plugins/grants.svelte'
 
 export interface DecorationSpec {
   /** Start position (inclusive, 0-based doc offset). */
@@ -25,12 +31,25 @@ const providers = new Map<
   { pluginID: string; fn: DecorationProvider }
 >()
 
-/** Register a decoration provider. Returns an unregister function. */
+/**
+ * Register a decoration provider. Returns an unregister function.
+ *
+ * Capability gate (#158): checks isGranted(pluginID, 'editor-schema') from
+ * the trusted Go grant cache. An ungranted plugin's provider is silently
+ * dropped (warn).
+ */
 export function registerDecorationProvider(
   id: string,
   pluginID: string,
   fn: DecorationProvider
 ): () => void {
+  if (!isGranted(pluginID, 'editor-schema')) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[silt] plugin ${pluginID} cannot provide decorations without the editor-schema capability`
+    )
+    return () => {}
+  }
   const key = `${pluginID}:${id}`
   providers.set(key, { pluginID, fn })
   return () => providers.delete(key)

@@ -1,5 +1,16 @@
-// Plugin surface manager tests (#117).
-import { describe, expect, it, beforeEach } from 'vitest'
+// Plugin surface manager tests (#117, #158).
+import { describe, expect, it, beforeEach, vi } from 'vitest'
+
+// Mock the grants module so the registry-internal gate can be controlled
+// per-test without hitting wailsjs IPC (#158).
+vi.mock('./grants.svelte', () => ({
+  isGranted: vi.fn(() => true),
+  initGrants: vi.fn(),
+  refreshGrants: vi.fn(),
+  resetGrantsForTests: vi.fn(),
+  setGrantsForTests: vi.fn()
+}))
+
 import {
   registerSurface,
   unregisterSurface,
@@ -8,10 +19,12 @@ import {
   onSurfacesChanged,
   resetSurfacesForTests
 } from './surfaces'
+import { isGranted } from './grants.svelte'
 
-describe('plugin surface manager (#117)', () => {
+describe('plugin surface manager (#117, #158)', () => {
   beforeEach(() => {
     resetSurfacesForTests()
+    vi.mocked(isGranted).mockReturnValue(true)
   })
 
   it('registers and retrieves surfaces by kind', () => {
@@ -107,5 +120,20 @@ describe('plugin surface manager (#117)', () => {
         html: '<x/>'
       })
     ).toThrow()
+  })
+
+  // --- #158: registry-internal capability gate -------------------------------
+
+  it('refuses surfaces without ui-surface grant', () => {
+    vi.mocked(isGranted).mockReturnValue(false)
+    const off = registerSurface({
+      id: 'ungranted:panel',
+      pluginID: 'ungranted',
+      kind: 'sidebar-panel',
+      label: 'Blocked',
+      html: '<div/>'
+    })
+    off()
+    expect(getSurfaces()).toHaveLength(0)
   })
 })
