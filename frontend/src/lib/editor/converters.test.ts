@@ -760,3 +760,35 @@ describe('color mark round-trips (#170)', () => {
     editor.destroy()
   })
 })
+
+describe('cross-feature round-trip (#168, #170, #173)', () => {
+  // A single test exercising multiple features together to verify they compose.
+  it('bold + italic + color + alignment all round-trip together', () => {
+    const blocks = [
+      mkBlock('HEADER', {
+        clean_text: 'Title **bold** <!-- silt-align: center -->',
+        depth: 1
+      }),
+      mkBlock('NOTE', {
+        clean_text:
+          '***bold italic*** and <span style="color: #dc2626">red</span> text',
+        depth: 0
+      }),
+      mkBlock('TASK', {
+        clean_text: 'task with `code` and ==highlight==',
+        status: 'TODO'
+      })
+    ]
+    const back = docToBlocks(blocksToDoc(blocks))
+    expect(back).toHaveLength(3)
+    back.forEach((b, i) => expectSemanticEqual(b, blocks[i]))
+  })
+
+  it('Smart Graph tokens coexist with all mark types', () => {
+    const UUID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    const cleanText = `**bold** ((${UUID})) and <span style="background-color: #facc15">hl</span>`
+    const block = mkBlock('NOTE', { clean_text: cleanText })
+    const back = docToBlocks(blocksToDoc([block]))
+    expect(back[0].clean_text).toBe(cleanText)
+  })
+})
