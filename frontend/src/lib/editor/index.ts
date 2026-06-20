@@ -7,7 +7,8 @@ export {
   NoteBlock,
   HeaderBlock,
   SiltBlockExtensions,
-  SiltInlineMarkExtensions
+  SiltInlineMarkExtensions,
+  SiltColorMarkExtensions
 } from './schema'
 export { SiltBlockExtensionsWithNodeViews } from './nodeViews'
 export { blocksToDoc, docToBlocks } from './converters'

@@ -118,6 +118,11 @@ type FormattingConfig struct {
 	// TypographyEnabled controls smart input replacements (-- → —, (c) → ©,
 	// straight → curly quotes). Default true; markdown purists can disable (#168).
 	TypographyEnabled *bool `yaml:"typography_enabled,omitempty" json:"typography_enabled,omitempty"`
+	// ColorEnabled controls the text/background color pickers (#170). Default
+	// true; markdown purists can disable to keep files 100% portable. The marks
+	// still parse from incoming files when disabled; only the editor's setColor
+	// calls become no-ops.
+	ColorEnabled *bool `yaml:"color_enabled,omitempty" json:"color_enabled,omitempty"`
 }
 
 // TabRef is a persisted reference to an open tab's page (#142). It is the
@@ -283,6 +288,7 @@ func Defaults() SystemConfig {
 			DismissedTips:     []string{},
 			Formatting: FormattingConfig{
 				TypographyEnabled: boolPtr(true),
+				ColorEnabled:      boolPtr(true),
 			},
 		},
 	}
@@ -508,6 +514,9 @@ func normalize(cfg SystemConfig) SystemConfig {
 	// TypographyEnabled: nil → true (#168 Phase 3).
 	if cfg.UI.Formatting.TypographyEnabled == nil {
 		cfg.UI.Formatting.TypographyEnabled = boolPtr(true)
+	}
+	if cfg.UI.Formatting.ColorEnabled == nil {
+		cfg.UI.Formatting.ColorEnabled = boolPtr(true)
 	}
 	// ShowWordCount: nil → false (#168 Phase 3). Opt-in.
 	if cfg.Editor.ShowWordCount == nil {

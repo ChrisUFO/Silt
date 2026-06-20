@@ -20,7 +20,7 @@
 //   the Go serializer (renderBlock) preserves the original bullet marker.
 //   The editor-created default is '- ' (matching renderBlock's default).
 
-import { Node, mergeAttributes } from '@tiptap/core'
+import { Node, Mark, mergeAttributes } from '@tiptap/core'
 import Highlight from '@tiptap/extension-highlight'
 import Subscript from '@tiptap/extension-subscript'
 import Superscript from '@tiptap/extension-superscript'
@@ -39,6 +39,76 @@ import Superscript from '@tiptap/extension-superscript'
 // and ==...== verbatim — clean_text is opaque to Go). The converter
 // (converters.ts) handles parse/serialize for all 9 marks symmetrically.
 export const SiltInlineMarkExtensions = [Highlight, Subscript, Superscript]
+
+// ---- TextColor mark (#170) -----------------------------------------------
+// Inline character color. Serialized on-disk as
+// `<span style="color: #hex">text</span>`. The Go parser preserves HTML in
+// clean_text verbatim, so the span round-trips with zero parser changes.
+export const TextColor = Mark.create({
+  name: 'textColor',
+  inclusive: true,
+  addAttributes() {
+    return {
+      color: {
+        default: null,
+        parseHTML: (el) =>
+          (el as HTMLElement).style.color?.trim() || null,
+        renderHTML: (attrs) =>
+          attrs.color ? { style: `color: ${attrs.color}` } : {}
+      }
+    }
+  },
+  parseHTML() {
+    return [
+      {
+        tag: 'span[style]',
+        getAttrs: (el) => {
+          const color = (el as HTMLElement).style.color
+          return color ? { color: color.trim() } : false
+        }
+      }
+    ]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['span', mergeAttributes(HTMLAttributes), 0]
+  }
+})
+
+// ---- BackgroundColor mark (#170) ------------------------------------------
+// Inline background (highlighter) color. Serialized on-disk as
+// `<span style="background-color: #hex">text</span>`. Separate from the
+// Highlight mark (==text==, which uses the theme accent color).
+export const BackgroundColor = Mark.create({
+  name: 'backgroundColor',
+  inclusive: true,
+  addAttributes() {
+    return {
+      color: {
+        default: null,
+        parseHTML: (el) =>
+          (el as HTMLElement).style.backgroundColor?.trim() || null,
+        renderHTML: (attrs) =>
+          attrs.color ? { style: `background-color: ${attrs.color}` } : {}
+      }
+    }
+  },
+  parseHTML() {
+    return [
+      {
+        tag: 'span[style]',
+        getAttrs: (el) => {
+          const bg = (el as HTMLElement).style.backgroundColor
+          return bg ? { color: bg.trim() } : false
+        }
+      }
+    ]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['span', mergeAttributes(HTMLAttributes), 0]
+  }
+})
+
+export const SiltColorMarkExtensions = [TextColor, BackgroundColor]
 
 // ---- TaskBlock -----------------------------------------------------------
 // Renders on-disk as:

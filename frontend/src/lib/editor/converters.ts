@@ -56,6 +56,14 @@ function markOpen(mark: MarkRef): string {
     case 'underline': return '<u>'
     case 'subscript': return '<sub>'
     case 'superscript': return '<sup>'
+    case 'textColor': {
+      const color = (mark.attrs as Record<string, unknown> | undefined)?.color
+      return color ? `<span style="color: ${color}">` : ''
+    }
+    case 'backgroundColor': {
+      const color = (mark.attrs as Record<string, unknown> | undefined)?.color
+      return color ? `<span style="background-color: ${color}">` : ''
+    }
     case 'link': return '['
     default: return ''
   }
@@ -72,6 +80,9 @@ function markClose(mark: MarkRef): string {
     case 'underline': return '</u>'
     case 'subscript': return '</sub>'
     case 'superscript': return '</sup>'
+    case 'textColor':
+    case 'backgroundColor':
+      return '</span>'
     case 'link': {
       const href = (mark.attrs as Record<string, unknown> | undefined)?.href
       return `](${href || ''})`
@@ -143,6 +154,7 @@ interface MarkPattern {
   shield?: boolean // if true, inner content is NOT recursively parsed (code)
   wordBoundary?: boolean // if true, only match at word boundaries (_, __)
   extractAttrs?: (m: RegExpExecArray) => Record<string, unknown>
+  innerGroup?: number // capture group for inner content (default 1; color marks use 2)
 }
 
 // Ordered by priority: code first (shields), then longer delimiters before
@@ -162,7 +174,21 @@ const MARK_PATTERNS: MarkPattern[] = [
   { type: 'highlight', regex: /==(.+?)==/y },
   { type: 'underline', regex: /<u>(.+?)<\/u>/y },
   { type: 'subscript', regex: /<sub>(.+?)<\/sub>/y },
-  { type: 'superscript', regex: /<sup>(.+?)<\/sup>/y }
+  { type: 'superscript', regex: /<sup>(.+?)<\/sup>/y },
+  // Text color (#170): <span style="color: X">text</span>
+  {
+    type: 'textColor',
+    regex: /<span style="color:\s*([^;"]+?)\s*;?">(.+?)<\/span>/y,
+    innerGroup: 2,
+    extractAttrs: (m) => ({ color: m[1].trim() })
+  },
+  // Background color (#170): <span style="background-color: X">text</span>
+  {
+    type: 'backgroundColor',
+    regex: /<span style="background-color:\s*([^;"]+?)\s*;?">(.+?)<\/span>/y,
+    innerGroup: 2,
+    extractAttrs: (m) => ({ color: m[1].trim() })
+  }
 ]
 
 interface MarkMatch {
@@ -189,7 +215,7 @@ function tryMatchMarkAt(text: string, pos: number): MarkMatch | null {
     }
     return {
       type: pattern.type,
-      inner: m[1],
+      inner: m[pattern.innerGroup ?? 1],
       end: pos + m[0].length,
       shield: pattern.shield === true,
       attrs: pattern.extractAttrs?.(m)

@@ -157,3 +157,9 @@ registerSlashCommand({ id: 'align-left', label: 'Align left', description: 'Alig
 registerSlashCommand({ id: 'align-center', label: 'Align center', description: 'Center the current block', icon: 'format_align_center', shortcut: 'Ctrl+Shift+E' })
 registerSlashCommand({ id: 'align-right', label: 'Align right', description: 'Align the current block to the right', icon: 'format_align_right', shortcut: 'Ctrl+Shift+R' })
 registerSlashCommand({ id: 'align-justify', label: 'Align justify', description: 'Justify the current block', icon: 'format_align_justify', shortcut: 'Ctrl+Shift+J' })
+
+// --- Color commands (#170) ------------------------------------------------
+registerSlashCommand({ id: 'text-color', label: 'Text color', description: 'Pick a text color for the selection', icon: 'palette' })
+registerSlashCommand({ id: 'background-color', label: 'Background color', description: 'Pick a background color for the selection', icon: 'format_color_fill' })
+registerSlashCommand({ id: 'remove-color', label: 'Remove text color', description: 'Remove the text color from the selection', icon: 'format_color_reset' })
+registerSlashCommand({ id: 'remove-background', label: 'Remove background color', description: 'Remove the background color from the selection', icon: 'format_color_reset' })

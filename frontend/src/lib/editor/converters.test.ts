@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
-import { SiltBlockExtensions, SiltInlineMarkExtensions, UniqueBlockIds } from './index'
+import { SiltBlockExtensions, SiltInlineMarkExtensions, SiltColorMarkExtensions, UniqueBlockIds } from './index'
 import { EmbedNode, BlockReferenceNode } from './schema'
 import {
   blocksToDoc,
@@ -62,6 +62,7 @@ function makeEditor() {
       }),
       ...SiltBlockExtensions,
       ...SiltInlineMarkExtensions,
+      ...SiltColorMarkExtensions,
       EmbedNode,
       BlockReferenceNode,
       UniqueBlockIds
@@ -711,6 +712,47 @@ describe('block alignment round-trips (#173)', () => {
   it('alignment survives the editor round-trip', () => {
     const editor = makeEditor()
     const cleanText = 'centered <!-- silt-align: center -->'
+    const block = mkBlock('NOTE', { clean_text: cleanText })
+    editor.commands.setContent(blocksToDoc([block]))
+    const back = docToBlocks(editor.getJSON() as DocJSON)
+    expect(back[0].clean_text).toBe(cleanText)
+    editor.destroy()
+  })
+})
+
+describe('color mark round-trips (#170)', () => {
+  it('round-trips text color', () => {
+    const cleanText = 'this is <span style="color: #dc2626">red</span> text'
+    const block = mkBlock('NOTE', { clean_text: cleanText })
+    const back = docToBlocks(blocksToDoc([block]))
+    expect(back[0].clean_text).toBe(cleanText)
+  })
+
+  it('round-trips background color', () => {
+    const cleanText = 'this is <span style="background-color: #facc15">highlighted</span> text'
+    const block = mkBlock('NOTE', { clean_text: cleanText })
+    const back = docToBlocks(blocksToDoc([block]))
+    expect(back[0].clean_text).toBe(cleanText)
+  })
+
+  it('round-trips nested text color inside bold', () => {
+    const cleanText = '**bold <span style="color: #dc2626">red</span> bold**'
+    const block = mkBlock('NOTE', { clean_text: cleanText })
+    const back = docToBlocks(blocksToDoc([block]))
+    expect(back[0].clean_text).toBe(cleanText)
+  })
+
+  it('spans without color style are ignored', () => {
+    const cleanText = '<span>plain</span> text'
+    const block = mkBlock('NOTE', { clean_text: cleanText })
+    const back = docToBlocks(blocksToDoc([block]))
+    // The span without a color style is treated as literal text
+    expect(back[0].clean_text).toBe('<span>plain</span> text')
+  })
+
+  it('text color survives the editor round-trip', () => {
+    const editor = makeEditor()
+    const cleanText = '<span style="color: #dc2626">red text</span>'
     const block = mkBlock('NOTE', { clean_text: cleanText })
     editor.commands.setContent(blocksToDoc([block]))
     const back = docToBlocks(editor.getJSON() as DocJSON)

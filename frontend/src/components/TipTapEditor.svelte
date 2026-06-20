@@ -15,6 +15,7 @@
   import {
     SiltBlockExtensionsWithNodeViews,
     SiltInlineMarkExtensions,
+    SiltColorMarkExtensions,
     UniqueBlockIds,
     SiltBlockKeymaps,
     TaskMetaSuggest,
@@ -83,7 +84,7 @@
 
   // Active inline marks in the current selection (#168). Updated on every
   // selection change so the FormatToolbar buttons reflect aria-pressed state.
-  const ALL_MARKS = ['bold', 'italic', 'underline', 'strike', 'code', 'highlight', 'subscript', 'superscript', 'link']
+  const ALL_MARKS = ['bold', 'italic', 'underline', 'strike', 'code', 'highlight', 'subscript', 'superscript', 'link', 'textColor', 'backgroundColor']
   let activeMarks = $state<Set<string>>(new Set())
 
   // Selection bubble state (#168): tracks whether the selection is non-
@@ -478,6 +479,16 @@
       setBlockAlignAttr('right')
     } else if (commandId === 'align-justify') {
       setBlockAlignAttr('justify')
+    } else if (commandId === 'text-color') {
+      const color = window.prompt('Enter color (hex, e.g. #ff0000):')
+      if (color && editorInstance) editorInstance.chain().focus().setMark('textColor', { color }).run()
+    } else if (commandId === 'background-color') {
+      const color = window.prompt('Enter background color (hex, e.g. #ffff00):')
+      if (color && editorInstance) editorInstance.chain().focus().setMark('backgroundColor', { color }).run()
+    } else if (commandId === 'remove-color') {
+      if (editorInstance) editorInstance.chain().focus().unsetMark('textColor').run()
+    } else if (commandId === 'remove-background') {
+      if (editorInstance) editorInstance.chain().focus().unsetMark('backgroundColor').run()
     } else if (commandId === 'today') {
       const d = new Date()
       const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
