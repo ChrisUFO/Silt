@@ -555,6 +555,21 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, source, notebook, section
 	return err
 }
 
+// DeleteBlockFromPage removes a single block by ID, but ONLY if it is at the
+// specified source/notebook/section/page. This page-scoping is critical for
+// the cross-page-move source-removal path: the block has already been indexed
+// at the TARGET page by the first pass. A non-scoped delete would remove it
+// from the target too (#104 concurrency fix).
+func (dm *DatabaseManager) DeleteBlockFromPage(blockID, source, notebook, section, page string) error {
+	if source == "" {
+		source = "vault"
+	}
+	_, err := dm.db.Exec(
+		"DELETE FROM blocks WHERE id = ? AND source = ? AND notebook = ? AND section = ? AND page = ?",
+		blockID, source, notebook, section, page)
+	return err
+}
+
 // BlockIDsForPage returns the IDs of every block currently indexed for a page,
 // without materializing the full ParsedBlock rows. Used by the eviction paths
 // (DeletePage, watcher Remove/Rename, SaveFileBlocks replacement) to release the

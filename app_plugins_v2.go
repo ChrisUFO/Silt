@@ -366,25 +366,17 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 			if !isPathWithinRoot(origPath, origDir) {
 				return fmt.Errorf("cross-page move: source path escapes notebook root")
 			}
-			// Read + filter + write under LockFileWrite so two concurrent
-			// moves from the same source page cannot interleave a stale
-			// read with the other's write. Before this fix, the
-			// FetchPageBlocks was outside the lock, so goroutine 1 could
-			// read a snapshot that still included block B, then goroutine 2
-			// writes Source without B, then goroutine 1 writes Source WITH B
-			// (re-indexing B back to Source, stealing it from its target).
+			// Remove the moved block from the source page. We do a TARGETED
+			// delete (DELETE WHERE id = ?) instead of re-indexing the whole
+			// page via IndexFileBlocks. This is critical for concurrency:
+			// IndexFileBlocks does "DELETE FROM blocks WHERE id IN (...)"
+			// for every block in the filtered list, which would delete blocks
+			// that a concurrent goroutine already moved to ANOTHER page.
+			// The targeted delete only removes the single block being moved.
 			blockID := r.op.BlockID
 			var writeErr error
 			a.coordinator.LockFileWrite(origPath, func() {
-				// Read the CURRENT source-page blocks from the DB inside
-				// the lock so the snapshot is fresh.
-				srcBlocks, srcErr := a.FetchPageBlocks(sn, ss, sp)
-				if srcErr != nil {
-					writeErr = fmt.Errorf("cross-page move: fetch source %s/%s/%s: %w", sn, ss, sp, srcErr)
-					return
-				}
-				filtered := removeByID(srcBlocks, blockID)
-				writeErr = a.writePageFileLocked(origPath, r.origSource, sn, ss, sp, filtered)
+				writeErr = a.removeBlockFromSourcePage(origPath, r.origSource, sn, ss, sp, blockID)
 			})
 			if writeErr != nil {
 				return fmt.Errorf("cross-page move: save source %s/%s/%s: %w", sn, ss, sp, writeErr)
@@ -396,6 +388,54 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 		}
 	}
 
+	return nil
+}
+
+// removeBlockFromSourcePage removes a single block from the source page FILE
+// and does a TARGETED DB delete (DELETE WHERE id = ?). This is used by the
+// second pass of a cross-page move. Critically, it does NOT call
+// IndexFileBlocks — that function deletes ALL passed-in block IDs from the
+// entire table, which would clobber blocks that a concurrent goroutine already
+// moved to another page. The targeted delete only removes the single block
+// being moved, so concurrent cross-page moves from the same source page are
+// safe.
+//
+// The file is rewritten with the remaining blocks (filtered from the DB
+// snapshot). The DB gets a single-row delete for the moved block only.
+func (a *App) removeBlockFromSourcePage(filePath, source, notebook, section, page, blockID string) error {
+	// Read current blocks from the DB (fresh snapshot).
+	srcBlocks, err := a.FetchPageBlocks(notebook, section, page)
+	if err != nil {
+		return fmt.Errorf("fetch source %s/%s/%s: %w", notebook, section, page, err)
+	}
+	filtered := removeByID(srcBlocks, blockID)
+
+	// Rewrite the file with the remaining blocks (no re-index).
+	contentBytes, err := os.ReadFile(filePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read source file: %w", err)
+	}
+	frontmatter, body := splitFrontmatter(string(contentBytes))
+	if frontmatter == "" {
+		frontmatter = fmt.Sprintf("---\nnotebook: %q\nsection: %q\npage: %q\ndate: %q\ntags: []\n---\n",
+			notebook, section, page, time.Now().Format("2006-01-02"))
+		body = string(contentBytes)
+	}
+	newContent := parser.RenderFileContent(filtered, body, frontmatter, a.spacesPerTab)
+	a.tracker.RegisterWrite(filePath)
+	if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+		return fmt.Errorf("write source file: %w", err)
+	}
+
+	// Targeted DB delete: remove ONLY the moved block from the SOURCE page.
+	// Page-scoped so it doesn't delete the block from the TARGET page where
+	// the first pass already indexed it.
+	a.coordinator.WithDBWrite(func() {
+		err = a.db.DeleteBlockFromPage(blockID, source, notebook, section, page)
+	})
+	if err != nil {
+		return fmt.Errorf("delete moved block %s from index: %w", blockID, err)
+	}
 	return nil
 }
 
