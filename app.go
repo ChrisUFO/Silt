@@ -4587,6 +4587,40 @@ func (a *App) UpdatePluginSetting(pluginID string, key string, value any) error 
 	return config.Save(a.vaultPath, a.cfg)
 }
 
+// AppendDismissedTip records a one-time UI tip ID as dismissed (#197). Mirrors
+// the atomic pattern of UpdatePluginSetting: vaultMu.RLock + configMu.Lock held
+// across the in-memory mutation and config.Save, with RegisterSelfWrite
+// suppressing the watcher's reaction to our own write. Idempotent — calling
+// twice with the same tipID produces a single-entry slice. Like the other
+// internal atomic setters, it does NOT emit config:changed; the frontend
+// settings store mirrors the change optimistically and external edits still
+// flow through watcher → applyConfig.
+func (a *App) AppendDismissedTip(tipID string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	if tipID == "" {
+		return fmt.Errorf("tipID is required")
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	if a.cfg.UI.DismissedTips == nil {
+		a.cfg.UI.DismissedTips = []string{}
+	}
+	for _, existing := range a.cfg.UI.DismissedTips {
+		if existing == tipID {
+			return nil
+		}
+	}
+	a.cfg.UI.DismissedTips = append(a.cfg.UI.DismissedTips, tipID)
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	return config.Save(a.vaultPath, a.cfg)
+}
+
 // GetPluginSettingsForNotebook resolves a plugin's settings map for the
 // ACTIVE notebook, applying the co-located per-notebook override layer (#133).
 //

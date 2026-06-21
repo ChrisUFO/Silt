@@ -28,7 +28,7 @@
   } from '../lib/editor'
   import type { ParsedBlock, MetaKey, SuggestContext } from '../lib/editor'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
-  import { settings, saveConfig } from '../settings/store.svelte'
+  import { settings, appendDismissedTip } from '../settings/store.svelte'
   import { themeState } from '../theme/store.svelte'
   import { measureFrameBudget } from '../lib/perf/frame-budget'
   import { pushNotification } from '../notifications/store.svelte'
@@ -167,13 +167,8 @@
   )
 
   function dismissFormatTip(): void {
-    const cfg = settings.config
-    if (!cfg) return
-    const tips = cfg.ui?.dismissed_tips ?? []
-    if (!tips.includes('formatting_tip_v1')) {
-      cfg.ui.dismissed_tips = [...tips, 'formatting_tip_v1']
-      void saveConfig(cfg)
-    }
+    if (formatTipDismissed) return
+    void appendDismissedTip('formatting_tip_v1')
   }
 
   // --- Inline link URL input (#168) ----------------------------------------
