@@ -274,6 +274,255 @@ func TestRenameSection_UpdatesAllFiles(t *testing.T) {
 	}
 }
 
+// --- MovePage tests (#177) ---
+
+func TestMovePage_ToSection_UpdatesFileAndFrontmatter(t *testing.T) {
+	app := newTestApp(t)
+
+	if _, err := app.CreatePage("TestNB", "", "RootPage", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage: %v", err)
+	}
+	if _, err := app.CreatePage("TestNB", "Target", "Existing", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage Target/Existing: %v", err)
+	}
+
+	if err := app.MovePage("TestNB", "", "Target", "RootPage"); err != nil {
+		t.Fatalf("MovePage: %v", err)
+	}
+
+	oldPath := filepath.Join(app.vaultPath, "TestNB", "RootPage.md")
+	newPath := filepath.Join(app.vaultPath, "TestNB", "Target", "RootPage.md")
+
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("old file should not exist after move")
+	}
+	content, err := os.ReadFile(newPath)
+	if err != nil {
+		t.Fatalf("new file should exist: %v", err)
+	}
+	if !strings.Contains(string(content), `section: "Target"`) {
+		t.Fatalf("frontmatter section should be Target: %s", content)
+	}
+	if !strings.Contains(string(content), `page: "RootPage"`) {
+		t.Fatalf("frontmatter page should be preserved: %s", content)
+	}
+}
+
+func TestMovePage_ToRoot_SectionBecomesEmpty(t *testing.T) {
+	app := newTestApp(t)
+
+	if _, err := app.CreatePage("TestNB", "FromSec", "Movable", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage: %v", err)
+	}
+
+	if err := app.MovePage("TestNB", "FromSec", "", "Movable"); err != nil {
+		t.Fatalf("MovePage to root: %v", err)
+	}
+
+	oldPath := filepath.Join(app.vaultPath, "TestNB", "FromSec", "Movable.md")
+	newPath := filepath.Join(app.vaultPath, "TestNB", "Movable.md")
+
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("old file should not exist after move to root")
+	}
+	content, err := os.ReadFile(newPath)
+	if err != nil {
+		t.Fatalf("root file should exist: %v", err)
+	}
+	if !strings.Contains(string(content), `section: ""`) {
+		t.Fatalf("frontmatter section should be empty for root: %s", content)
+	}
+}
+
+func TestMovePage_NameCollision_Rejects(t *testing.T) {
+	app := newTestApp(t)
+
+	if _, err := app.CreatePage("TestNB", "SecA", "Shared", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage SecA/Shared: %v", err)
+	}
+	if _, err := app.CreatePage("TestNB", "SecB", "Shared", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage SecB/Shared: %v", err)
+	}
+
+	err := app.MovePage("TestNB", "SecA", "SecB", "Shared")
+	if err == nil {
+		t.Fatalf("move to section with same-named page should fail")
+	}
+
+	// Source file should still exist (move rejected, no data loss).
+	srcPath := filepath.Join(app.vaultPath, "TestNB", "SecA", "Shared.md")
+	if _, err := os.Stat(srcPath); err != nil {
+		t.Fatalf("source file should still exist after rejected move: %v", err)
+	}
+}
+
+func TestMovePage_PathTraversal_Rejected(t *testing.T) {
+	app := newTestApp(t)
+
+	if _, err := app.CreatePage("TestNB", "", "Safe", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage: %v", err)
+	}
+
+	// sanitizeSectionPath strips ".." segments, neutralizing traversal.
+	// The move either no-ops (if sanitized target == source) or succeeds
+	// with a sanitized name staying inside the vault.
+	_ = app.MovePage("TestNB", "", "../../../etc", "Safe")
+
+	// The file must still be inside the vault.
+	origPath := filepath.Join(app.vaultPath, "TestNB", "Safe.md")
+	newPath := filepath.Join(app.vaultPath, "TestNB", "etc", "Safe.md")
+	if _, err := os.Stat(origPath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("stat orig: %v", err)
+	}
+	// Either the file stayed at orig (no-op) or moved to sanitized etc/
+	if _, origErr := os.Stat(origPath); origErr == nil {
+		return // file stayed — acceptable (no-op or sanitized to same section)
+	}
+	if _, err := os.Stat(newPath); err != nil {
+		t.Fatalf("file should be inside vault (orig or sanitized etc/): %v", err)
+	}
+}
+
+func TestMovePage_SameSection_NoOp(t *testing.T) {
+	app := newTestApp(t)
+
+	if _, err := app.CreatePage("TestNB", "Sec", "Page1", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage: %v", err)
+	}
+
+	err := app.MovePage("TestNB", "Sec", "Sec", "Page1")
+	if err != nil {
+		t.Fatalf("same-section move should be a no-op, got: %v", err)
+	}
+
+	// File unchanged.
+	path := filepath.Join(app.vaultPath, "TestNB", "Sec", "Page1.md")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("file should still exist after no-op move: %v", err)
+	}
+}
+
+func TestMovePage_UpdatesNavOrder_BothSectionKeys(t *testing.T) {
+	app := newTestApp(t)
+
+	if _, err := app.CreatePage("TestNB", "SecA", "Alpha", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage SecA/Alpha: %v", err)
+	}
+	if _, err := app.CreatePage("TestNB", "SecA", "Beta", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage SecA/Beta: %v", err)
+	}
+	if _, err := app.CreatePage("TestNB", "SecB", "Gamma", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage SecB/Gamma: %v", err)
+	}
+
+	// Seed nav_order so we can verify the page is removed from the old list.
+	app.SetNavOrder(config.NavOrder{
+		Pages: map[string][]string{
+			"TestNB/SecA": {"Alpha", "Beta"},
+			"TestNB/SecB": {"Gamma"},
+		},
+	})
+
+	if err := app.MovePage("TestNB", "SecA", "SecB", "Alpha"); err != nil {
+		t.Fatalf("MovePage: %v", err)
+	}
+
+	order, err := app.GetNavOrder()
+	if err != nil {
+		t.Fatalf("GetNavOrder: %v", err)
+	}
+	// Alpha removed from SecA.
+	secA := order.Pages["TestNB/SecA"]
+	for _, p := range secA {
+		if p == "Alpha" {
+			t.Errorf("Alpha should be removed from SecA nav_order, got %v", secA)
+		}
+	}
+	if len(secA) != 1 || secA[0] != "Beta" {
+		t.Errorf("SecA should contain only Beta, got %v", secA)
+	}
+	// Alpha appended to SecB.
+	secB := order.Pages["TestNB/SecB"]
+	found := false
+	for _, p := range secB {
+		if p == "Alpha" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Alpha should be appended to SecB nav_order, got %v", secB)
+	}
+}
+
+func TestMovePage_LastPageInSection_SectionRemainsVisible(t *testing.T) {
+	app := newTestApp(t)
+
+	if _, err := app.CreatePage("TestNB", "Lonely", "Only", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage: %v", err)
+	}
+
+	if err := app.MovePage("TestNB", "Lonely", "", "Only"); err != nil {
+		t.Fatalf("MovePage: %v", err)
+	}
+
+	// The now-empty section dir may or may not be pruned by the OS, but
+	// ListNavigation should still surface it (sections are shown even when
+	// empty per SPECS §3.2).
+	tree, err := app.ListNavigation()
+	if err != nil {
+		t.Fatalf("ListNavigation: %v", err)
+	}
+	found := false
+	for _, sec := range tree.Notebooks[0].Sections {
+		if sec.Name == "Lonely" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("empty section 'Lonely' should remain visible after its last page moves out; sections: %+v", tree.Notebooks[0].Sections)
+	}
+}
+
+func TestMovePage_SelfWriteSuppressed(t *testing.T) {
+	app := newTestApp(t)
+
+	if _, err := app.CreatePage("TestNB", "SecA", "Movable", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage: %v", err)
+	}
+	if _, err := app.CreatePage("TestNB", "SecB", "Anchor", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage SecB/Anchor: %v", err)
+	}
+
+	// Set up a real config watcher so RegisterSelfWrite is meaningful.
+	changed := make(chan config.SystemConfig, 4)
+	cw, err := config.NewConfigWatcher(app.vaultPath, func(c config.SystemConfig) {
+		changed <- c
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewConfigWatcher: %v", err)
+	}
+	defer cw.Close()
+	cw.Start()
+	app.configWatcher = cw
+	defer func() { app.configWatcher = nil }()
+
+	// Give the watcher time to settle.
+	time.Sleep(150 * time.Millisecond)
+
+	if err := app.MovePage("TestNB", "SecA", "SecB", "Movable"); err != nil {
+		t.Fatalf("MovePage: %v", err)
+	}
+
+	// The watcher should NOT fire within the self-write cooldown window —
+	// MovePage calls RegisterSelfWrite before config.Save.
+	select {
+	case <-changed:
+		t.Fatalf("self-write should be suppressed, but config:changed fired")
+	case <-time.After(700 * time.Millisecond):
+		// expected: no reload within the cooldown window
+	}
+}
+
 // --- Delete tests (#62) ---
 
 func TestDeletePage_MovesToTrash(t *testing.T) {

@@ -108,6 +108,12 @@ type UIConfig struct {
 	// it from Settings. The bubble, slash commands, hotkeys, and hover menu
 	// remain functional when hidden.
 	ShowFormatToolbar *bool `yaml:"show_format_toolbar,omitempty" json:"show_format_toolbar,omitempty"`
+	// ShowTabDirtyIndicators controls the per-tab dirty/save-failed glyph on
+	// the tab header (#167). Default true; users who find the visual churn
+	// noisy (Silt auto-saves on a 500ms debounce, so most dirty state is
+	// sub-second) can hide the tab glyph. The in-editor save-state indicator
+	// is unaffected — it remains the authoritative surface.
+	ShowTabDirtyIndicators *bool `yaml:"show_tab_dirty_indicators,omitempty" json:"show_tab_dirty_indicators,omitempty"`
 	// DismissedTips tracks one-time UI tips the user has dismissed (per-vault).
 	// Used by the formatting first-run tip (#168). Same persistence tier as
 	// sidebar_width.
@@ -290,8 +296,12 @@ func Defaults() SystemConfig {
 			// ShowFormatToolbar defaults to true (#168). Stored as *bool so
 			// "unset" is distinguishable from "explicitly false"; the frontend
 			// treats nil as true.
-			ShowFormatToolbar: boolPtr(true),
-			DismissedTips:     []string{},
+		ShowFormatToolbar: boolPtr(true),
+		// ShowTabDirtyIndicators defaults to true (#167). Same *bool
+		// semantics as EnablePreviewTabs: "unset" stays distinguishable
+		// from "explicitly false" through the Load → normalize path.
+		ShowTabDirtyIndicators: boolPtr(true),
+		DismissedTips:     []string{},
 			Formatting: FormattingConfig{
 				TypographyEnabled: boolPtr(true),
 				ColorEnabled:      boolPtr(true),
@@ -513,6 +523,10 @@ func normalize(cfg SystemConfig) SystemConfig {
 	// EnablePreviewTabs.
 	if cfg.UI.ShowFormatToolbar == nil {
 		cfg.UI.ShowFormatToolbar = boolPtr(true)
+	}
+	// ShowTabDirtyIndicators: nil → true (#167). Same *bool semantics.
+	if cfg.UI.ShowTabDirtyIndicators == nil {
+		cfg.UI.ShowTabDirtyIndicators = boolPtr(true)
 	}
 	if cfg.UI.DismissedTips == nil {
 		cfg.UI.DismissedTips = []string{}

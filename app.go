@@ -3303,6 +3303,156 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 	return runErr
 }
 
+// MovePage moves a page from one section to another (or to the notebook root
+// when toSection == "") within the same notebook (#177). The .md file is
+// renamed on disk, its `section:` frontmatter is rewritten, the block index
+// is rebuilt at the new path, and nav_order is adjusted for both the source
+// and target sectionKeys. Returns an error on name collision. Cross-notebook
+// moves are out of scope — the page stays within `notebook`. Block UUIDs are
+// preserved so references and embeds keep resolving.
+func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.db == nil {
+		return fmt.Errorf("vault database not loaded")
+	}
+	safeNotebook := sanitizePathSegment(notebook)
+	safeFrom := sanitizeSectionPath(fromSection)
+	safeTo := sanitizeSectionPath(toSection)
+	safePage := sanitizePathSegment(page)
+	if safeNotebook == "" || safePage == "" {
+		return fmt.Errorf("notebook and page names are required")
+	}
+	if safeFrom == safeTo {
+		return nil // already in the target section
+	}
+
+	source := a.resolveSourceByName(safeNotebook)
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
+	if err != nil {
+		return err
+	}
+	oldFile := filepath.Join(notebookDir, safeFrom, safePage+".md")
+	newFile := filepath.Join(notebookDir, safeTo, safePage+".md")
+	if !isPathWithinRoot(oldFile, notebookDir) || !isPathWithinRoot(newFile, notebookDir) {
+		return fmt.Errorf("path escapes notebook root")
+	}
+	if _, err := os.Stat(oldFile); os.IsNotExist(err) {
+		return fmt.Errorf("page %q not found in section %q", safePage, safeFrom)
+	}
+	if _, err := os.Stat(newFile); err == nil {
+		return fmt.Errorf("a page named %q already exists in that section", safePage)
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var runErr error
+	nbRoot := notebookDir
+	a.coordinator.LockFileWrite(nbRoot, func() {
+		// 1. Ensure the target section directory exists (handles nested
+		// sections like "Projects/Active" and the section-less root, which
+		// is the notebook dir itself).
+		targetDir := filepath.Dir(newFile)
+		if err := os.MkdirAll(targetDir, 0o755); err != nil {
+			runErr = fmt.Errorf("failed to create target section directory: %w", err)
+			return
+		}
+
+		// 2. Read the file content before moving.
+		contentBytes, err := os.ReadFile(oldFile)
+		if err != nil {
+			runErr = err
+			return
+		}
+
+		// 3. Rename old → new. If this fails, nothing was modified.
+		a.tracker.RegisterWrite(oldFile)
+		a.tracker.RegisterWrite(newFile)
+		if err := os.Rename(oldFile, newFile); err != nil {
+			runErr = err
+			return
+		}
+
+		// 4. Rewrite the section: frontmatter at the new path. An empty
+		// safeTo produces `section: ""` (section-less), matching the
+		// parser's section-less convention.
+		content := updateFrontmatterField(string(contentBytes), "section", safeTo)
+		a.tracker.RegisterWrite(newFile)
+		if err := parser.WriteFileAtomic(newFile, []byte(content)); err != nil {
+			runErr = err
+			return
+		}
+
+		// 5. Clear old index entries + re-index at the new path.
+		a.coordinator.WithDBWrite(func() {
+			_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeFrom, safePage)
+		})
+		a.coordinator.WithDBWrite(func() {
+			_ = a.db.ForgetFile(oldFile)
+		})
+		a.reindexFile(newFile, safeNotebook, safeTo, safePage)
+	})
+	if runErr != nil {
+		return runErr
+	}
+
+	// 6. Update nav_order: remove the page from the old section's ordering
+	// and append it to the new section's ordering. RenamePage omits this
+	// step — MovePage must keep nav_order consistent with the new on-disk
+	// layout so the sidebar doesn't fall back to alphabetical for a moved
+	// page (#177).
+	a.updateNavOrderForMove(safeNotebook, safeFrom, safeTo, safePage)
+	return nil
+}
+
+// updateNavOrderForMove adjusts NavOrder.Pages after a page moves between
+// sections. The page is removed from the old sectionKey's ordering and
+// appended to the new sectionKey's ordering (idempotent — skips if already
+// present). The sectionKey format mirrors the frontend: `${notebook}/${section}`
+// (empty section for root pages). Persisted atomically with self-write
+// suppression so the config watcher doesn't double-fire.
+func (a *App) updateNavOrderForMove(notebook, fromSection, toSection, page string) {
+	oldKey := notebook + "/" + fromSection
+	newKey := notebook + "/" + toSection
+
+	a.configMu.Lock()
+	pages := a.cfg.UI.NavOrder.Pages
+	if pages == nil {
+		pages = map[string][]string{}
+	}
+	// Remove from old section.
+	if oldList, ok := pages[oldKey]; ok {
+		filtered := make([]string, 0, len(oldList))
+		for _, p := range oldList {
+			if p != page {
+				filtered = append(filtered, p)
+			}
+		}
+		pages[oldKey] = filtered
+	}
+	// Append to new section (idempotent).
+	newList := pages[newKey]
+	already := false
+	for _, p := range newList {
+		if p == page {
+			already = true
+			break
+		}
+	}
+	if !already {
+		pages[newKey] = append(newList, page)
+	}
+	a.cfg.UI.NavOrder.Pages = pages
+	cfg := a.cfg
+	a.configMu.Unlock()
+
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	_ = config.Save(a.vaultPath, cfg)
+}
+
 // RenameSection renames a section folder and updates the section: frontmatter
 // in every .md file it contains. All affected blocks are re-indexed (#62).
 func (a *App) RenameSection(notebook, oldName, newName string) error {

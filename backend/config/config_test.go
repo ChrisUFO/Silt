@@ -694,3 +694,74 @@ func TestNormalize_EditorEnhancements(t *testing.T) {
 		t.Errorf("normalize should preserve explicit typography false, got %v", cfg.UI.Formatting.TypographyEnabled)
 	}
 }
+
+// TestDefaults_ShowTabDirtyIndicators confirms the #167 tab dirty indicator
+// toggle defaults to *true.
+func TestDefaults_ShowTabDirtyIndicators(t *testing.T) {
+	d := Defaults()
+	if d.UI.ShowTabDirtyIndicators == nil || *d.UI.ShowTabDirtyIndicators != true {
+		t.Errorf("defaults show_tab_dirty_indicators should be *true, got %v", d.UI.ShowTabDirtyIndicators)
+	}
+}
+
+// TestNormalize_ShowTabDirtyIndicatorsNilBecomesTrue confirms nil normalizes
+// to *true (legacy config without the key) while explicit false is preserved.
+func TestNormalize_ShowTabDirtyIndicatorsNilBecomesTrue(t *testing.T) {
+	// nil → *true
+	cfg := normalize(SystemConfig{})
+	if cfg.UI.ShowTabDirtyIndicators == nil || *cfg.UI.ShowTabDirtyIndicators != true {
+		t.Errorf("normalize nil → *true, got %v", cfg.UI.ShowTabDirtyIndicators)
+	}
+	// explicit false preserved
+	f := false
+	cfg = normalize(SystemConfig{UI: UIConfig{ShowTabDirtyIndicators: &f}})
+	if cfg.UI.ShowTabDirtyIndicators == nil || *cfg.UI.ShowTabDirtyIndicators != false {
+		t.Errorf("normalize should preserve explicit false, got %v", cfg.UI.ShowTabDirtyIndicators)
+	}
+	// explicit true preserved
+	tv := true
+	cfg = normalize(SystemConfig{UI: UIConfig{ShowTabDirtyIndicators: &tv}})
+	if cfg.UI.ShowTabDirtyIndicators == nil || *cfg.UI.ShowTabDirtyIndicators != true {
+		t.Errorf("normalize should preserve explicit true, got %v", cfg.UI.ShowTabDirtyIndicators)
+	}
+}
+
+// TestShowTabDirtyIndicators_RoundTrip confirms YAML round-trip for the
+// #167 toggle (true, false, and legacy-missing-key paths).
+func TestShowTabDirtyIndicators_RoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	original := Defaults()
+	off := false
+	original.UI.ShowTabDirtyIndicators = &off
+
+	if err := Save(tmp, original); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.UI.ShowTabDirtyIndicators == nil || *loaded.UI.ShowTabDirtyIndicators != false {
+		t.Errorf("show_tab_dirty_indicators=false round-trip: got %v", loaded.UI.ShowTabDirtyIndicators)
+	}
+}
+
+// TestLoad_LegacyConfigMissingShowTabDirtyIndicators verifies a config.yaml
+// authored before #167 (no ui.show_tab_dirty_indicators key) loads cleanly
+// with the field defaulted to *true — backward compat.
+func TestLoad_LegacyConfigMissingShowTabDirtyIndicators(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, ConfigPath(tmp), strings.Join([]string{
+		"editor:",
+		"  font_family: Inter",
+		"ui:",
+		"  sidebar_width: 280",
+	}, "\n"))
+	cfg, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("legacy config Load: %v", err)
+	}
+	if cfg.UI.ShowTabDirtyIndicators == nil || *cfg.UI.ShowTabDirtyIndicators != true {
+		t.Errorf("legacy show_tab_dirty_indicators should default to *true, got %v", cfg.UI.ShowTabDirtyIndicators)
+	}
+}
