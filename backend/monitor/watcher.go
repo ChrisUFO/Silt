@@ -339,18 +339,6 @@ func (dw *DirectoryWatcher) linkedConfigSourceForPath(path string) (string, bool
 }
 
 // resolveFileMetadata derives (notebook, section, page, date) for a markdown
-// file from its path relative to the vault root.
-//
-// New file model (post per-day removal): a page IS a file.
-//   <vault>/<notebook>/[<section>/...]<page>.md
-//   - notebook = top folder
-//   - page     = filename without .md
-//   - section  = the path between them ("" when direct child of notebook)
-// The dateStr is derived from the file's modification time (each block carries
-// its own file_date in the trailing comment; this is just the default fallback).
-// Files too shallow to resolve return empty notebook/section/page so callers
-// can skip them rather than indexing under empty strings.
-// resolveFileMetadata derives (notebook, section, page, date) for a markdown
 // file from its path relative to the governing watched root (#100).
 //
 // Vault root: a vault holds MANY notebooks, so the notebook is the first path
