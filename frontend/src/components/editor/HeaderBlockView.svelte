@@ -19,24 +19,30 @@
     return `font-size: ${sizes[level as keyof typeof sizes] || '1em'}; font-weight: ${level <= 2 ? '700' : '600'}; text-align: ${align};`
   })
 
+  let dragHandleEl: HTMLElement | null = $state(null)
+
   $effect(() => {
-    const id = node.attrs.id
-    if (id) {
-      const el = document.querySelector(`[data-id="${id}"]`)
-      if (el) {
-        el.setAttribute('data-depth', String(level))
+    if (dragHandleEl) {
+      const wrapper = dragHandleEl.closest('[data-node-view-wrapper]')
+      const parentEl = wrapper?.parentElement
+      if (parentEl) {
+        parentEl.setAttribute('data-depth', String(level))
+        if (node.attrs.id) {
+          parentEl.setAttribute('data-id', node.attrs.id)
+        }
       }
     }
   })
 </script>
 
 <NodeViewWrapper
-  class="header-block flex items-start gap-3 py-1"
+  class="group header-block flex items-start gap-3 py-1"
   data-align={align}
   data-depth={level}
 >
   <span
-    class="material-symbols-outlined text-text-muted/30 hover:text-primary transition-colors cursor-move mt-0.5 select-none text-[18px]"
+    bind:this={dragHandleEl}
+    class="material-symbols-outlined text-text-muted/30 hover:text-primary transition-all duration-150 cursor-move mt-0.5 select-none text-[18px] opacity-0 group-hover:opacity-100"
     data-drag-handle
   >
     drag_indicator

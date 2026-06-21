@@ -53,7 +53,7 @@
   -->
   {#if isOpenable}
     <div
-      class="embed-block-default my-2 p-3 rounded-lg border transition-colors flex items-center gap-3 {cardClass}"
+      class="group embed-block-default my-2 p-3 rounded-lg border transition-colors flex items-center gap-3 {cardClass}"
       role="button"
       tabindex="0"
       aria-label={attrs.caption || `${attrs.embedType}: ${attrs.src}`}
@@ -101,7 +101,7 @@
         <span class="material-symbols-outlined text-[18px]">delete</span>
       </button>
       <span
-        class="material-symbols-outlined text-text-muted text-[16px] cursor-grab active:cursor-grabbing"
+        class="material-symbols-outlined text-text-muted text-[16px] cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity duration-150"
         title="Drag to reorder"
         aria-label="Drag handle"
         data-drag-handle
@@ -111,7 +111,7 @@
     </div>
   {:else}
     <div
-      class="embed-block-default my-2 p-3 rounded-lg border transition-colors flex items-center gap-3 {cardClass}"
+      class="group embed-block-default my-2 p-3 rounded-lg border transition-colors flex items-center gap-3 {cardClass}"
       role="img"
       aria-label={attrs.caption || `${attrs.embedType}: ${attrs.src}`}
       data-embed-type={attrs.embedType}
@@ -156,7 +156,7 @@
         <span class="material-symbols-outlined text-[18px]">delete</span>
       </button>
       <span
-        class="material-symbols-outlined text-text-muted text-[16px] cursor-grab active:cursor-grabbing"
+        class="material-symbols-outlined text-text-muted text-[16px] cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity duration-150"
         title="Drag to reorder"
         aria-label="Drag handle"
         data-drag-handle
