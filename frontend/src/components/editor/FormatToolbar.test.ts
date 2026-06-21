@@ -28,7 +28,7 @@ describe('FormatToolbar', () => {
   it('renders all 8 inline mark buttons', () => {
     const editor = makeMockEditor() as any
     const { getByLabelText } = render(FormatToolbar, {
-      props: { editor, activeMarks: new Set(), isDark: true, colorEnabled: true }
+      props: { editor, activeMarks: new Set<string>(), isDark: true, colorEnabled: true }
     })
     for (const label of ['Bold', 'Italic', 'Underline', 'Strikethrough', 'Inline code', 'Highlight', 'Subscript', 'Superscript']) {
       expect(getByLabelText(label)).toBeTruthy()
@@ -38,7 +38,7 @@ describe('FormatToolbar', () => {
   it('renders link and clear-formatting buttons', () => {
     const editor = makeMockEditor() as any
     const { getByLabelText } = render(FormatToolbar, {
-      props: { editor, activeMarks: new Set(), isDark: true, colorEnabled: true }
+      props: { editor, activeMarks: new Set<string>(), isDark: true, colorEnabled: true }
     })
     expect(getByLabelText('Insert link')).toBeTruthy()
     expect(getByLabelText('Clear formatting')).toBeTruthy()
@@ -47,7 +47,7 @@ describe('FormatToolbar', () => {
   it('renders 4 alignment buttons', () => {
     const editor = makeMockEditor() as any
     const { getByLabelText } = render(FormatToolbar, {
-      props: { editor, activeMarks: new Set(), isDark: true, colorEnabled: true }
+      props: { editor, activeMarks: new Set<string>(), isDark: true, colorEnabled: true }
     })
     expect(getByLabelText('Align left')).toBeTruthy()
     expect(getByLabelText('Align center')).toBeTruthy()
@@ -58,7 +58,7 @@ describe('FormatToolbar', () => {
   it('hides color pickers when colorEnabled is false', () => {
     const editor = makeMockEditor() as any
     const { queryByLabelText } = render(FormatToolbar, {
-      props: { editor, activeMarks: new Set(), isDark: true, colorEnabled: false }
+      props: { editor, activeMarks: new Set<string>(), isDark: true, colorEnabled: false }
     })
     expect(queryByLabelText('Text color')).toBeNull()
     expect(queryByLabelText('Background color')).toBeNull()
@@ -67,7 +67,7 @@ describe('FormatToolbar', () => {
   it('reflects aria-pressed for active marks', () => {
     const editor = makeMockEditor() as any
     const { getByLabelText } = render(FormatToolbar, {
-      props: { editor, activeMarks: new Set(['bold']), isDark: true, colorEnabled: true }
+      props: { editor, activeMarks: new Set<string>(['bold']), isDark: true, colorEnabled: true }
     })
     const boldBtn = getByLabelText('Bold') as HTMLButtonElement
     expect(boldBtn.getAttribute('aria-pressed')).toBe('true')
@@ -76,7 +76,7 @@ describe('FormatToolbar', () => {
   it('has role=toolbar with tabindex for keyboard navigation', () => {
     const editor = makeMockEditor() as any
     const { getByRole } = render(FormatToolbar, {
-      props: { editor, activeMarks: new Set(), isDark: true, colorEnabled: true }
+      props: { editor, activeMarks: new Set<string>(), isDark: true, colorEnabled: true }
     })
     const toolbar = getByRole('toolbar')
     expect(toolbar).toBeTruthy()
@@ -87,7 +87,7 @@ describe('FormatToolbar', () => {
     const editor = makeMockEditor() as any
     const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
     const { getByLabelText } = render(FormatToolbar, {
-      props: { editor, activeMarks: new Set(), isDark: true, colorEnabled: true }
+      props: { editor, activeMarks: new Set<string>(), isDark: true, colorEnabled: true }
     })
     fireEvent.click(getByLabelText('Align center'))
     const lastCall = dispatchSpy.mock.calls[dispatchSpy.mock.calls.length - 1][0] as CustomEvent

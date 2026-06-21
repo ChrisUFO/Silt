@@ -57,6 +57,10 @@
     'clear-formatting': 'clear'
   }
 
+  // Validates hex color strings before applying to marks (#170). Prevents
+  // injection of arbitrary CSS or characters that break the converter regex.
+  const HEX_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/
+
   interface Props {
     notebook: string
     section: string
@@ -602,11 +606,17 @@
     } else if (commandId === 'align-justify') {
       setBlockAlignAttr('justify')
     } else if (commandId === 'text-color') {
-      const color = window.prompt('Enter color (hex, e.g. #ff0000):')
-      if (color && editorInstance) editorInstance.chain().focus().setMark('textColor', { color }).run()
+      const input = window.prompt('Enter color (hex, e.g. #ff0000):')
+      const color = input?.trim()
+      if (color && HEX_COLOR_RE.test(color) && editorInstance) {
+        editorInstance.chain().focus().setMark('textColor', { color }).run()
+      }
     } else if (commandId === 'background-color') {
-      const color = window.prompt('Enter background color (hex, e.g. #ffff00):')
-      if (color && editorInstance) editorInstance.chain().focus().setMark('backgroundColor', { color }).run()
+      const input = window.prompt('Enter background color (hex, e.g. #ffff00):')
+      const color = input?.trim()
+      if (color && HEX_COLOR_RE.test(color) && editorInstance) {
+        editorInstance.chain().focus().setMark('backgroundColor', { color }).run()
+      }
     } else if (commandId === 'remove-color') {
       if (editorInstance) editorInstance.chain().focus().unsetMark('textColor').run()
     } else if (commandId === 'remove-background') {

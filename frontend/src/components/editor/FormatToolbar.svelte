@@ -77,31 +77,43 @@
     return 'left'
   }
 
-  let focusedIdx = $state(0)
-  let totalButtons = $derived(BUTTONS.length + 1 + (colorEnabled ? 2 : 0) + ALIGN_BUTTONS.length + 1)
+  let rovingIdx = $state(0)
+  let toolbarEl: HTMLElement | null = $state(null)
+
+  const LINK_IDX = BUTTONS.length
+  const ALIGN_START = LINK_IDX + 1
+  let clearIdx = $derived(ALIGN_START + ALIGN_BUTTONS.length + (colorEnabled ? 2 : 0))
 
   function handleKeydown(e: KeyboardEvent): void {
-    const count = totalButtons
+    const btns = toolbarEl?.querySelectorAll<HTMLButtonElement>('[data-tb]')
+    if (!btns || btns.length === 0) return
+    const count = btns.length
+    let next = rovingIdx
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
       e.preventDefault()
-      focusedIdx = (focusedIdx + 1) % count
+      next = (rovingIdx + 1) % count
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
       e.preventDefault()
-      focusedIdx = (focusedIdx - 1 + count) % count
+      next = (rovingIdx - 1 + count) % count
     } else if (e.key === 'Home') {
       e.preventDefault()
-      focusedIdx = 0
+      next = 0
     } else if (e.key === 'End') {
       e.preventDefault()
-      focusedIdx = count - 1
+      next = count - 1
     } else if (e.key === 'Escape') {
       e.preventDefault()
       editor?.chain().focus().run()
+      return
+    } else {
+      return
     }
+    rovingIdx = next
+    btns[next]?.focus()
   }
 </script>
 
-<div class="format-toolbar" role="toolbar" aria-label="Text formatting" tabindex="-1" onkeydown={handleKeydown}>
+<div class="format-toolbar" role="toolbar" aria-label="Text formatting" tabindex="-1" bind:this={toolbarEl} onkeydown={handleKeydown}>
   <HeadingLevelMenu {editor} />
 
   <span class="toolbar-divider" aria-hidden="true"></span>
@@ -115,9 +127,10 @@
         aria-pressed={isActive(btn.mark)}
         aria-label={btn.label}
         aria-keyshortcuts={btn.shortcut}
-        tabindex={i === 0 ? 0 : -1}
+        data-tb
+        tabindex={rovingIdx === i ? 0 : -1}
         onclick={() => handleClick(btn)}
-        onfocus={() => (focusedIdx = i)}
+        onfocus={() => (rovingIdx = i)}
         title={btn.label}
       >
         <span class="material-symbols-outlined" aria-hidden="true">{btn.icon}</span>
@@ -131,9 +144,10 @@
       aria-pressed={isActive('link')}
       aria-label="Insert link"
       aria-keyshortcuts="Ctrl+K"
-      tabindex={-1}
+      data-tb
+      tabindex={rovingIdx === LINK_IDX ? 0 : -1}
       onclick={handleLink}
-      onfocus={() => (focusedIdx = BUTTONS.length)}
+      onfocus={() => (rovingIdx = LINK_IDX)}
       title="Insert link"
     >
       <span class="material-symbols-outlined" aria-hidden="true">link</span>
@@ -143,7 +157,7 @@
   <span class="toolbar-divider" aria-hidden="true"></span>
 
   <div class="toolbar-group">
-    {#each ALIGN_BUTTONS as btn (btn.id)}
+    {#each ALIGN_BUTTONS as btn, i (btn.id)}
       <button
         type="button"
         class="toolbar-btn"
@@ -151,8 +165,10 @@
         aria-pressed={currentAlign() === btn.id}
         aria-label={btn.label}
         aria-keyshortcuts={btn.shortcut}
-        tabindex={-1}
+        data-tb
+        tabindex={rovingIdx === ALIGN_START + i ? 0 : -1}
         onclick={() => handleAlign(btn.id)}
+        onfocus={() => (rovingIdx = ALIGN_START + i)}
         title={btn.label}
       >
         <span class="material-symbols-outlined" aria-hidden="true">{btn.icon}</span>
@@ -174,8 +190,10 @@
       class="toolbar-btn"
       aria-label="Clear formatting"
       aria-keyshortcuts="Ctrl+\\"
-      tabindex={-1}
+      data-tb
+      tabindex={rovingIdx === clearIdx ? 0 : -1}
       onclick={handleClear}
+      onfocus={() => (rovingIdx = clearIdx)}
       title="Clear formatting"
     >
       <span class="material-symbols-outlined" aria-hidden="true">format_clear</span>

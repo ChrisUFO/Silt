@@ -750,6 +750,19 @@ describe('color mark round-trips (#170)', () => {
     expect(back[0].clean_text).toBe('<span>plain</span> text')
   })
 
+  it('adversarial color values with quotes degrade gracefully', () => {
+    // A color value containing " breaks the converter regex on re-parse.
+    // Verify it doesn't corrupt surrounding content — the span is just
+    // treated as literal text on the round-trip (not silent data loss).
+    const cleanText = 'before <span style="color: ab"cd">bad</span> after'
+    const block = mkBlock('NOTE', { clean_text: cleanText })
+    const back = docToBlocks(blocksToDoc([block]))
+    // The malformed span doesn't match the parser regex, so it stays as
+    // literal text — no content is lost, no crash occurs.
+    expect(back[0].clean_text).toContain('before')
+    expect(back[0].clean_text).toContain('after')
+  })
+
   it('text color survives the editor round-trip', () => {
     const editor = makeEditor()
     const cleanText = '<span style="color: #dc2626">red text</span>'

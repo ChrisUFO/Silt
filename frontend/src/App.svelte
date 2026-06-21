@@ -389,6 +389,13 @@
             return // Let ProseMirror handle the format shortcut
           }
         }
+        // Also skip toggle_view_mode when the editor is focused — Ctrl+E
+        // defaults to both format_code (StarterKit) and toggle_view_mode.
+        // ProseMirror's Code extension handles Mod-e inside the editor; the
+        // global handler should not also toggle the view (#171 decoupling).
+        if (matchHotkey(e, hotkeys.toggle_view_mode)) {
+          return
+        }
       }
 
       if (matchHotkey(e, hotkeys.open_search)) {
