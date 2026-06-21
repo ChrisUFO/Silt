@@ -26,6 +26,14 @@ const selfWriteWindow = 500 * time.Millisecond
 // quiet period guarantees reload reads the settled file.
 const reloadDebounce = 120 * time.Millisecond
 
+// SelfWriteSuppressionTimeout is the upper bound on how long a self-write
+// suppression can be observed by external watchers — selfWriteWindow plus
+// reloadDebounce, with a small safety margin. Tests that assert no
+// config:changed fires during the suppression window should reference this
+// constant rather than a hardcoded 700ms, so the assertion tracks any future
+// retuning of the underlying windows.
+const SelfWriteSuppressionTimeout = selfWriteWindow + reloadDebounce + 80*time.Millisecond
+
 // ConfigWatcher hot-reloads <vault>/.system/config.yaml. Self-loop prevention
 // is a local time-window: SaveSystemConfig calls RegisterSelfWrite() before
 // its atomic save, and the watcher ignores every config.yaml event until the

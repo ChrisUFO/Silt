@@ -12,7 +12,8 @@ import {
   blocksToDoc,
   docToBlocks,
   embedBlockMarker,
-  parseEmbedBlockMarker
+  parseEmbedBlockMarker,
+  tokenizeInline
 } from './converters'
 import type { ParsedBlock, DocJSON } from './types'
 
@@ -867,5 +868,123 @@ describe('cross-feature round-trip (#168, #170, #173)', () => {
     const block = mkBlock('NOTE', { clean_text: cleanText })
     const back = docToBlocks(blocksToDoc([block]))
     expect(back[0].clean_text).toBe(cleanText)
+  })
+})
+
+// --- tokenize / validate pipeline (#198) -----------------------------------
+// The new typed Token model exposes the tokenize + validate stages
+// independently of the legacy NodeJSON serializer. These tests pin the
+// shape of the Token[] output and the security contract of validate.
+describe('tokenize / validate pipeline (#198)', () => {
+  it('returns an empty Token[] for empty input', () => {
+    expect(tokenizeInline('')).toEqual([])
+  })
+
+  it('emits a single TextToken for plain prose', () => {
+    const tokens = tokenizeInline('just plain text')
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0].kind).toBe('text')
+    if (tokens[0].kind === 'text') {
+      expect(tokens[0].text).toBe('just plain text')
+      expect(tokens[0].marks).toEqual([])
+    }
+  })
+
+  it('emits a MarkToken wrapping a TextToken for bold', () => {
+    const tokens = tokenizeInline('**bold**')
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0].kind).toBe('mark')
+    if (tokens[0].kind === 'mark') {
+      expect(tokens[0].markType).toBe('bold')
+      expect(tokens[0].children).toHaveLength(1)
+      expect(tokens[0].children[0].kind).toBe('text')
+    }
+  })
+
+  it('emits an EmbedToken for {{embed:uuid}}', () => {
+    const UUID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    const tokens = tokenizeInline(`text {{embed:${UUID}}} more`)
+    const embeds = tokens.filter((t) => t.kind === 'embed')
+    expect(embeds).toHaveLength(1)
+    if (embeds[0].kind === 'embed') {
+      expect(embeds[0].uuid).toBe(UUID)
+    }
+  })
+
+  it('emits a BlockReferenceToken for ((uuid))', () => {
+    const UUID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    const tokens = tokenizeInline(`text ((${UUID})) more`)
+    const refs = tokens.filter((t) => t.kind === 'blockReference')
+    expect(refs).toHaveLength(1)
+    if (refs[0].kind === 'blockReference') {
+      expect(refs[0].uuid).toBe(UUID)
+    }
+  })
+
+  it('validate drops links with disallowed schemes (javascript:)', () => {
+    const tokens = tokenizeInline('[click](javascript:alert(1))')
+    // After validate, the link mark is flattened — text survives as plain
+    // TextToken, no MarkToken with type 'link' is present.
+    const linkMarks = tokens.filter(
+      (t) => t.kind === 'mark' && t.markType === 'link'
+    )
+    expect(linkMarks).toHaveLength(0)
+    const textTokens = tokens.filter((t) => t.kind === 'text')
+    const joined = textTokens.map((t) => (t as any).text).join('')
+    expect(joined).toContain('click')
+  })
+
+  it('validate drops data:text/html links', () => {
+    const tokens = tokenizeInline('[x](data:text/html,<script>1</script>)')
+    const linkMarks = tokens.filter(
+      (t) => t.kind === 'mark' && t.markType === 'link'
+    )
+    expect(linkMarks).toHaveLength(0)
+  })
+
+  it('validate drops vbscript: links', () => {
+    const tokens = tokenizeInline('[x](vbscript:msgbox(1))')
+    const linkMarks = tokens.filter(
+      (t) => t.kind === 'mark' && t.markType === 'link'
+    )
+    expect(linkMarks).toHaveLength(0)
+  })
+
+  it('validate preserves safe http(s) links', () => {
+    const tokens = tokenizeInline('[ok](https://example.com)')
+    const linkMarks = tokens.filter(
+      (t) => t.kind === 'mark' && t.markType === 'link'
+    )
+    expect(linkMarks.length).toBeGreaterThan(0)
+  })
+
+  it('color span strips extra attributes (onmouseover absorbed by [^>]*)', () => {
+    // The tokenize regex [^>]* absorbs onmouseover so the extracted color
+    // attr is the only thing the MarkToken carries. The serializer then
+    // emits clean <span style="color: X"> on round-trip.
+    const dirty = '<span style="color: #ff0000" onmouseover="evil()">red</span>'
+    const block = mkBlock('NOTE', { clean_text: dirty })
+    const back = docToBlocks(blocksToDoc([block]))
+    // Round-trip preserves the color span (with clean attrs only) — the
+    // onmouseover is dropped, not the whole span.
+    expect(back[0].clean_text).toBe('<span style="color: #ff0000">red</span>')
+    expect(back[0].clean_text).not.toContain('onmouseover')
+    expect(back[0].clean_text).not.toContain('evil')
+  })
+
+  it('tokenize preserves nested mark structure (**bold with *italic* inside**)', () => {
+    const tokens = tokenizeInline('**bold with *italic* inside**')
+    // Walk the tree counting all MarkTokens — the outer bold + inner italic
+    // both count, even though only the bold is at the top level.
+    function countMarks(ts: ReturnType<typeof tokenizeInline>): number {
+      let n = 0
+      for (const t of ts) {
+        if (t.kind === 'mark') {
+          n += 1 + countMarks(t.children)
+        }
+      }
+      return n
+    }
+    expect(countMarks(tokens)).toBeGreaterThanOrEqual(2)
   })
 })

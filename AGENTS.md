@@ -21,6 +21,26 @@ Repo-specific rules that augment the global `~/.config/opencode/AGENTS.md`.
   interaction genuinely cannot be expressed semantically (and leave a comment
   explaining why).
 
+## Comments
+
+- **Comments explain WHY, not WHAT.** A comment that restates the adjacent
+  code is dead weight — the code itself already says what happens. Prefer
+  short rationale notes (1–2 lines) over multi-paragraph essays; a comment
+  longer than 3 lines needs strong justification (real interop target,
+  load-bearing architecture decision, or non-obvious gotcha).
+- **Avoid issue-number tags once the feature ships.** A `(#168)` next to a
+  routine inline mark is archaeology, not documentation. Keep the tag on the
+  design-block comment at the top of the section if it adds traceability;
+  drop it from per-occurrence comments.
+- **Don't name-drop competitors.** Describe the standard or convention being
+  followed, not which product it came from. "Single-click opens a preview,
+  double-click promotes" is the right level of detail — naming VS Code /
+  Word / Google Docs / etc. is rarely load-bearing.
+- **Real interop references stay.** Mentions of SharePoint, OneDrive,
+  Dropbox, Obsidian, Dataview, etc. that describe actual sync targets or
+  format-compat features are not name-dropping — they document what the
+  code is talking to. Keep those.
+
 ## Conventions
 
 - Follow `ARCHITECTURE.md` (topology, SQLite schema, IPC contract) and

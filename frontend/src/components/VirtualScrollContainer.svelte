@@ -5,10 +5,7 @@
   import TipTapEditor from './TipTapEditor.svelte'
   import type { ParsedBlock } from '../lib/editor'
   import type { Editor } from 'svelte-tiptap'
-  import FormatToolbar from './editor/FormatToolbar.svelte'
-  import ViewModeToggle from './editor/ViewModeToggle.svelte'
-  import { settings } from '../settings/store.svelte'
-  import { isSystemDark } from '../lib/systemTheme.svelte'
+  import EditorUtilityBar from './editor/EditorUtilityBar.svelte'
   import { getViewMode, toggleViewMode } from '../lib/viewMode.svelte'
 
   interface Props {
@@ -64,15 +61,6 @@
     return () => window.removeEventListener('toggle-view-mode', handler)
   })
 
-  // Format toolbar config & dark mode detection
-  let showFormatToolbar = $derived(
-    settings.config?.ui?.show_format_toolbar !== false
-  )
-  let isDark = $derived(isSystemDark())
-  let colorEnabled = $derived(
-    settings.config?.ui?.formatting?.color_enabled !== false
-  )
-
   let blocks = $state<ParsedBlock[]>([])
   let loading = $state(false)
   let loadError = $state('')
@@ -97,9 +85,9 @@
   })
 
   // Subscribe to block:changed events (#64). When an external mutation
-  // (embed edit, VS Code edit) changes a block on the current page, reload
-  // the block list so the editor sees the update. The editor's own $effect
-  // handles applying the update when the user is not actively editing.
+  // (embed edit, external editor) changes a block on the current page,
+  // reload the block list so the editor sees the update. The editor's own
+  // $effect handles applying the update when the user is not actively editing.
   $effect(() => {
     // Read props at the top of the effect so it re-subscribes when the user
     // navigates to a different page (#64). Without this, the EventsOn closure
@@ -150,7 +138,7 @@
   function handleBlocksUpdated(updatedBlocks: ParsedBlock[]) {
     blocks = updatedBlocks
     // Fire onFirstEdit on the first content change — used by the tab strip
-    // to promote a preview tab to pinned (VS Code edit-to-pin, #142).
+    // to promote a preview tab to pinned (edit-to-pin, #142).
     if (!hasFirstEdit) {
       hasFirstEdit = true
       onFirstEdit?.()
@@ -250,25 +238,12 @@
 </script>
 
 <div class="flex-1 flex flex-col min-h-0 h-full overflow-hidden bg-void">
-  {#if viewMode === 'edit' && showFormatToolbar}
-    <div class="unified-utility-bar">
-      <div class="flex items-center">
-        <FormatToolbar
-          editor={editorInstance}
-          {activeMarks}
-          {isDark}
-          {colorEnabled}
-        />
-      </div>
-      <div class="flex items-center">
-        <ViewModeToggle mode={viewMode} onToggle={handleToggleViewMode} />
-      </div>
-    </div>
-  {:else}
-    <div class="unified-utility-bar justify-end">
-      <ViewModeToggle mode={viewMode} onToggle={handleToggleViewMode} />
-    </div>
-  {/if}
+  <EditorUtilityBar
+    editor={editorInstance}
+    {activeMarks}
+    {viewMode}
+    onToggleViewMode={handleToggleViewMode}
+  />
 
   <div
     bind:this={containerEl}
@@ -356,26 +331,5 @@
     content: 'Untitled';
     color: var(--color-text-muted);
     opacity: 0.4;
-  }
-
-  .unified-utility-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: 38px;
-    padding: 0 16px;
-    background: color-mix(
-      in srgb,
-      var(--color-surface, #1a1d24) 95%,
-      transparent
-    );
-    backdrop-filter: blur(8px);
-    border-bottom: 1px solid var(--color-border-muted, #2a2e36);
-    flex-shrink: 0;
-    z-index: 15;
-  }
-
-  .unified-utility-bar.justify-end {
-    justify-content: flex-end;
   }
 </style>

@@ -206,7 +206,7 @@
             onclick={() => onSelectPage(sectionKey, pg.name)}
             ondblclick={() => onPinPage(sectionKey, pg.name)}
             onauxclick={(e) => {
-              // Middle-click (button 1) pins the page — VS Code parity (#142).
+              // Middle-click (button 1) pins the page (#142 preview/pin contract).
               if (e.button === 1) {
                 e.preventDefault()
                 onPinPage(sectionKey, pg.name)

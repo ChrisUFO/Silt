@@ -13,7 +13,7 @@ export {
 export { SiltBlockExtensionsWithNodeViews } from './nodeViews'
 export { blocksToDoc, docToBlocks } from './converters'
 export { UniqueBlockIds, freshId } from './uniqueIdPlugin'
-export { SiltBlockKeymaps, convertToBlock } from './keymaps'
+export { SiltBlockKeymaps, convertToBlock, setBlockAlign } from './keymaps'
 export {
   TaskMetaSuggest,
   applyMetaSuggestion,

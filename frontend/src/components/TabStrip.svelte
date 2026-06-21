@@ -83,7 +83,7 @@
   let tabRefs: HTMLButtonElement[] = $state([])
 
   function handleAuxClick(e: MouseEvent, tab: TabEntry): void {
-    // Middle-click (button 1) closes the tab — VS Code parity.
+    // Middle-click (button 1) closes the tab.
     if (e.button === 1) {
       e.preventDefault()
       onCloseTab(tab.id)
@@ -252,7 +252,7 @@
     background: var(--color-hover, #1e2128);
   }
 
-  /* Preview tabs: hide the close button until hover (VS Code parity). */
+  /* Preview tabs: hide the close button until hover. */
   .preview-close {
     opacity: 0;
   }

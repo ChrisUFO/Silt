@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1670,6 +1671,143 @@ func TestUpdatePluginSetting_RequiresIDs(t *testing.T) {
 	}
 	if err := app.UpdatePluginSetting("silt-kanban", "", []string{"TODO"}); err == nil {
 		t.Error("expected error for empty key, got nil")
+	}
+}
+
+// TestAppendDismissedTip_PreservesOtherFields confirms the atomic
+// ui.dismissed_tips appender (#197) writes ONLY the targeted slice and leaves
+// every other config field intact — the property the read-mutate-saveConfig
+// dance could violate when an external edit landed mid-call.
+func TestAppendDismissedTip_PreservesOtherFields(t *testing.T) {
+	app := newTestApp(t)
+
+	app.configMu.Lock()
+	cfg := app.cfg
+	cfg.Editor.FontFamily = "MyFont"
+	cfg.UI.DismissedTips = []string{"other_tip"}
+	app.cfg = cfg
+	app.configMu.Unlock()
+	if err := config.Save(app.vaultPath, cfg); err != nil {
+		t.Fatalf("seed config.Save: %v", err)
+	}
+
+	if err := app.AppendDismissedTip("formatting_tip_v1"); err != nil {
+		t.Fatalf("AppendDismissedTip: %v", err)
+	}
+
+	// In-memory: targeted slice contains both tips in order, unrelated
+	// fields untouched.
+	app.configMu.RLock()
+	tips := append([]string{}, app.cfg.UI.DismissedTips...)
+	app.configMu.RUnlock()
+	if len(tips) != 2 || tips[0] != "other_tip" || tips[1] != "formatting_tip_v1" {
+		t.Errorf("in-memory DismissedTips = %v, want [other_tip formatting_tip_v1]", tips)
+	}
+
+	// On-disk reload: unrelated fields preserved verbatim.
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload config.Load: %v", err)
+	}
+	if loaded.Editor.FontFamily != "MyFont" {
+		t.Errorf("Editor.FontFamily not preserved: got %q", loaded.Editor.FontFamily)
+	}
+	if !reflect.DeepEqual(loaded.UI.DismissedTips, []string{"other_tip", "formatting_tip_v1"}) {
+		t.Errorf("on-disk DismissedTips = %v, want [other_tip formatting_tip_v1]", loaded.UI.DismissedTips)
+	}
+}
+
+// TestAppendDismissedTip_ConcurrentWithExternalReload runs appends concurrently
+// with a watcher-style wholesale config replacement (applyConfig), confirming
+// the configMu serialization keeps both paths race-clean and the on-disk
+// config never corrupts (#197). Run under -race.
+func TestAppendDismissedTip_ConcurrentWithExternalReload(t *testing.T) {
+	app := newTestApp(t)
+
+	snapshot := func() config.SystemConfig {
+		app.configMu.RLock()
+		defer app.configMu.RUnlock()
+		return app.cfg
+	}
+
+	stop := make(chan struct{})
+	var extWg sync.WaitGroup
+	extWg.Add(1)
+	go func() {
+		defer extWg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				app.applyConfig(snapshot())
+			}
+		}
+	}()
+
+	const n = 60
+	// 60 goroutines cycle through 3 distinct tipIDs (20 concurrent appends
+	// each). The idempotency check + configMu serialization must collapse
+	// each tipID to a single slot; cardinality asserted below.
+	unique := []string{"t1", "t3", "t5"}
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			id := unique[i%len(unique)]
+			if err := app.AppendDismissedTip(id); err != nil {
+				t.Errorf("AppendDismissedTip: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(stop)
+	extWg.Wait()
+
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("final config.Load: %v", err)
+	}
+	// Ordering is non-deterministic because the external watcher goroutine
+	// does wholesale applyConfig(snapshot()) replacement between appends.
+	// Assert membership + cardinality instead of order — mirrors the
+	// TestUpdatePluginSetting_ConcurrentWithExternalReload precedent.
+	got := map[string]int{}
+	for _, tip := range loaded.UI.DismissedTips {
+		got[tip]++
+	}
+	want := map[string]int{"t1": 1, "t3": 1, "t5": 1}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("DismissedTips cardinality after storm = %v, want %v", got, want)
+	}
+}
+
+// TestAppendDismissedTip_RequiresTipID rejects an empty tipID (fail-loud guard
+// against a no-op write that silently corrupts state).
+func TestAppendDismissedTip_RequiresTipID(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.AppendDismissedTip(""); err == nil {
+		t.Error("expected error for empty tipID, got nil")
+	}
+}
+
+// TestAppendDismissedTip_Idempotent confirms that calling AppendDismissedTip
+// twice with the same tipID produces a single-entry slice (matches the
+// frontend's `!tips.includes(...)` guard, but enforced on the Go side so a
+// future caller cannot bypass it).
+func TestAppendDismissedTip_Idempotent(t *testing.T) {
+	app := newTestApp(t)
+	for i := 0; i < 3; i++ {
+		if err := app.AppendDismissedTip("formatting_tip_v1"); err != nil {
+			t.Fatalf("AppendDismissedTip call %d: %v", i, err)
+		}
+	}
+	app.configMu.RLock()
+	tips := append([]string{}, app.cfg.UI.DismissedTips...)
+	app.configMu.RUnlock()
+	if len(tips) != 1 || tips[0] != "formatting_tip_v1" {
+		t.Errorf("DismissedTips after 3 identical appends = %v, want [formatting_tip_v1]", tips)
 	}
 }
 

@@ -71,7 +71,7 @@ func TestConfigWatcher_SelfWrite_IsIgnored(t *testing.T) {
 	select {
 	case <-changed:
 		t.Fatalf("self-write should be ignored, but onChange fired")
-	case <-time.After(700 * time.Millisecond):
+	case <-time.After(SelfWriteSuppressionTimeout):
 		// expected: no reload within the cooldown window
 	}
 }

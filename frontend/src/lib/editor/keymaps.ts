@@ -114,7 +114,9 @@ function focusBlockAt(editor: Editor, blockIndex: number): void {
 
 // Set the alignment attr on the current block (#173). No-op for TASK blocks
 // (alignment is not supported on tasks — the taskBlock schema has no align attr).
-function setBlockAlign(editor: Editor, align: string): boolean {
+// Shared by the keymap shortcuts and TipTapEditor's slash command handler.
+export function setBlockAlign(editor: Editor, align: string): boolean {
+  if (!editor || editor.isDestroyed) return false
   const { selection } = editor.state
   const pos = selection.$from
   for (let d = pos.depth; d >= 1; d--) {

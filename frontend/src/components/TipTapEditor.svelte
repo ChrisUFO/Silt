@@ -19,6 +19,7 @@
     UniqueBlockIds,
     SiltBlockKeymaps,
     convertToBlock,
+    setBlockAlign,
     TaskMetaSuggest,
     applyMetaSuggestion,
     filterMetaKeys,
@@ -27,7 +28,7 @@
   } from '../lib/editor'
   import type { ParsedBlock, MetaKey, SuggestContext } from '../lib/editor'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
-  import { settings, saveConfig } from '../settings/store.svelte'
+  import { settings, appendDismissedTip } from '../settings/store.svelte'
   import { themeState } from '../theme/store.svelte'
   import { measureFrameBudget } from '../lib/perf/frame-budget'
   import { pushNotification } from '../notifications/store.svelte'
@@ -165,13 +166,23 @@
     settings.config?.ui?.dismissed_tips?.includes('formatting_tip_v1') ?? false
   )
 
-  function dismissFormatTip(): void {
-    const cfg = settings.config
-    if (!cfg) return
-    const tips = cfg.ui?.dismissed_tips ?? []
-    if (!tips.includes('formatting_tip_v1')) {
-      cfg.ui.dismissed_tips = [...tips, 'formatting_tip_v1']
-      void saveConfig(cfg)
+  async function dismissFormatTip(): Promise<void> {
+    if (formatTipDismissed) return
+    // Snapshot the previous dismissed_tips so we can roll back the optimistic
+    // mirror if the IPC call fails — otherwise the UI hides the tip but the
+    // on-disk config never recorded the dismissal, so the tip reappears on
+    // next launch with no indication that anything went wrong.
+    const previous = settings.config?.ui?.dismissed_tips
+      ? [...settings.config.ui.dismissed_tips]
+      : []
+    const ok = await appendDismissedTip('formatting_tip_v1')
+    if (!ok) {
+      const cfg = settings.config
+      if (cfg?.ui) cfg.ui.dismissed_tips = previous
+      pushNotification({
+        kind: 'error',
+        message: 'Could not save the dismiss preference — please try again.'
+      })
     }
   }
 
@@ -458,7 +469,7 @@
   }
   function onSetBlockAlign(e: Event): void {
     const align = (e as CustomEvent).detail as string
-    if (align) setBlockAlignAttr(align)
+    if (align) setBlockAlign(editorInstance as any, align)
   }
   function onEditorScroll(): void {
     selectionCoords = null
@@ -650,26 +661,6 @@
     }
   }
 
-  // Set block alignment attr (#173). No-op for TASK blocks.
-  function setBlockAlignAttr(align: string): void {
-    if (!editorInstance || editorInstance.isDestroyed) return
-    const pos = editorInstance.state.selection.$from
-    for (let d = pos.depth; d >= 1; d--) {
-      const node = pos.node(d)
-      if (node.type.name === 'taskBlock') return
-      if (['noteBlock', 'headerBlock'].includes(node.type.name)) {
-        const nodePos = pos.before(d)
-        const tr = editorInstance.state.tr.setNodeAttribute(
-          nodePos,
-          'align',
-          align
-        )
-        editorInstance.view.dispatch(tr)
-        return
-      }
-    }
-  }
-
   function handleSlashSelect(commandId: string): void {
     showSlashMenu = false
     slashQuery = ''
@@ -694,13 +685,13 @@
     } else if (commandId === 'task') {
       convertToBlock(editorInstance as any, 'taskBlock')
     } else if (commandId === 'align-left') {
-      setBlockAlignAttr('left')
+      setBlockAlign(editorInstance as any, 'left')
     } else if (commandId === 'align-center') {
-      setBlockAlignAttr('center')
+      setBlockAlign(editorInstance as any, 'center')
     } else if (commandId === 'align-right') {
-      setBlockAlignAttr('right')
+      setBlockAlign(editorInstance as any, 'right')
     } else if (commandId === 'align-justify') {
-      setBlockAlignAttr('justify')
+      setBlockAlign(editorInstance as any, 'justify')
     } else if (commandId === 'text-color') {
       openColorPickerPopover('textColor')
     } else if (commandId === 'background-color') {

@@ -2,7 +2,8 @@ import {
   GetSystemConfig,
   GetConfigLoadError,
   SaveSystemConfig,
-  UpdatePluginSetting
+  UpdatePluginSetting,
+  AppendDismissedTip
 } from '../../wailsjs/go/main/App.js'
 import { EventsOn } from '../../wailsjs/runtime/runtime.js'
 import type { config } from '../../wailsjs/go/models.js'
@@ -102,6 +103,36 @@ export async function updatePluginSetting(
         ps[pluginID] = {}
       }
       ps[pluginID][key] = value
+    }
+    return true
+  } catch (e) {
+    settings.error = errMsg(e)
+    return false
+  } finally {
+    settings.saving = false
+  }
+}
+
+/**
+ * Atomically append a tip ID to `ui.dismissed_tips` on the Go side (#197).
+ * Mirrors the UpdatePluginSetting contract: the mutation + atomic write happen
+ * under `configMu`, so a concurrent external config.yaml edit cannot be
+ * silently clobbered. Idempotent — the Go side returns early if the tipID is
+ * already present. The local mirror is updated optimistically (no
+ * config:changed round-trip for internal saves).
+ */
+export async function appendDismissedTip(tipID: string): Promise<boolean> {
+  settings.saving = true
+  settings.error = ''
+  try {
+    await AppendDismissedTip(tipID)
+    const cfg = settings.config
+    if (cfg) {
+      if (!cfg.ui) cfg.ui = {} as any
+      const tips = cfg.ui.dismissed_tips
+      if (!Array.isArray(tips) || !tips.includes(tipID)) {
+        cfg.ui.dismissed_tips = [...(tips ?? []), tipID]
+      }
     }
     return true
   } catch (e) {

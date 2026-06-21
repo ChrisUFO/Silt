@@ -640,7 +640,58 @@ func TestSetOpenTabs_SelfWriteSuppressed(t *testing.T) {
 	select {
 	case <-changed:
 		t.Fatalf("self-write should be suppressed, but config:changed fired")
-	case <-time.After(700 * time.Millisecond):
+	case <-time.After(config.SelfWriteSuppressionTimeout):
+		// expected: no reload within the cooldown window
+	}
+}
+
+// TestAppendDismissedTip_AtomicWrite confirms the atomic tip-dismiss writer
+// (#197) leaves no leftover temp files in .system after a successful write.
+func TestAppendDismissedTip_AtomicWrite(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.AppendDismissedTip("formatting_tip_v1"); err != nil {
+		t.Fatalf("AppendDismissedTip: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(app.vaultPath, ".system"))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("leftover temp file in .system: %s", e.Name())
+		}
+	}
+}
+
+// TestAppendDismissedTip_SelfWriteSuppressed verifies that AppendDismissedTip
+// calls RegisterSelfWrite so the config watcher does NOT fire a
+// config:changed reload for Silt's own write (#197), mirroring the
+// SetOpenTabs contract.
+func TestAppendDismissedTip_SelfWriteSuppressed(t *testing.T) {
+	app := newTestApp(t)
+
+	changed := make(chan config.SystemConfig, 4)
+	cw, err := config.NewConfigWatcher(app.vaultPath, func(c config.SystemConfig) {
+		changed <- c
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewConfigWatcher: %v", err)
+	}
+	defer cw.Close()
+	cw.Start()
+	app.configWatcher = cw
+	defer func() { app.configWatcher = nil }()
+
+	time.Sleep(150 * time.Millisecond)
+
+	if err := app.AppendDismissedTip("formatting_tip_v1"); err != nil {
+		t.Fatalf("AppendDismissedTip: %v", err)
+	}
+
+	select {
+	case <-changed:
+		t.Fatalf("self-write should be suppressed, but config:changed fired")
+	case <-time.After(config.SelfWriteSuppressionTimeout):
 		// expected: no reload within the cooldown window
 	}
 }

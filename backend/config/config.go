@@ -131,8 +131,8 @@ type FormattingConfig struct {
 // TabRef is a persisted reference to an open tab's page (#142). It is the
 // YAML-serializable form of a frontend TabEntry — only the locator triple is
 // persisted; preview flag, scroll/cursor state, and the like are ephemeral
-// (VS Code parity: preview tabs are not restored across restarts). The
-// frontend filters to pinned tabs before calling SetOpenTabs.
+// (preview tabs are not restored across restarts). The frontend filters to
+// pinned tabs before calling SetOpenTabs.
 type TabRef struct {
 	Notebook string `yaml:"notebook" json:"notebook"`
 	Section  string `yaml:"section" json:"section"`
@@ -245,13 +245,13 @@ func Defaults() SystemConfig {
 			"format_highlight":  "Ctrl+Shift+H",
 			"format_subscript":  "Ctrl+,",
 			"format_superscript": "Ctrl+.",
-			// Heading level hotkeys (#169). Standard Word/Google Docs bindings.
+			// Heading level hotkeys (#169). Standard heading-level shortcuts.
 			"set_h1":   "Ctrl+Alt+1",
 			"set_h2":   "Ctrl+Alt+2",
 			"set_h3":   "Ctrl+Alt+3",
 			"set_note": "Ctrl+Alt+0",
 			"set_task": "Ctrl+Alt+4",
-			// Text alignment hotkeys (#173). Standard Word/Google Docs bindings.
+			// Text alignment hotkeys (#173). Standard alignment shortcuts.
 			"align_left":    "Ctrl+Shift+L",
 			"align_center":  "Ctrl+Shift+E",
 			"align_right":   "Ctrl+Shift+R",
@@ -277,9 +277,9 @@ func Defaults() SystemConfig {
 				Pages:    map[string][]string{},
 			},
 			OpenTabs: []TabRef{},
-			// EnablePreviewTabs defaults to true (VS Code parity). Stored as
-			// a *bool so "unset" is distinguishable from "explicitly false";
-			// the frontend treats nil as true.
+			// EnablePreviewTabs defaults to true. Stored as a *bool so
+			// "unset" is distinguishable from "explicitly false"; the
+			// frontend treats nil as true.
 			EnablePreviewTabs: boolPtr(true),
 			// MaxOpenTabs caps the simultaneously-mounted editor count
 			// (#142 §3). 8 is the documented default; on overflow the
@@ -502,10 +502,9 @@ func normalize(cfg SystemConfig) SystemConfig {
 	if cfg.UI.MaxOpenTabs > 32 {
 		cfg.UI.MaxOpenTabs = 32
 	}
-	// EnablePreviewTabs: nil → true (VS Code parity). The field is a *bool
-	// so "unset" stays distinguishable from "explicitly false" through the
-	// Load → normalize path; once normalized, the frontend reads nil as
-	// true.
+	// EnablePreviewTabs: nil → true. The field is a *bool so "unset" stays
+	// distinguishable from "explicitly false" through the Load → normalize
+	// path; once normalized, the frontend reads nil as true.
 	if cfg.UI.EnablePreviewTabs == nil {
 		cfg.UI.EnablePreviewTabs = boolPtr(true)
 	}
