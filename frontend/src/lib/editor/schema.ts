@@ -20,7 +20,95 @@
 //   the Go serializer (renderBlock) preserves the original bullet marker.
 //   The editor-created default is '- ' (matching renderBlock's default).
 
-import { Node, mergeAttributes } from '@tiptap/core'
+import { Node, Mark, mergeAttributes } from '@tiptap/core'
+import Highlight from '@tiptap/extension-highlight'
+import Subscript from '@tiptap/extension-subscript'
+import Superscript from '@tiptap/extension-superscript'
+
+// ---- Inline mark extensions ----------------------------------------------
+// TipTap 3.x StarterKit includes Bold, Italic, Strike, Code, Link, and
+// Underline marks by default. These three (Highlight, Subscript, Superscript)
+// are NOT in StarterKit and must be added explicitly. They are composed into
+// the editor's extension array alongside StarterKit.
+//
+// On-disk serialization:
+//   highlight   → ==text==
+//   subscript   → <sub>text</sub>
+//   superscript → <sup>text</sup>
+// All three round-trip through clean_text (the Go parser preserves HTML/tags
+// and ==...== verbatim — clean_text is opaque to Go). The converter
+// (converters.ts) handles parse/serialize for all 9 marks symmetrically.
+export const SiltInlineMarkExtensions = [Highlight, Subscript, Superscript]
+
+// ---- TextColor mark (#170) -----------------------------------------------
+// Inline character color. Serialized on-disk as
+// `<span style="color: #hex">text</span>`. The Go parser preserves HTML in
+// clean_text verbatim, so the span round-trips with zero parser changes.
+export const TextColor = Mark.create({
+  name: 'textColor',
+  inclusive: true,
+  addAttributes() {
+    return {
+      color: {
+        default: null,
+        parseHTML: (el) =>
+          (el as HTMLElement).style.color?.trim() || null,
+        renderHTML: (attrs) =>
+          attrs.color ? { style: `color: ${attrs.color}` } : {}
+      }
+    }
+  },
+  parseHTML() {
+    return [
+      {
+        tag: 'span[style]',
+        getAttrs: (el) => {
+          const color = (el as HTMLElement).style.color
+          return color ? { color: color.trim() } : false
+        }
+      }
+    ]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['span', mergeAttributes(HTMLAttributes), 0]
+  }
+})
+
+// ---- BackgroundColor mark (#170) ------------------------------------------
+// Inline background (highlighter) color. Serialized on-disk as
+// `<span style="background-color: #hex">text</span>`. Separate from the
+// Highlight mark (==text==, which uses the theme accent color).
+export const BackgroundColor = Mark.create({
+  name: 'backgroundColor',
+  inclusive: true,
+  addAttributes() {
+    return {
+      color: {
+        default: null,
+        parseHTML: (el) =>
+          (el as HTMLElement).style.backgroundColor?.trim() || null,
+        renderHTML: (attrs) =>
+          attrs.color ? { style: `background-color: ${attrs.color}` } : {}
+      }
+    }
+  },
+  parseHTML() {
+    return [
+      {
+        tag: 'span[style]',
+        getAttrs: (el) => {
+          const bg = (el as HTMLElement).style.backgroundColor
+          return bg ? { color: bg.trim() } : false
+        }
+      }
+    ]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['span', mergeAttributes(HTMLAttributes), 0]
+  }
+})
+
+export const SiltColorMarkExtensions = [TextColor, BackgroundColor]
 
 // ---- TaskBlock -----------------------------------------------------------
 // Renders on-disk as:
@@ -117,6 +205,16 @@ export const NoteBlock = Node.create({
         parseHTML: (el) => el.getAttribute('data-bullet') || '- ',
         renderHTML: (attrs) => ({ 'data-bullet': attrs.bullet })
       },
+      // Block-level text alignment (#173). Only NOTE and HEADER support it;
+      // TASK blocks do not get this attr. Default 'left' = no marker emitted.
+      align: {
+        default: 'left',
+        parseHTML: (el) => el.getAttribute('data-align') || 'left',
+        renderHTML: (attrs) =>
+          attrs.align && attrs.align !== 'left'
+            ? { 'data-align': attrs.align }
+            : {}
+      },
       file_date: {
         default: '',
         parseHTML: (el) => el.getAttribute('data-file-date') || '',
@@ -156,6 +254,15 @@ export const HeaderBlock = Node.create({
         default: 1,
         parseHTML: (el) => Number(el.getAttribute('data-depth') || 1),
         renderHTML: (attrs) => ({ 'data-depth': String(attrs.depth) })
+      },
+      // Block-level text alignment (#173).
+      align: {
+        default: 'left',
+        parseHTML: (el) => el.getAttribute('data-align') || 'left',
+        renderHTML: (attrs) =>
+          attrs.align && attrs.align !== 'left'
+            ? { 'data-align': attrs.align }
+            : {}
       },
       file_date: {
         default: '',

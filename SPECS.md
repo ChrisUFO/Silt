@@ -651,6 +651,52 @@ The `silt-attachments` plugin lets users attach arbitrary files to notes.
 
 Global settings are managed locally in a human-readable file located at Notebooks/.system/config.yaml. The schema defines global application defaults, plugin configurations, hotkeys, and parsing logic.
 
+## Inline Formatting (#168, #169, #170, #171, #173)
+
+Silt supports nine inline marks, block-level alignment, text/background color,
+and a source/edit view toggle. All formatting is additive to `clean_text` —
+the Go parser treats formatted text as opaque.
+
+### Inline marks (on-disk syntax)
+
+| Mark | Syntax | Example |
+|---|---|---|
+| Bold | `**text**` | `**bold**` |
+| Italic | `*text*` | `*italic*` |
+| Strikethrough | `~~text~~` | `~~struck~~` |
+| Inline code | `` `text` `` | `` `code` `` |
+| Highlight | `==text==` | `==highlighted==` |
+| Underline | `<u>text</u>` | `<u>underlined</u>` |
+| Subscript | `<sub>text</sub>` | `H<sub>2</sub>O` |
+| Superscript | `<sup>text</sup>` | `E=mc<sup>2</sup>` |
+| Link | `[text](url)` | `[docs](https://x.com)` |
+
+Marks nest freely. Code shields its content from further parsing.
+
+### Block-level alignment (#173)
+
+NOTE and HEADER blocks support `left` (default), `center`, `right`, `justify`.
+Alignment is persisted as a trailing HTML comment: `text <!-- silt-align: center -->`.
+TASK blocks do not support alignment.
+
+### Text/background color (#170)
+
+Text color: `<span style="color: #hex">text</span>`
+Background color: `<span style="background-color: #hex">text</span>`
+
+Both are inline marks that nest with other marks. A 12-color theme-aware
+palette is available via the format toolbar.
+
+### Heading levels (#169)
+
+`# H1`, `## H2`, `### H3`. Convert blocks via Mod-Alt-1/2/3/0/4 or slash
+commands `/h1` `/h2` `/h3` `/note` `/task`.
+
+### View mode toggle (#171)
+
+Per-page Edit (WYSIWYG) ↔ Source (raw markdown) toggle via Ctrl+E or the
+Edit/Source radio in the page chrome. Source view is read-only.
+
 9.1 Configuration Schema (config.yaml)
 
 # Silt Global System Settings Configuration
@@ -669,6 +715,10 @@ editor:
   tab_indent_spaces: 4
   auto_save_delay_ms: 500
   focus_highlight_ancestors: true
+  # Phase 3 enhancements (#168).
+  show_word_count: false      # opt-in word count in editor status
+  focus_mode: false           # dim non-active paragraphs
+  default_view_mode: "edit"   # "edit" or "source" (#171)
 
 # Task Parse Rules
 parsing:
@@ -687,19 +737,44 @@ hotkeys:
   open_template_picker: "Ctrl+Shift+T"
   next_tab: "Ctrl+Tab"
   prev_tab: "Ctrl+Shift+Tab"
-  close_tab: "Ctrl+W"
+   close_tab: "Ctrl+W"
+   # Inline formatting hotkeys (#168).
+   format_bold: "Ctrl+B"
+   format_italic: "Ctrl+I"
+   format_underline: "Ctrl+U"
+   format_strike: "Ctrl+Shift+X"
+   format_code: "Ctrl+E"
+   format_link: "Ctrl+K"
+   format_highlight: "Ctrl+Shift+H"
+   format_subscript: "Ctrl+,"
+   format_superscript: "Ctrl+."
+   # Heading level hotkeys (#169).
+   set_h1: "Ctrl+Alt+1"
+   set_h2: "Ctrl+Alt+2"
+   set_h3: "Ctrl+Alt+3"
+   set_note: "Ctrl+Alt+0"
+   set_task: "Ctrl+Alt+4"
+   # Text alignment hotkeys (#173).
+   align_left: "Ctrl+Shift+L"
+   align_center: "Ctrl+Shift+E"
+   align_right: "Ctrl+Shift+R"
+   align_justify: "Ctrl+Shift+J"
+   # View mode toggle (#171).
+   toggle_view_mode: "Ctrl+Shift+V"
 
 # UI Preferences (per-vault)
 ui:
   sidebar_width: 256
-  # Open-tab persistence (#142). Only pinned tabs are persisted; preview
-  # tabs are ephemeral (VS Code parity). These keys live under `ui.*` (not
-  # `editor.*`) because tab state is per-vault UI preference per
-  # ARCHITECTURE §0 rule #2.
-  enable_preview_tabs: true   # false = every open is a pinned tab
-  max_open_tabs: 8            # LRU-evict at cap (preview-first, then oldest pinned)
-  # open_tabs: []             # list of {notebook, section, page}
-  # active_tab: null          # the last-active pinned tab
+  enable_preview_tabs: true
+  max_open_tabs: 8
+  # Format toolbar visibility (#168). Default true; hide for outliner density.
+  show_format_toolbar: true
+  # One-time tip dismissals (#168).
+  dismissed_tips: []
+  # Inline formatting toggles (#168, #170).
+  formatting:
+    typography_enabled: true   # smart quotes, em-dashes
+    color_enabled: true        # text/background color pickers
 
 # Plugin Registry
 plugins:

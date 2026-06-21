@@ -6,12 +6,14 @@ export {
   TaskBlock,
   NoteBlock,
   HeaderBlock,
-  SiltBlockExtensions
+  SiltBlockExtensions,
+  SiltInlineMarkExtensions,
+  SiltColorMarkExtensions
 } from './schema'
 export { SiltBlockExtensionsWithNodeViews } from './nodeViews'
 export { blocksToDoc, docToBlocks } from './converters'
 export { UniqueBlockIds, freshId } from './uniqueIdPlugin'
-export { SiltBlockKeymaps } from './keymaps'
+export { SiltBlockKeymaps, convertToBlock } from './keymaps'
 export {
   TaskMetaSuggest,
   applyMetaSuggestion,

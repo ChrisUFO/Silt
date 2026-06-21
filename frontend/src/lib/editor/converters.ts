@@ -29,57 +29,347 @@ function detectBullet(rawText: string): string {
   return ''
 }
 
-// Concatenate all inline text from a node's content, matching how the Go
-// parser reconstructs clean_text from a block's text content. Smart Graph
-// nodes (embedNode, blockReferenceNode) emit their textual form
-// ({{embed:uuid}} and ((uuid)) respectively) so the on-disk file is
-// round-trip identical (#85).
-function inlineText(content?: NodeJSON[]): string {
-  if (!content) return ''
-  return content
-    .map((child) => {
-      if (child.text !== undefined) return child.text
-      if (child.type === 'embedNode') {
-        const uuid = (child.attrs?.uuid as string) || ''
-        return `{{embed:${uuid}}}`
-      }
-      if (child.type === 'blockReferenceNode') {
-        const uuid = (child.attrs?.uuid as string) || ''
-        return `((${uuid}))`
-      }
-      if (child.content) return inlineText(child.content)
-      return ''
-    })
-    .join('')
+// ---- Inline mark parse/serialize -----------------------------------------
+// Extends the Smart Graph tokenizer with standard markdown inline marks:
+// bold (**), italic (* or _), strike (~~), code (`), highlight (==),
+// underline (<u>), subscript (<sub>), superscript (<sup>), and link ([t](u)).
+//
+// The parser is a recursive-descent tokenizer: at each position it tries mark
+// openers in priority order; the first match wins, and the inner content is
+// recursively parsed (except code, which shields its content). This handles
+// nesting (***bold+italic***, [**bold link**](url)) correctly.
+//
+// The serializer uses a mark-diff approach: it walks nodes left-to-right,
+// emitting open/close delimiters as the active mark set changes. This produces
+// clean markdown even when marks span multiple adjacent text nodes.
+
+type MarkRef = { type: string; attrs?: Record<string, unknown> }
+
+// The opener syntax for each mark type.
+function markOpen(mark: MarkRef): string {
+  switch (mark.type) {
+    case 'bold': return '**'
+    case 'italic': return '*'
+    case 'strike': return '~~'
+    case 'highlight': return '=='
+    case 'code': return '`'
+    case 'underline': return '<u>'
+    case 'subscript': return '<sub>'
+    case 'superscript': return '<sup>'
+    case 'textColor': {
+      const color = (mark.attrs as Record<string, unknown> | undefined)?.color
+      return color ? `<span style="color: ${color}">` : ''
+    }
+    case 'backgroundColor': {
+      const color = (mark.attrs as Record<string, unknown> | undefined)?.color
+      return color ? `<span style="background-color: ${color}">` : ''
+    }
+    case 'link': return '['
+    default: return ''
+  }
 }
 
-// Tokenize clean_text into an ordered list of inline nodes (text + Smart
-// Graph nodes). Matches {{embed:uuid}} as an embedNode and ((uuid)) as a
-// blockReferenceNode (#85). UUIDs follow the 8-4-4-4-12 hex pattern.
+// The closer syntax for each mark type. Link needs the href from attrs.
+function markClose(mark: MarkRef): string {
+  switch (mark.type) {
+    case 'bold': return '**'
+    case 'italic': return '*'
+    case 'strike': return '~~'
+    case 'highlight': return '=='
+    case 'code': return '`'
+    case 'underline': return '</u>'
+    case 'subscript': return '</sub>'
+    case 'superscript': return '</sup>'
+    case 'textColor':
+    case 'backgroundColor':
+      return '</span>'
+    case 'link': {
+      const href = (mark.attrs as Record<string, unknown> | undefined)?.href as string
+      return `](${isSafeLinkHref(href) ? href : ''})`
+    }
+    default: return ''
+  }
+}
+
+// Serialize inline content to a markdown string using the mark-diff approach.
+// Walks nodes left-to-right, emitting open/close delimiters as the active mark
+// set changes. Smart Graph nodes close all active marks, emit their token, then
+// resume. Replaces the old plain-concatenation inlineText (#168).
+export function serializeInlineContent(content?: NodeJSON[]): string {
+  if (!content) return ''
+  let result = ''
+  let active: MarkRef[] = []
+
+  function closeAll(): void {
+    for (let i = active.length - 1; i >= 0; i--) {
+      result += markClose(active[i])
+    }
+    active = []
+  }
+
+  for (const child of content) {
+    if (child.text !== undefined) {
+      const nodeMarks = child.marks || []
+      // Longest common prefix between active and nodeMarks.
+      let common = 0
+      while (
+        common < active.length &&
+        common < nodeMarks.length &&
+        active[common].type === nodeMarks[common].type
+      ) {
+        common++
+      }
+      // Close marks that diverge (reverse order).
+      for (let i = active.length - 1; i >= common; i--) {
+        result += markClose(active[i])
+      }
+      // Open new marks.
+      for (let i = common; i < nodeMarks.length; i++) {
+        result += markOpen(nodeMarks[i])
+      }
+      active = nodeMarks
+      result += child.text
+    } else if (child.type === 'embedNode') {
+      closeAll()
+      result += `{{embed:${(child.attrs?.uuid as string) || ''}}}`
+    } else if (child.type === 'blockReferenceNode') {
+      closeAll()
+      result += `((${(child.attrs?.uuid as string) || ''}))`
+    } else if (child.content) {
+      closeAll()
+      result += serializeInlineContent(child.content)
+    }
+  }
+  closeAll()
+  return result
+}
+
+// ---- Inline mark parser ---------------------------------------------------
+
+// A mark pattern tried at each position. `regex` is sticky (matches only at
+// lastIndex). Capture group 1 = inner content. For links, group 2 = href.
+interface MarkPattern {
+  type: string
+  regex: RegExp
+  shield?: boolean // if true, inner content is NOT recursively parsed (code)
+  wordBoundary?: boolean // if true, only match at word boundaries (_, __)
+  extractAttrs?: (m: RegExpExecArray) => Record<string, unknown> | null
+  innerGroup?: number // capture group for inner content (default 1; color marks use 2)
+}
+
+// Allowlisted URL schemes for link hrefs (#168 security). Mirrors TipTap's
+// Link.isAllowedUri default. Non-allowlisted schemes (javascript:, data:,
+// vbscript:, etc.) are dropped — the link text survives as literal text.
+const SAFE_LINK_SCHEMES = new Set([
+  'http', 'https', 'ftp', 'ftps', 'mailto', 'tel', 'callto', 'sms', 'cid', 'xmpp'
+])
+
+function isSafeLinkHref(href: string): boolean {
+  if (!href) return false
+  // Relative URLs and anchors are safe.
+  if (href.startsWith('#') || href.startsWith('/') || href.startsWith('./') || href.startsWith('../')) return true
+  const colonIdx = href.indexOf(':')
+  if (colonIdx === -1) return true // no scheme — relative
+  const scheme = href.slice(0, colonIdx).toLowerCase()
+  return SAFE_LINK_SCHEMES.has(scheme)
+}
+
+// Ordered by priority: code first (shields), then longer delimiters before
+// shorter (** before *, __ before _) to avoid false matches.
+const MARK_PATTERNS: MarkPattern[] = [
+  { type: 'code', regex: /`([^`]+)`/y, shield: true },
+  {
+    type: 'link',
+    regex: /\[([^\]]*)\]\(([^)\s]*)\)/y,
+    extractAttrs: (m) => isSafeLinkHref(m[2]) ? { href: m[2] } : null
+  },
+  { type: 'bold', regex: /\*\*(.+?)\*\*/y },
+  { type: 'bold', regex: /__(.+?)__/y, wordBoundary: true },
+  { type: 'italic', regex: /\*(.+?)\*/y },
+  { type: 'italic', regex: /_(.+?)_/y, wordBoundary: true },
+  { type: 'strike', regex: /~~(.+?)~~/y },
+  { type: 'highlight', regex: /==(.+?)==/y },
+  { type: 'underline', regex: /<u>(.+?)<\/u>/y },
+  { type: 'subscript', regex: /<sub>(.+?)<\/sub>/y },
+  { type: 'superscript', regex: /<sup>(.+?)<\/sup>/y },
+  // Color spans (#170): [^>]* after the style attribute absorbs any extra
+  // HTML attributes (e.g. onmouseover), which are then dropped on round-trip
+  // since the serializer only emits <span style="color:X">.
+  {
+    type: 'textColor',
+    regex: /<span style="color:\s*([^;"]+?)\s*;?"[^>]*>(.+?)<\/span>/y,
+    innerGroup: 2,
+    extractAttrs: (m) => ({ color: m[1].trim() })
+  },
+  {
+    type: 'backgroundColor',
+    regex: /<span style="background-color:\s*([^;"]+?)\s*;?"[^>]*>(.+?)<\/span>/y,
+    innerGroup: 2,
+    extractAttrs: (m) => ({ color: m[1].trim() })
+  }
+]
+
+interface MarkMatch {
+  type: string
+  inner: string
+  end: number
+  shield: boolean
+  attrs?: Record<string, unknown>
+}
+
+// Try to match any mark pattern at position `pos` in `text`. Returns the first
+// match (priority order) or null.
+function tryMatchMarkAt(text: string, pos: number): MarkMatch | null {
+  for (const pattern of MARK_PATTERNS) {
+    pattern.regex.lastIndex = pos
+    const m = pattern.regex.exec(text)
+    if (!m || m.index !== pos) continue
+    // Intraword boundary check for underscore-based marks.
+    if (pattern.wordBoundary) {
+      const before = pos > 0 ? text[pos - 1] : ''
+      const afterEnd = pos + m[0].length
+      const after = afterEnd < text.length ? text[afterEnd] : ''
+      if (/[a-zA-Z0-9]/.test(before) || /[a-zA-Z0-9]/.test(after)) continue
+    }
+    const attrs = pattern.extractAttrs?.(m)
+    if (attrs === null) continue
+    return {
+      type: pattern.type,
+      inner: m[pattern.innerGroup ?? 1],
+      end: pos + m[0].length,
+      shield: pattern.shield === true,
+      attrs: attrs ?? undefined
+    }
+  }
+  return null
+}
+
+// Recursively parse inline marks in `text`, returning an ordered list of text
+// nodes (with marks). `inheritedMarks` carries marks from outer nesting levels
+// so e.g. `[**bold link**](url)` produces text(bold+link, "bold link").
+function parseInlineMarks(
+  text: string,
+  inheritedMarks: MarkRef[] = []
+): NodeJSON[] {
+  const nodes: NodeJSON[] = []
+  let plain = ''
+  let i = 0
+
+  while (i < text.length) {
+    const match = tryMatchMarkAt(text, i)
+    if (match) {
+      if (plain) {
+        nodes.push({
+          type: 'text',
+          text: plain,
+          marks: inheritedMarks.length ? [...inheritedMarks] : undefined
+        })
+        plain = ''
+      }
+      const newMark: MarkRef = { type: match.type }
+      if (match.attrs) newMark.attrs = match.attrs
+      const childMarks = [...inheritedMarks, newMark]
+      if (match.shield) {
+        // Code shields content: emit as-is, no recursive parsing.
+        nodes.push({
+          type: 'text',
+          text: match.inner,
+          marks: childMarks.length ? childMarks : undefined
+        })
+      } else {
+        nodes.push(...parseInlineMarks(match.inner, childMarks))
+      }
+      i = match.end
+    } else {
+      plain += text[i]
+      i++
+    }
+  }
+  if (plain) {
+    nodes.push({
+      type: 'text',
+      text: plain,
+      marks: inheritedMarks.length ? [...inheritedMarks] : undefined
+    })
+  }
+  return nodes
+}
+
+// ---- Smart Graph tokenization + mark parsing integration -----------------
+
+// Smart Graph token regex (embed + block reference). UUIDs: 8-4-4-4-12 hex.
 const SMART_GRAPH_TOKEN =
   /(\{\{embed:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}\})|\(\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)\)/gi
 
-function tokenizeInline(text: string): NodeJSON[] {
-  const out: NodeJSON[] = []
-  if (!text) return out
+type Segment =
+  | { type: 'text'; text: string }
+  | { type: 'embedNode'; uuid: string }
+  | { type: 'blockReferenceNode'; uuid: string }
+
+// Split clean_text on Smart Graph tokens. Text segments are later parsed for
+// inline marks; token segments are emitted as-is (#85).
+function splitSmartGraph(text: string): Segment[] {
+  const segs: Segment[] = []
   let last = 0
   let match: RegExpExecArray | null
   SMART_GRAPH_TOKEN.lastIndex = 0
   while ((match = SMART_GRAPH_TOKEN.exec(text)) !== null) {
     if (match.index > last) {
-      out.push({ type: 'text', text: text.slice(last, match.index) })
+      segs.push({ type: 'text', text: text.slice(last, match.index) })
     }
     if (match[1]) {
-      out.push({ type: 'embedNode', attrs: { uuid: match[2] } })
+      segs.push({ type: 'embedNode', uuid: match[2] })
     } else if (match[3]) {
-      out.push({ type: 'blockReferenceNode', attrs: { uuid: match[3] } })
+      segs.push({ type: 'blockReferenceNode', uuid: match[3] })
     }
     last = match.index + match[0].length
   }
   if (last < text.length) {
-    out.push({ type: 'text', text: text.slice(last) })
+    segs.push({ type: 'text', text: text.slice(last) })
   }
-  return out
+  return segs
+}
+
+// Tokenize clean_text into an ordered list of inline nodes (text with marks +
+// Smart Graph nodes). Two-pass: first splits on Smart Graph tokens (#85),
+// then parses inline marks in each text segment (#168).
+function tokenizeInline(text: string): NodeJSON[] {
+  if (!text) return []
+  const segments = splitSmartGraph(text)
+  const nodes: NodeJSON[] = []
+  for (const seg of segments) {
+    if (seg.type === 'text') {
+      nodes.push(...parseInlineMarks(seg.text))
+    } else if (seg.type === 'embedNode') {
+      nodes.push({ type: 'embedNode', attrs: { uuid: seg.uuid } })
+    } else {
+      nodes.push({ type: 'blockReferenceNode', attrs: { uuid: seg.uuid } })
+    }
+  }
+  return nodes
+}
+
+// ---- Alignment marker helpers (#173) -------------------------------------
+// Block-level alignment is persisted as a trailing HTML-comment marker in
+// clean_text: `text <!-- silt-align: center -->`. The marker is invisible
+// in the rendered editor and any markdown viewer, but present in the raw
+// file. Default 'left' emits no marker. TASK blocks never emit a marker
+// (alignment is not supported on tasks).
+
+const ALIGN_MARKER_RE = /\s*<!-- silt-align: (left|center|right|justify) -->\s*$/
+
+export function stripAlignmentMarker(
+  cleanText: string
+): { body: string; align: string } {
+  const m = cleanText.match(ALIGN_MARKER_RE)
+  if (m) {
+    return { body: cleanText.slice(0, m.index).trimEnd(), align: m[1] }
+  }
+  return { body: cleanText, align: 'left' }
+}
+
+export function emitAlignmentMarker(align: string): string {
+  return align && align !== 'left' ? ` <!-- silt-align: ${align} -->` : ''
 }
 
 // Derive parent_id from block depths via the stack-walk algorithm used by the
@@ -150,7 +440,13 @@ export function parseEmbedBlockMarker(text: string): {
 
 // Convert a single ParsedBlock to its ProseMirror node JSON.
 function blockToNode(block: ParsedBlock): NodeJSON {
-  const text = block.clean_text || ''
+  const rawText = block.clean_text || ''
+
+  // Strip alignment marker from clean_text (#173). The marker is a trailing
+  // HTML comment preserved by the Go parser as part of the line body. Embed
+  // blocks don't carry alignment, but we strip defensively so a stray marker
+  // never leaks into visible text.
+  const { body: text, align } = stripAlignmentMarker(rawText)
 
   // A NOTE whose entire body is a single {{embed:uuid}} token becomes a
   // top-level embedNode. Wrapping a block-level node inside noteBlock's
@@ -197,6 +493,7 @@ function blockToNode(block: ParsedBlock): NodeJSON {
         attrs: {
           id: block.id,
           depth: block.depth || 1,
+          align,
           file_date: block.file_date || ''
         },
         content
@@ -211,6 +508,7 @@ function blockToNode(block: ParsedBlock): NodeJSON {
           id: block.id,
           depth: block.depth,
           bullet: detectBullet(block.raw_text),
+          align,
           file_date: block.file_date || ''
         },
         content
@@ -312,7 +610,15 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
       continue
     }
 
-    const cleanText = inlineText(node.content)
+    const baseCleanText = serializeInlineContent(node.content)
+
+    // Emit alignment marker for NOTE and HEADER blocks (#173). TASK blocks
+    // never emit a marker (alignment is not supported on tasks).
+    const align = (attrs.align as string) || 'left'
+    const cleanText =
+      align !== 'left' && node.type !== 'taskBlock'
+        ? baseCleanText + emitAlignmentMarker(align)
+        : baseCleanText
 
     let type: BlockType
     switch (node.type) {

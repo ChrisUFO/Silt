@@ -418,6 +418,71 @@
       </label>
     </section>
 
+    <section>
+      <h3
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+      >
+        Formatting & Editor
+      </h3>
+      <div class="space-y-3">
+        <label class="flex items-center gap-2.5 cursor-pointer select-none">
+          <input
+            checked={draft.ui?.show_format_toolbar !== false}
+            onchange={(e: Event) => { if (!draft.ui) draft.ui = {} as any; draft.ui.show_format_toolbar = (e.currentTarget as HTMLInputElement).checked; touch() }}
+            type="checkbox"
+            class="w-4 h-4 accent-[#10b981] cursor-pointer"
+          />
+          <span class="text-text-primary text-[13px] font-body-md">
+            Show format toolbar
+          </span>
+        </label>
+        <label class="flex items-center gap-2.5 cursor-pointer select-none">
+          <input
+            checked={draft.ui?.formatting?.typography_enabled !== false}
+            onchange={(e: Event) => { if (!draft.ui) draft.ui = {} as any; if (!draft.ui.formatting) draft.ui.formatting = {} as any; draft.ui.formatting.typography_enabled = (e.currentTarget as HTMLInputElement).checked; touch() }}
+            type="checkbox"
+            class="w-4 h-4 accent-[#10b981] cursor-pointer"
+          />
+          <span class="text-text-primary text-[13px] font-body-md">
+            Smart typography (-- to em-dash, smart quotes)
+          </span>
+        </label>
+        <label class="flex items-center gap-2.5 cursor-pointer select-none">
+          <input
+            checked={draft.ui?.formatting?.color_enabled !== false}
+            onchange={(e: Event) => { if (!draft.ui) draft.ui = {} as any; if (!draft.ui.formatting) draft.ui.formatting = {} as any; draft.ui.formatting.color_enabled = (e.currentTarget as HTMLInputElement).checked; touch() }}
+            type="checkbox"
+            class="w-4 h-4 accent-[#10b981] cursor-pointer"
+          />
+          <span class="text-text-primary text-[13px] font-body-md">
+            Text and background color pickers
+          </span>
+        </label>
+        <label class="flex items-center gap-2.5 cursor-pointer select-none">
+          <input
+            checked={draft.editor?.show_word_count === true}
+            onchange={(e: Event) => { if (!draft.editor) draft.editor = {} as any; draft.editor.show_word_count = (e.currentTarget as HTMLInputElement).checked; touch() }}
+            type="checkbox"
+            class="w-4 h-4 accent-[#10b981] cursor-pointer"
+          />
+          <span class="text-text-primary text-[13px] font-body-md">
+            Show word count
+          </span>
+        </label>
+        <label class="flex items-center gap-2.5 cursor-pointer select-none">
+          <input
+            checked={draft.editor?.focus_mode === true}
+            onchange={(e: Event) => { if (!draft.editor) draft.editor = {} as any; draft.editor.focus_mode = (e.currentTarget as HTMLInputElement).checked; touch() }}
+            type="checkbox"
+            class="w-4 h-4 accent-[#10b981] cursor-pointer"
+          />
+          <span class="text-text-primary text-[13px] font-body-md">
+            Focus mode (dim inactive paragraphs)
+          </span>
+        </label>
+      </div>
+    </section>
+
     <!-- Hotkeys -->
     <section>
       <h3

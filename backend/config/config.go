@@ -41,6 +41,15 @@ type EditorConfig struct {
 	TabIndentSpaces         int     `yaml:"tab_indent_spaces" json:"tab_indent_spaces"`
 	AutoSaveDelayMs         int     `yaml:"auto_save_delay_ms" json:"auto_save_delay_ms"`
 	FocusHighlightAncestors bool    `yaml:"focus_highlight_ancestors" json:"focus_highlight_ancestors"`
+	// ShowWordCount controls the subtle word/char count in the editor status
+	// area (#168 Phase 3). Default false — opt-in so we add no chrome by default.
+	ShowWordCount *bool `yaml:"show_word_count,omitempty" json:"show_word_count,omitempty"`
+	// FocusMode dims all paragraphs except the active one for distraction-free
+	// writing (#168 Phase 3). Default false.
+	FocusMode *bool `yaml:"focus_mode,omitempty" json:"focus_mode,omitempty"`
+	// DefaultViewMode controls whether pages open in "edit" (TipTap WYSIWYG)
+	// or "source" (raw markdown) mode (#171). Default "edit".
+	DefaultViewMode *string `yaml:"default_view_mode,omitempty" json:"default_view_mode,omitempty"`
 }
 
 // ParsingConfig holds the task-parse rules consumed by the AST parser.
@@ -94,6 +103,29 @@ type UIConfig struct {
 	ActiveTab         *TabRef  `yaml:"active_tab,omitempty" json:"active_tab,omitempty"`
 	EnablePreviewTabs *bool    `yaml:"enable_preview_tabs,omitempty" json:"enable_preview_tabs,omitempty"`
 	MaxOpenTabs       int      `yaml:"max_open_tabs,omitempty" json:"max_open_tabs,omitempty"`
+	// ShowFormatToolbar controls the persistent format toolbar visibility
+	// (#168). Default true; users who want outliner-minimal density can hide
+	// it from Settings. The bubble, slash commands, hotkeys, and hover menu
+	// remain functional when hidden.
+	ShowFormatToolbar *bool `yaml:"show_format_toolbar,omitempty" json:"show_format_toolbar,omitempty"`
+	// DismissedTips tracks one-time UI tips the user has dismissed (per-vault).
+	// Used by the formatting first-run tip (#168). Same persistence tier as
+	// sidebar_width.
+	DismissedTips []string `yaml:"dismissed_tips,omitempty" json:"dismissed_tips,omitempty"`
+	// Formatting holds inline-formatting-related UI toggles (#168 Phase 3, #170).
+	Formatting FormattingConfig `yaml:"formatting,omitempty" json:"formatting,omitempty"`
+}
+
+// FormattingConfig holds per-vault toggles for inline formatting features.
+type FormattingConfig struct {
+	// TypographyEnabled controls smart input replacements (-- → —, (c) → ©,
+	// straight → curly quotes). Default true; markdown purists can disable (#168).
+	TypographyEnabled *bool `yaml:"typography_enabled,omitempty" json:"typography_enabled,omitempty"`
+	// ColorEnabled controls the text/background color pickers (#170). Default
+	// true; markdown purists can disable to keep files 100% portable. The marks
+	// still parse from incoming files when disabled; only the editor's setColor
+	// calls become no-ops.
+	ColorEnabled *bool `yaml:"color_enabled,omitempty" json:"color_enabled,omitempty"`
 }
 
 // TabRef is a persisted reference to an open tab's page (#142). It is the
@@ -175,6 +207,9 @@ func Defaults() SystemConfig {
 			TabIndentSpaces:         4,
 			AutoSaveDelayMs:         500,
 			FocusHighlightAncestors: true,
+			ShowWordCount: boolPtr(false),
+			FocusMode:     boolPtr(false),
+			DefaultViewMode: stringPtr("edit"),
 		},
 		Parsing: ParsingConfig{
 			AutoInjectUUID:      true,
@@ -196,6 +231,33 @@ func Defaults() SystemConfig {
 			"next_tab":  "Ctrl+Tab",
 			"prev_tab":  "Ctrl+Shift+Tab",
 			"close_tab": "Ctrl+W",
+			// Inline formatting hotkeys (#168). Standard editor bindings
+			// so muscle memory transfers. Each is overridable per-vault via
+			// the deep-merge. The editor's ProseMirror keymaps consume these
+			// inside the contenteditable; the global handler skips them when
+			// the editor is focused (Ctrl+B resolution).
+			"format_bold":       "Ctrl+B",
+			"format_italic":     "Ctrl+I",
+			"format_underline":  "Ctrl+U",
+			"format_strike":     "Ctrl+Shift+X",
+			"format_code":       "Ctrl+E",
+			"format_link":       "Ctrl+K",
+			"format_highlight":  "Ctrl+Shift+H",
+			"format_subscript":  "Ctrl+,",
+			"format_superscript": "Ctrl+.",
+			// Heading level hotkeys (#169). Standard Word/Google Docs bindings.
+			"set_h1":   "Ctrl+Alt+1",
+			"set_h2":   "Ctrl+Alt+2",
+			"set_h3":   "Ctrl+Alt+3",
+			"set_note": "Ctrl+Alt+0",
+			"set_task": "Ctrl+Alt+4",
+			// Text alignment hotkeys (#173). Standard Word/Google Docs bindings.
+			"align_left":    "Ctrl+Shift+L",
+			"align_center":  "Ctrl+Shift+E",
+			"align_right":   "Ctrl+Shift+R",
+			"align_justify": "Ctrl+Shift+J",
+			// View mode toggle (#171). Standard source/view toggle binding.
+			"toggle_view_mode": "Ctrl+Shift+V",
 		},
 		Plugins: PluginsConfig{
 			Active:   []string{"silt-agenda", "silt-calendar", "silt-kanban"},
@@ -225,6 +287,15 @@ func Defaults() SystemConfig {
 			// then oldest pinned. 0 (legacy config without the key) is
 			// normalized to 8 in normalize().
 			MaxOpenTabs: 8,
+			// ShowFormatToolbar defaults to true (#168). Stored as *bool so
+			// "unset" is distinguishable from "explicitly false"; the frontend
+			// treats nil as true.
+			ShowFormatToolbar: boolPtr(true),
+			DismissedTips:     []string{},
+			Formatting: FormattingConfig{
+				TypographyEnabled: boolPtr(true),
+				ColorEnabled:      boolPtr(true),
+			},
 		},
 	}
 }
@@ -438,12 +509,48 @@ func normalize(cfg SystemConfig) SystemConfig {
 	if cfg.UI.EnablePreviewTabs == nil {
 		cfg.UI.EnablePreviewTabs = boolPtr(true)
 	}
+	// ShowFormatToolbar: nil → true (#168). Same *bool semantics as
+	// EnablePreviewTabs.
+	if cfg.UI.ShowFormatToolbar == nil {
+		cfg.UI.ShowFormatToolbar = boolPtr(true)
+	}
+	if cfg.UI.DismissedTips == nil {
+		cfg.UI.DismissedTips = []string{}
+	}
+	// TypographyEnabled: nil → true (#168 Phase 3).
+	if cfg.UI.Formatting.TypographyEnabled == nil {
+		cfg.UI.Formatting.TypographyEnabled = boolPtr(true)
+	}
+	if cfg.UI.Formatting.ColorEnabled == nil {
+		cfg.UI.Formatting.ColorEnabled = boolPtr(true)
+	}
+	// ShowWordCount: nil → false (#168 Phase 3). Opt-in.
+	if cfg.Editor.ShowWordCount == nil {
+		cfg.Editor.ShowWordCount = boolPtr(false)
+	}
+	// FocusMode: nil → false (#168 Phase 3).
+	if cfg.Editor.FocusMode == nil {
+		cfg.Editor.FocusMode = boolPtr(false)
+	}
+	// DefaultViewMode: nil → "edit" (#171). Validate to edit/source.
+	if cfg.Editor.DefaultViewMode == nil {
+		cfg.Editor.DefaultViewMode = stringPtr("edit")
+	} else {
+		v := strings.TrimSpace(*cfg.Editor.DefaultViewMode)
+		if v != "edit" && v != "source" {
+			cfg.Editor.DefaultViewMode = stringPtr("edit")
+		}
+	}
 	return cfg
 }
 
 // boolPtr is a small helper for the Defaults() block so *bool fields can be
 // initialized inline without a temporary variable.
 func boolPtr(b bool) *bool { return &b }
+
+// stringPtr is a small helper for the Defaults() block so *string fields can
+// be initialized inline without a temporary variable.
+func stringPtr(s string) *string { return &s }
 
 // writeFileAtomic writes data to a sibling temp file, fsyncs it, then renames
 // it over path. Kept local (rather than reusing parser.WriteFileAtomic) so the

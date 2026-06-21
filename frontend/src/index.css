@@ -442,19 +442,33 @@ body::before {
   padding-left: calc(var(--indent-unit) * 6);
 }
 
-/* Header blocks render larger/bolder based on depth (heading level). */
+/* Block-level text alignment (#173). Applied via data-align attr. */
+.ProseMirror > div[data-align='center']  { text-align: center; }
+.ProseMirror > div[data-align='right']   { text-align: right; }
+.ProseMirror > div[data-align='justify'] { text-align: justify; }
+
+/* Header blocks render larger/bolder based on depth (heading level).
+   Sizes use CSS custom properties so themes can override (#169). */
+:root {
+  --editor-heading-h1-size: 1.75em;
+  --editor-heading-h2-size: 1.4em;
+  --editor-heading-h3-size: 1.2em;
+}
+.ProseMirror > div[data-type='header'] {
+  font-family: var(--font-headline, var(--font-body, sans-serif));
+}
 .ProseMirror > div[data-type='header'][data-depth='1'] {
-  font-size: 1.75em;
+  font-size: var(--editor-heading-h1-size);
   font-weight: 700;
   padding-top: 12px;
 }
 .ProseMirror > div[data-type='header'][data-depth='2'] {
-  font-size: 1.4em;
+  font-size: var(--editor-heading-h2-size);
   font-weight: 700;
   padding-top: 10px;
 }
 .ProseMirror > div[data-type='header'][data-depth='3'] {
-  font-size: 1.2em;
+  font-size: var(--editor-heading-h3-size);
   font-weight: 600;
 }
 

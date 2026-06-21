@@ -17,6 +17,44 @@ import { TextSelection } from '@tiptap/pm/state'
 
 const BLOCK_TYPES = ['taskBlock', 'noteBlock', 'headerBlock']
 
+// Convert the current block to a new type (#169). Provides the correct attrs
+// for each type (discarding type-specific attrs that don't apply). Shared by
+// the keymap shortcuts and TipTapEditor's slash command handler.
+export function convertToBlock(
+  editor: Editor,
+  type: 'headerBlock' | 'noteBlock' | 'taskBlock',
+  headerDepth?: number
+): boolean {
+  const { selection } = editor.state
+  const pos = selection.$from
+  for (let d = pos.depth; d >= 1; d--) {
+    const node = pos.node(d)
+    if (BLOCK_TYPES.includes(node.type.name)) {
+      const baseAttrs = {
+        id: node.attrs.id,
+        depth: type === 'headerBlock' ? (headerDepth ?? 1) : (node.attrs.depth ?? 0),
+        file_date: node.attrs.file_date || ''
+      }
+      if (type === 'noteBlock') {
+        editor.commands.setNode(type, { ...baseAttrs, bullet: '- ' })
+      } else if (type === 'taskBlock') {
+        editor.commands.setNode(type, {
+          ...baseAttrs,
+          status: 'TODO',
+          owner: '',
+          start_date: '',
+          due_date: '',
+          priority: 3
+        })
+      } else {
+        editor.commands.setNode(type, baseAttrs)
+      }
+      return true
+    }
+  }
+  return false
+}
+
 function currentBlockInfo(editor: Editor) {
   const { selection } = editor.state
   const pos = selection.$from
@@ -57,6 +95,24 @@ function focusBlockAt(editor: Editor, blockIndex: number): void {
     TextSelection.create(editor.state.doc, endPos, endPos)
   )
   editor.view.dispatch(tr)
+}
+
+// Set the alignment attr on the current block (#173). No-op for TASK blocks
+// (alignment is not supported on tasks — the taskBlock schema has no align attr).
+function setBlockAlign(editor: Editor, align: string): boolean {
+  const { selection } = editor.state
+  const pos = selection.$from
+  for (let d = pos.depth; d >= 1; d--) {
+    const node = pos.node(d)
+    if (node.type.name === 'taskBlock') return true // silently skip
+    if (BLOCK_TYPES.includes(node.type.name)) {
+      const nodePos = pos.before(d)
+      const tr = editor.state.tr.setNodeAttribute(nodePos, 'align', align)
+      editor.view.dispatch(tr)
+      return true
+    }
+  }
+  return false
 }
 
 export const SiltBlockKeymaps = Extension.create({
@@ -217,7 +273,42 @@ export const SiltBlockKeymaps = Extension.create({
           return true
         }
         return false
-      }
+      },
+
+      // Strikethrough — the Strike extension uses Mod-Shift-s, but the
+      // standard binding is Mod-Shift-x. Register both (#168).
+      'Mod-Shift-x': () => {
+        this.editor.chain().focus().toggleStrike().run()
+        return true
+      },
+
+      // Link — no built-in shortcut. Dispatches a custom event so TipTapEditor
+      // can show its inline URL input (#168). If already linked, removes.
+      'Mod-k': () => {
+        const { selection } = this.editor.state
+        if (selection.empty) return false
+        if (this.editor.isActive('link')) {
+          this.editor.chain().focus().unsetLink().run()
+        } else {
+          window.dispatchEvent(new CustomEvent('silt:open-link-input'))
+        }
+        return true
+      },
+
+      // Heading level shortcuts (#169). Mod-Alt-1/2/3 → H1/H2/H3,
+      // Mod-Alt-0 → Note (strip heading/task), Mod-Alt-4 → Task.
+      'Mod-Alt-1': () => convertToBlock(this.editor, 'headerBlock', 1),
+      'Mod-Alt-2': () => convertToBlock(this.editor, 'headerBlock', 2),
+      'Mod-Alt-3': () => convertToBlock(this.editor, 'headerBlock', 3),
+      'Mod-Alt-0': () => convertToBlock(this.editor, 'noteBlock'),
+      'Mod-Alt-4': () => convertToBlock(this.editor, 'taskBlock'),
+
+      // Text alignment shortcuts (#173). Mod-Shift-L/E/R/J for left/center/
+      // right/justify. No-op for TASK blocks (alignment not supported on tasks).
+      'Mod-Shift-l': () => setBlockAlign(this.editor, 'left'),
+      'Mod-Shift-e': () => setBlockAlign(this.editor, 'center'),
+      'Mod-Shift-r': () => setBlockAlign(this.editor, 'right'),
+      'Mod-Shift-j': () => setBlockAlign(this.editor, 'justify')
     }
   }
 })

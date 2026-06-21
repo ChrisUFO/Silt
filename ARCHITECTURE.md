@@ -944,7 +944,19 @@ The settings store (settings/store.svelte.ts) is a $state object exposing loadCo
 
 The editor-token pipeline (settings/editor-tokens.svelte.ts) mirrors the theme injector pattern (§4.4): editor.* config values (font_family, mono_font_family, font_size_px, line_height) are injected as CSS custom properties (--editor-font-family, --editor-mono-font-family, --editor-font-size, --editor-line-height) on :root via a dedicated <style id="silt-editor"> element, separate from the theme injector's <style id="silt-theme">. initEditorTokens() uses $effect.root to watch the reactive settings store, so config changes apply live (one DOM write → one recalculation → same-tick repaint) without a reload or remount. The index.css :root values are startup fallbacks only.
 
-BlockRenderer (the live block editor) consumes the full editor.* config surface: typography flows through the CSS variables (font-family, font-size, line-height on the contenteditable and read-mode divs); auto_save_delay_ms drives the triggerAutoSave debounce (0 = immediate, no timer); focus_highlight_ancestors gates the guide-rail active highlight; and indent_block / unindent_block hotkeys are matched via matchHotkey (settings/hotkeys.ts) so users can remap or disable them from Settings → General. The cycle_view_layout hotkey is wired in App.svelte's global keydown handler alongside open_search and toggle_sidebar, cycling through the main views (notes → tags → agenda → calendar → kanban).
+TipTapEditor (the live block editor, frontend/src/components/TipTapEditor.svelte)
+consumes the full editor.* config surface: typography flows through the CSS
+variables (font-family, font-size, line-height on the contenteditable);
+auto_save_delay_ms drives the triggerAutoSave debounce; focus_highlight_ancestors
+gates the guide-rail active highlight; show_word_count toggles a subtle
+CharacterCount display; focus_mode dims non-active paragraphs; and
+indent_block / unindent_block hotkeys are matched via matchHotkey
+(settings/hotkeys.ts). The cycle_view_layout hotkey is wired in App.svelte's
+global keydown handler alongside open_search, toggle_sidebar, and
+toggle_view_mode. Inline formatting marks (#168), block alignment (#173),
+text/background color (#170), and the source/edit view toggle (#171) are all
+additive to clean_text — the Go parser sees formatted text as opaque and
+requires zero parser changes.
 
 
 9. Performance Budgets & System Tray

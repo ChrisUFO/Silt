@@ -376,6 +376,30 @@
       // own keydown handler; cycle_view_layout is global (it changes the
       // main view, not anything inside the contenteditable).
       const hotkeys = settings.config?.hotkeys ?? {}
+
+      // If the editor (ProseMirror contenteditable) is focused, skip global
+      // bindings that collide with editor format shortcuts (#168). The main
+      // conflict is Ctrl+B (toggle_sidebar vs format_bold). ProseMirror
+      // handles format_* shortcuts inside the contenteditable; the global
+      // handler must not also fire.
+      const target = e.target as HTMLElement | null
+      if (target?.closest('.ProseMirror')) {
+        // Skip any hotkey consumed inside the editor (format, heading,
+        // alignment, view-mode toggle) so the global handler doesn't
+        // double-fire (#168, #169, #173, #171).
+        for (const [action, binding] of Object.entries(hotkeys)) {
+          if (
+            (action.startsWith('format_') ||
+             action.startsWith('set_') ||
+             action.startsWith('align_') ||
+             action === 'toggle_view_mode') &&
+            matchHotkey(e, binding)
+          ) {
+            return
+          }
+        }
+      }
+
       if (matchHotkey(e, hotkeys.open_search)) {
         e.preventDefault()
         showSearch = !showSearch
@@ -393,6 +417,10 @@
         e.preventDefault()
         templatePickerMode = 'new-page'
         showTemplatePicker = !showTemplatePicker
+      }
+      if (matchHotkey(e, hotkeys.toggle_view_mode)) {
+        e.preventDefault()
+        window.dispatchEvent(new CustomEvent('toggle-view-mode'))
       }
       // Tab-strip hotkeys (#142). Ctrl+Tab / Ctrl+Shift+Tab cycle MRU;
       // Ctrl+W closes the active tab. All three are remappable / disable-
