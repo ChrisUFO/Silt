@@ -106,7 +106,7 @@ func TestTemplateWatcher_SelfWriteSuppressed(t *testing.T) {
 	select {
 	case <-changed:
 		t.Error("self-write should be suppressed, but callback fired")
-	case <-time.After(700 * time.Millisecond):
+	case <-time.After(SelfWriteSuppressionTimeout):
 		// Good — no callback within the window + buffer.
 	}
 }

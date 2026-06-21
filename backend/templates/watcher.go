@@ -23,6 +23,14 @@ const selfWriteWindow = 500 * time.Millisecond
 // callback rather than several. Mirrors config.ConfigWatcher's debounce.
 const reloadDebounce = 120 * time.Millisecond
 
+// SelfWriteSuppressionTimeout is the upper bound on how long a self-write
+// suppression can be observed by external watchers — selfWriteWindow plus
+// reloadDebounce, with a small safety margin. Tests that assert no callback
+// fires during the suppression window should reference this constant rather
+// than a hardcoded value, so the assertion tracks any future retuning of the
+// underlying windows. Mirrors config.SelfWriteSuppressionTimeout.
+const SelfWriteSuppressionTimeout = selfWriteWindow + reloadDebounce + 80*time.Millisecond
+
 // TemplateWatcher observes <vault>/.system/templates/ for external add/modify/
 // delete of user templates and invokes onChange (which the App wires to
 // ReloadTemplates + a templates:changed event) so the picker stays live without
