@@ -31,7 +31,7 @@
     class:active={mode === 'edit'}
     role="radio"
     aria-checked={mode === 'edit'}
-    aria-keyshortcuts="Ctrl+E"
+    aria-keyshortcuts="Ctrl+Shift+V"
     onclick={() => mode !== 'edit' && onToggle()}
   >
     Edit
@@ -42,7 +42,7 @@
     class:active={mode === 'source'}
     role="radio"
     aria-checked={mode === 'source'}
-    aria-keyshortcuts="Ctrl+E"
+    aria-keyshortcuts="Ctrl+Shift+V"
     onclick={() => mode !== 'source' && onToggle()}
   >
     Source

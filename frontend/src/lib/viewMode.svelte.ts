@@ -1,3 +1,5 @@
+import { settings } from '../settings/store.svelte'
+
 export type ViewMode = 'edit' | 'source'
 
 function pageKey(notebook: string, section: string, page: string): string {
@@ -13,7 +15,11 @@ export function getViewMode(
   section: string,
   page: string
 ): ViewMode {
-  return viewModes[pageKey(notebook, section, page)] || 'edit'
+  const key = pageKey(notebook, section, page)
+  if (viewModes[key]) return viewModes[key]
+  // Fall back to the per-vault default_view_mode config (#171).
+  const configured = settings.config?.editor?.default_view_mode
+  return configured === 'source' ? 'source' : 'edit'
 }
 
 export function setViewMode(

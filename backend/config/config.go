@@ -257,7 +257,7 @@ func Defaults() SystemConfig {
 			"align_right":   "Ctrl+Shift+R",
 			"align_justify": "Ctrl+Shift+J",
 			// View mode toggle (#171). Standard source/view toggle binding.
-			"toggle_view_mode": "Ctrl+E",
+			"toggle_view_mode": "Ctrl+Shift+V",
 		},
 		Plugins: PluginsConfig{
 			Active:   []string{"silt-agenda", "silt-calendar", "silt-kanban"},

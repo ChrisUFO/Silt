@@ -760,7 +760,7 @@ hotkeys:
    align_right: "Ctrl+Shift+R"
    align_justify: "Ctrl+Shift+J"
    # View mode toggle (#171).
-   toggle_view_mode: "Ctrl+E"
+   toggle_view_mode: "Ctrl+Shift+V"
 
 # UI Preferences (per-vault)
 ui:
