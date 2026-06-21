@@ -93,6 +93,8 @@
   let isFocused = $state(false)
   let suppressUpdate = false
   let showSlashMenu = $state(false)
+  let slashQuery = $state('')
+  let slashMenuDismissed = $state(false)
   let showTemplatePicker = $state(false)
 
   // Active inline marks in the current selection (#168). Updated on every
@@ -477,6 +479,8 @@
     if (target.closest('.ProseMirror') || target.closest('.selection-bubble'))
       return
     selectionCoords = null
+    showSlashMenu = false
+    slashMenuDismissed = true
   }
 
   window.addEventListener('silt:open-link-input', onOpenLinkInput)
@@ -576,10 +580,28 @@
       0,
       sel.$from.parentOffset
     )
-    if (textBefore === '/') {
-      showSlashMenu = true
-    } else if (showSlashMenu && !textBefore.startsWith('/')) {
+    if (textBefore.startsWith('/')) {
+      if (!slashMenuDismissed) {
+        showSlashMenu = true
+        slashQuery = textBefore.slice(1)
+      }
+    } else {
       showSlashMenu = false
+      slashQuery = ''
+      slashMenuDismissed = false
+    }
+  }
+
+  function slashCoords(): { left: number; top: number } | null {
+    if (!showSlashMenu || !editorInstance || editorInstance.isDestroyed)
+      return null
+    const { selection } = editorInstance.state
+    const pos = selection.$from.start()
+    try {
+      const c = editorInstance.view.coordsAtPos(pos)
+      return { left: c.left, top: c.bottom }
+    } catch (err) {
+      return null
     }
   }
 
@@ -643,6 +665,8 @@
 
   function handleSlashSelect(commandId: string): void {
     showSlashMenu = false
+    slashQuery = ''
+    slashMenuDismissed = false
     if (!editorInstance || editorInstance.isDestroyed) return
 
     const sel = editorInstance.state.selection
@@ -1149,10 +1173,18 @@
       </div>
     {/if}
     {#if showSlashMenu}
-      <CommandPalette
-        onSelect={handleSlashSelect}
-        onClose={() => (showSlashMenu = false)}
-      />
+      {@const coords = slashCoords()}
+      {#if coords}
+        <CommandPalette
+          style="position: fixed; left: {coords.left}px; top: {coords.top}px;"
+          query={slashQuery}
+          onSelect={handleSlashSelect}
+          onClose={() => {
+            showSlashMenu = false
+            slashMenuDismissed = true
+          }}
+        />
+      {/if}
     {/if}
     {#if metaPopup}
       {@const c = metaPopupCoords()}
