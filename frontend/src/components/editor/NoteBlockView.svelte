@@ -2,6 +2,8 @@
   import { NodeViewWrapper, NodeViewContent } from 'svelte-tiptap'
   import type { NodeViewProps } from '@tiptap/core'
 
+  // SvelteNodeViewRenderer auto-applies a `node-{type.name}` (camelCase) class
+  // to the wrapper, so we don't redeclare it here (#179).
   let { node }: NodeViewProps = $props()
   let isEmpty = $derived(!node.content.size || node.textContent.trim() === '')
   let align = $derived(node.attrs.align || 'left')
@@ -25,7 +27,7 @@
 </script>
 
 <NodeViewWrapper
-  class="group note-block flex items-start gap-3 py-1 min-h-[32px]"
+  class="group flex items-start gap-3 py-1 min-h-[32px]"
   data-align={align}
   data-depth={depth}
 >

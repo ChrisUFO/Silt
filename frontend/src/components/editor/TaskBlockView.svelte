@@ -2,6 +2,8 @@
   import { NodeViewWrapper, NodeViewContent } from 'svelte-tiptap'
   import type { NodeViewProps } from '@tiptap/core'
 
+  // SvelteNodeViewRenderer auto-applies a `node-{type.name}` (camelCase) class
+  // to the wrapper, so we don't redeclare it here (#179).
   let { node, updateAttributes, selected }: NodeViewProps = $props()
 
   const status = $derived(node.attrs.status || 'TODO')
@@ -39,7 +41,7 @@
 </script>
 
 <NodeViewWrapper
-  class="group task-block flex items-start gap-3 py-1 min-h-[32px]"
+  class="group flex items-start gap-3 py-1 min-h-[32px]"
   data-depth={depth}
 >
   <!-- Drag handle -->
