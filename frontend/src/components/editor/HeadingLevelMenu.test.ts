@@ -34,7 +34,9 @@ describe('HeadingLevelMenu', () => {
 
   it('opens menu with 5 options on click', async () => {
     const editor = makeMockEditor('noteBlock') as any
-    const { getByRole, getAllByRole } = render(HeadingLevelMenu, { props: { editor } })
+    const { getByRole, getAllByRole } = render(HeadingLevelMenu, {
+      props: { editor }
+    })
     const trigger = getByRole('button')
     await fireEvent.click(trigger)
     const items = getAllByRole('menuitemradio')
@@ -44,13 +46,30 @@ describe('HeadingLevelMenu', () => {
   it('dispatches silt:change-block-type on selection', async () => {
     const editor = makeMockEditor('noteBlock') as any
     const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
-    const { getByRole, getByText } = render(HeadingLevelMenu, { props: { editor } })
+    const { getByRole, getByText } = render(HeadingLevelMenu, {
+      props: { editor }
+    })
     await fireEvent.click(getByRole('button'))
     await fireEvent.click(getByText('Heading 2'))
-    const lastCall = dispatchSpy.mock.calls[dispatchSpy.mock.calls.length - 1][0] as CustomEvent
+    const lastCall = dispatchSpy.mock.calls[
+      dispatchSpy.mock.calls.length - 1
+    ][0] as CustomEvent
     expect(lastCall.type).toBe('silt:change-block-type')
     expect(lastCall.detail.type).toBe('headerBlock')
     expect(lastCall.detail.depth).toBe(2)
     dispatchSpy.mockRestore()
+  })
+
+  it('closes the menu on click outside', async () => {
+    const editor = makeMockEditor('noteBlock') as any
+    const { getByRole, queryAllByRole } = render(HeadingLevelMenu, {
+      props: { editor }
+    })
+    await fireEvent.click(getByRole('button'))
+    expect(queryAllByRole('menuitemradio')).toHaveLength(5)
+
+    await fireEvent.click(document.body)
+
+    expect(queryAllByRole('menuitemradio')).toHaveLength(0)
   })
 })

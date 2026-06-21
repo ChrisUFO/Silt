@@ -8,7 +8,7 @@
   import FormatToolbar from './editor/FormatToolbar.svelte'
   import ViewModeToggle from './editor/ViewModeToggle.svelte'
   import { settings } from '../settings/store.svelte'
-  import { themeState } from '../theme/store.svelte'
+  import { isSystemDark } from '../lib/systemTheme.svelte'
   import { getViewMode, toggleViewMode } from '../lib/viewMode.svelte'
 
   interface Props {
@@ -68,22 +68,7 @@
   let showFormatToolbar = $derived(
     settings.config?.ui?.show_format_toolbar !== false
   )
-  let osPrefersDark = $state(
-    window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
-  )
-  $effect(() => {
-    const mql = window.matchMedia?.('(prefers-color-scheme: dark)')
-    if (!mql) return
-    const handler = (e: MediaQueryListEvent) => {
-      osPrefersDark = e.matches
-    }
-    mql.addEventListener('change', handler)
-    return () => mql.removeEventListener('change', handler)
-  })
-  let isDark = $derived(
-    themeState.mode === 'dark' ||
-      (themeState.mode === 'system' && osPrefersDark)
-  )
+  let isDark = $derived(isSystemDark())
   let colorEnabled = $derived(
     settings.config?.ui?.formatting?.color_enabled !== false
   )

@@ -40,6 +40,7 @@
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { dispatch as dispatchPluginEvent } from '../plugins/events'
   import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
+  import { isSystemDark } from '../lib/systemTheme.svelte'
 
   // Map of slash command ids to their mark type (#168). 'clear' is special
   // (strips all marks); 'link' opens a URL prompt.
@@ -117,6 +118,7 @@
   // Selection bubble state (#168): tracks whether the selection is non-
   // collapsed and the screen coords for positioning the floating bubble.
   let selectionEmpty = $state(true)
+  let isLastBlock = $state(false)
   let selectionCoords = $state<{
     left: number
     top: number
@@ -125,23 +127,7 @@
 
   // Track OS dark/light preference reactively so isDark updates when the
   // OS theme changes under mode === 'system' (#168 color palette).
-  let osPrefersDark = $state(
-    window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
-  )
-  $effect(() => {
-    const mql = window.matchMedia?.('(prefers-color-scheme: dark)')
-    if (!mql) return
-    const handler = (e: MediaQueryListEvent) => {
-      osPrefersDark = e.matches
-    }
-    mql.addEventListener('change', handler)
-    return () => mql.removeEventListener('change', handler)
-  })
-
-  let isDark = $derived(
-    themeState.mode === 'dark' ||
-      (themeState.mode === 'system' && osPrefersDark)
-  )
+  let isDark = $derived(isSystemDark())
 
   let colorEnabled = $derived(
     settings.config?.ui?.formatting?.color_enabled !== false
@@ -379,6 +365,9 @@
       if (suppressUpdate) return
       detectSlashCommand()
       unsavedChanges = true
+      isLastBlock = editorInstance
+        ? editorInstance.state.doc.childCount <= 1
+        : false
       // Update word count from CharacterCount storage (#168 Phase 3).
       const storage = editorInstance?.storage as unknown as
         | Record<string, unknown>
@@ -448,6 +437,7 @@
     onCreate: ({ editor }) => {
       editorInstance = editor as Editor
       editorReady = true
+      isLastBlock = editor.state.doc.childCount <= 1
     }
   })
 
@@ -999,7 +989,10 @@
         editorInstance.commands.insertContent({ type: 'text', text })
       }
     } catch {
-      // fallback
+      pushNotification({
+        kind: 'error',
+        message: 'Paste failed: clipboard could not be read.'
+      })
     }
     closeContextMenu()
   }
@@ -1078,6 +1071,8 @@
 
   function handleDeleteBlock(): void {
     if (!editorInstance) return
+    const { doc } = editorInstance.state
+    if (doc.childCount <= 1) return
     const pos = editorInstance.state.selection.$from
     let blockDepth = 1
     for (let d = pos.depth; d >= 1; d--) {
@@ -1246,6 +1241,7 @@
               class="context-menu-item text-status-danger"
               role="menuitem"
               onclick={handleDeleteBlock}
+              disabled={isLastBlock}
             >
               <span class="material-symbols-outlined text-[16px]">delete</span>
               Delete Block

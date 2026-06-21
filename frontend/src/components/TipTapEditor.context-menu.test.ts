@@ -225,4 +225,33 @@ describe('TipTapEditor context menu', () => {
 
     unmount()
   })
+
+  it('disables Delete Block when only one block remains', async () => {
+    const blocks = [mkBlock('NOTE', { clean_text: 'only block' })]
+    const { container, unmount } = render(TipTapEditor, {
+      props: {
+        notebook: 'NB',
+        section: 'S',
+        page: 'P',
+        blocks,
+        onUpdate: () => {}
+      }
+    })
+
+    await waitFor(() => {
+      expect(container.querySelector('.ProseMirror')).toBeTruthy()
+    })
+
+    await openContextMenu(container)
+
+    const deleteBtn = Array.from(
+      container.querySelectorAll('[role="menuitem"]')
+    ).find((btn) =>
+      btn.textContent?.includes('Delete Block')
+    ) as HTMLButtonElement
+    expect(deleteBtn).toBeTruthy()
+    expect(deleteBtn.disabled).toBe(true)
+
+    unmount()
+  })
 })
