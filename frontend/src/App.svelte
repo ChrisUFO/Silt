@@ -390,9 +390,9 @@
         for (const [action, binding] of Object.entries(hotkeys)) {
           if (
             (action.startsWith('format_') ||
-             action.startsWith('set_') ||
-             action.startsWith('align_') ||
-             action === 'toggle_view_mode') &&
+              action.startsWith('set_') ||
+              action.startsWith('align_') ||
+              action === 'toggle_view_mode') &&
             matchHotkey(e, binding)
           ) {
             return
@@ -846,6 +846,7 @@
                     notebook={tab.notebook}
                     section={tab.section}
                     page={tab.page}
+                    isActive={tab.id === activeTabId}
                     targetBlockId={tab.id === activeTabId
                       ? searchTargetBlockId
                       : ''}

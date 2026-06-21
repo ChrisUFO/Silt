@@ -4,6 +4,12 @@
   import { EventsOn } from '../../wailsjs/runtime/runtime.js'
   import TipTapEditor from './TipTapEditor.svelte'
   import type { ParsedBlock } from '../lib/editor'
+  import type { Editor } from 'svelte-tiptap'
+  import FormatToolbar from './editor/FormatToolbar.svelte'
+  import ViewModeToggle from './editor/ViewModeToggle.svelte'
+  import { settings } from '../settings/store.svelte'
+  import { isSystemDark } from '../lib/systemTheme.svelte'
+  import { getViewMode, toggleViewMode } from '../lib/viewMode.svelte'
 
   interface Props {
     notebook: string
@@ -16,6 +22,7 @@
     activeFocusedBlockAncestors?: string[]
     onPageRenamed?: (newName: string) => void
     onFirstEdit?: () => void
+    isActive?: boolean
   }
 
   let {
@@ -28,8 +35,43 @@
     onBlockBlur,
     activeFocusedBlockAncestors = [],
     onPageRenamed,
-    onFirstEdit
+    onFirstEdit,
+    isActive = true
   }: Props = $props()
+
+  // Editor bindings
+  let editorInstance = $state<Editor | null>(null)
+  let activeMarks = $state<Set<string>>(new Set())
+
+  // View mode management
+  let viewMode = $state<'edit' | 'source'>('edit')
+  $effect(() => {
+    viewMode = getViewMode(notebook, section, page)
+  })
+
+  function handleToggleViewMode() {
+    toggleViewMode(notebook, section, page)
+    viewMode = getViewMode(notebook, section, page)
+  }
+
+  // Listen for the toggle-view-mode event (global hotkey). Only the active
+  // tab responds — all displayed tabs are mounted simultaneously (display:none
+  // for inactive tabs), so without this guard the hotkey would flip every tab.
+  $effect(() => {
+    if (!isActive) return
+    const handler = () => handleToggleViewMode()
+    window.addEventListener('toggle-view-mode', handler)
+    return () => window.removeEventListener('toggle-view-mode', handler)
+  })
+
+  // Format toolbar config & dark mode detection
+  let showFormatToolbar = $derived(
+    settings.config?.ui?.show_format_toolbar !== false
+  )
+  let isDark = $derived(isSystemDark())
+  let colorEnabled = $derived(
+    settings.config?.ui?.formatting?.color_enabled !== false
+  )
 
   let blocks = $state<ParsedBlock[]>([])
   let loading = $state(false)
@@ -207,74 +249,99 @@
   })
 </script>
 
-<div
-  bind:this={containerEl}
-  class="flex-1 overflow-y-auto px-12 py-10 custom-scrollbar bg-void flex flex-col min-h-0"
->
-  <nav
-    class="mb-6 flex items-center gap-2 text-text-muted font-label-sm text-label-sm"
+<div class="flex-1 flex flex-col min-h-0 h-full overflow-hidden bg-void">
+  {#if viewMode === 'edit' && showFormatToolbar}
+    <div class="unified-utility-bar">
+      <div class="flex items-center">
+        <FormatToolbar
+          editor={editorInstance}
+          {activeMarks}
+          {isDark}
+          {colorEnabled}
+        />
+      </div>
+      <div class="flex items-center">
+        <ViewModeToggle mode={viewMode} onToggle={handleToggleViewMode} />
+      </div>
+    </div>
+  {:else}
+    <div class="unified-utility-bar justify-end">
+      <ViewModeToggle mode={viewMode} onToggle={handleToggleViewMode} />
+    </div>
+  {/if}
+
+  <div
+    bind:this={containerEl}
+    class="flex-1 overflow-y-auto px-12 py-10 custom-scrollbar bg-void flex flex-col min-h-0"
   >
-    <span>{notebook}</span>
-    {#if section}
-      <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-      <span>{section}</span>
-    {/if}
-    <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-    <span class="text-accent-primary-start">{page}</span>
-  </nav>
-
-  <header class="mb-8">
-    <h1
-      bind:this={titleEl}
-      contenteditable="true"
-      spellcheck="false"
-      oninput={handleTitleInput}
-      onkeydown={handleTitleKeydown}
-      onblur={handleTitleBlur}
-      class="font-headline-lg text-headline-lg text-text-primary tracking-tight mb-1 outline-none rounded-sm transition-colors"
-      style="border-bottom: 1px solid transparent; padding-bottom: 1px;"
-      aria-label="Page title"
+    <nav
+      class="mb-6 flex items-center gap-2 text-text-muted font-label-sm text-label-sm"
     >
-      {page}
-    </h1>
-    <p class="text-text-muted/60 text-sm font-body-sm">
-      {formatDate(pageDate)}
-    </p>
-  </header>
+      <span>{notebook}</span>
+      {#if section}
+        <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+        <span>{section}</span>
+      {/if}
+      <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+      <span class="text-accent-primary-start">{page}</span>
+    </nav>
 
-  <div class="max-w-4xl w-full flex-1 flex flex-col gap-4">
-    {#if loadError}
-      <div
-        class="text-error py-8 text-center font-body-md border border-error-border bg-error-bg rounded-lg flex flex-col items-center gap-3"
+    <header class="mb-8">
+      <h1
+        bind:this={titleEl}
+        contenteditable="true"
+        spellcheck="false"
+        oninput={handleTitleInput}
+        onkeydown={handleTitleKeydown}
+        onblur={handleTitleBlur}
+        class="font-headline-lg text-headline-lg text-text-primary tracking-tight mb-1 outline-none rounded-sm transition-colors"
+        style="border-bottom: 1px solid transparent; padding-bottom: 1px;"
+        aria-label="Page title"
       >
-        <div>Failed to load page: {loadError}</div>
-        <button
-          onclick={() => loadPage()}
-          class="px-4 py-1.5 rounded-lg bg-error/20 border border-error-border text-error font-label-sm-bold hover:brightness-110 transition-all cursor-pointer"
-        >
-          Retry
-        </button>
-      </div>
-    {:else}
-      <TipTapEditor
-        {notebook}
-        {section}
         {page}
-        {blocks}
-        {activeFocusedBlockAncestors}
-        {onBlockFocus}
-        {onBlockBlur}
-        onUpdate={handleBlocksUpdated}
-      />
-    {/if}
+      </h1>
+      <p class="text-text-muted/60 text-sm font-body-sm">
+        {formatDate(pageDate)}
+      </p>
+    </header>
 
-    {#if loading}
-      <div class="flex justify-center py-6">
-        <span class="text-accent-primary-start font-body-md animate-pulse"
-          >Loading...</span
+    <div class="max-w-4xl w-full flex-1 flex flex-col gap-4">
+      {#if loadError}
+        <div
+          class="text-error py-8 text-center font-body-md border border-error-border bg-error-bg rounded-lg flex flex-col items-center gap-3"
         >
-      </div>
-    {/if}
+          <div>Failed to load page: {loadError}</div>
+          <button
+            onclick={() => loadPage()}
+            class="px-4 py-1.5 rounded-lg bg-error/20 border border-error-border text-error font-label-sm-bold hover:brightness-110 transition-all cursor-pointer"
+          >
+            Retry
+          </button>
+        </div>
+      {:else}
+        <TipTapEditor
+          {notebook}
+          {section}
+          {page}
+          {blocks}
+          {activeFocusedBlockAncestors}
+          {onBlockFocus}
+          {onBlockBlur}
+          onUpdate={handleBlocksUpdated}
+          bind:editorInstance
+          bind:activeMarks
+          {viewMode}
+        />
+      {/if}
+
+      {#if loading}
+        <div class="flex justify-center py-6">
+          <span class="text-accent-primary-start font-body-md animate-pulse"
+            >Loading...</span
+          >
+        </div>
+      {/if}
+    </div>
   </div>
 </div>
 
@@ -289,5 +356,26 @@
     content: 'Untitled';
     color: var(--color-text-muted);
     opacity: 0.4;
+  }
+
+  .unified-utility-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 38px;
+    padding: 0 16px;
+    background: color-mix(
+      in srgb,
+      var(--color-surface, #1a1d24) 95%,
+      transparent
+    );
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--color-border-muted, #2a2e36);
+    flex-shrink: 0;
+    z-index: 15;
+  }
+
+  .unified-utility-bar.justify-end {
+    justify-content: flex-end;
   }
 </style>

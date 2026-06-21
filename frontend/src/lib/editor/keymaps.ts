@@ -17,6 +17,20 @@ import { TextSelection } from '@tiptap/pm/state'
 
 const BLOCK_TYPES = ['taskBlock', 'noteBlock', 'headerBlock']
 
+function getNextBullet(currentBullet: string): string {
+  if (!currentBullet) return ''
+  if (['- ', '* ', '+ '].includes(currentBullet)) {
+    return currentBullet
+  }
+  const match = currentBullet.match(/^(\d+)([.)]\s)$/)
+  if (match) {
+    const nextNum = parseInt(match[1], 10) + 1
+    const punc = match[2]
+    return `${nextNum}${punc}`
+  }
+  return currentBullet
+}
+
 // Convert the current block to a new type (#169). Provides the correct attrs
 // for each type (discarding type-specific attrs that don't apply). Shared by
 // the keymap shortcuts and TipTapEditor's slash command handler.
@@ -32,7 +46,8 @@ export function convertToBlock(
     if (BLOCK_TYPES.includes(node.type.name)) {
       const baseAttrs = {
         id: node.attrs.id,
-        depth: type === 'headerBlock' ? (headerDepth ?? 1) : (node.attrs.depth ?? 0),
+        depth:
+          type === 'headerBlock' ? (headerDepth ?? 1) : (node.attrs.depth ?? 0),
         file_date: node.attrs.file_date || ''
       }
       if (type === 'noteBlock') {
@@ -124,13 +139,18 @@ export const SiltBlockKeymaps = Extension.create({
         const info = currentBlockInfo(this.editor)
         if (!info) return false
 
+        let nextBullet = '- '
+        if (info.node.type.name === 'noteBlock') {
+          nextBullet = getNextBullet(info.node.attrs.bullet || '')
+        }
+
         // Create a new NoteBlock at the same depth right after the current block.
         const newBlock = {
           type: 'noteBlock',
           attrs: {
             id: null,
             depth: info.depth,
-            bullet: '- ',
+            bullet: nextBullet,
             file_date: new Date().toISOString().slice(0, 10)
           }
         }
@@ -157,6 +177,21 @@ export const SiltBlockKeymaps = Extension.create({
         const isAtStart =
           selection.from === selection.to && selection.$from.parentOffset === 0
         if (!isAtStart) return false
+
+        // If the block is a note block and has a bullet, clear the bullet first.
+        if (
+          info.node.type.name === 'noteBlock' &&
+          info.node.attrs.bullet &&
+          info.node.attrs.bullet !== ''
+        ) {
+          const tr = this.editor.state.tr.setNodeAttribute(
+            info.pos,
+            'bullet',
+            ''
+          )
+          this.editor.view.dispatch(tr)
+          return true
+        }
 
         // Only act on truly empty blocks (no text content).
         const isEmpty =

@@ -26,6 +26,10 @@ function detectBullet(rawText: string): string {
   if (trimmed.startsWith('- ')) return '- '
   if (trimmed.startsWith('* ')) return '* '
   if (trimmed.startsWith('+ ')) return '+ '
+  const match = trimmed.match(/^(\d+[.)]\s)/)
+  if (match) {
+    return match[1]
+  }
   return ''
 }
 
@@ -48,14 +52,22 @@ type MarkRef = { type: string; attrs?: Record<string, unknown> }
 // The opener syntax for each mark type.
 function markOpen(mark: MarkRef): string {
   switch (mark.type) {
-    case 'bold': return '**'
-    case 'italic': return '*'
-    case 'strike': return '~~'
-    case 'highlight': return '=='
-    case 'code': return '`'
-    case 'underline': return '<u>'
-    case 'subscript': return '<sub>'
-    case 'superscript': return '<sup>'
+    case 'bold':
+      return '**'
+    case 'italic':
+      return '*'
+    case 'strike':
+      return '~~'
+    case 'highlight':
+      return '=='
+    case 'code':
+      return '`'
+    case 'underline':
+      return '<u>'
+    case 'subscript':
+      return '<sub>'
+    case 'superscript':
+      return '<sup>'
     case 'textColor': {
       const color = (mark.attrs as Record<string, unknown> | undefined)?.color
       return color ? `<span style="color: ${color}">` : ''
@@ -64,30 +76,42 @@ function markOpen(mark: MarkRef): string {
       const color = (mark.attrs as Record<string, unknown> | undefined)?.color
       return color ? `<span style="background-color: ${color}">` : ''
     }
-    case 'link': return '['
-    default: return ''
+    case 'link':
+      return '['
+    default:
+      return ''
   }
 }
 
 // The closer syntax for each mark type. Link needs the href from attrs.
 function markClose(mark: MarkRef): string {
   switch (mark.type) {
-    case 'bold': return '**'
-    case 'italic': return '*'
-    case 'strike': return '~~'
-    case 'highlight': return '=='
-    case 'code': return '`'
-    case 'underline': return '</u>'
-    case 'subscript': return '</sub>'
-    case 'superscript': return '</sup>'
+    case 'bold':
+      return '**'
+    case 'italic':
+      return '*'
+    case 'strike':
+      return '~~'
+    case 'highlight':
+      return '=='
+    case 'code':
+      return '`'
+    case 'underline':
+      return '</u>'
+    case 'subscript':
+      return '</sub>'
+    case 'superscript':
+      return '</sup>'
     case 'textColor':
     case 'backgroundColor':
       return '</span>'
     case 'link': {
-      const href = (mark.attrs as Record<string, unknown> | undefined)?.href as string
+      const href = (mark.attrs as Record<string, unknown> | undefined)
+        ?.href as string
       return `](${isSafeLinkHref(href) ? href : ''})`
     }
-    default: return ''
+    default:
+      return ''
   }
 }
 
@@ -161,13 +185,28 @@ interface MarkPattern {
 // Link.isAllowedUri default. Non-allowlisted schemes (javascript:, data:,
 // vbscript:, etc.) are dropped — the link text survives as literal text.
 const SAFE_LINK_SCHEMES = new Set([
-  'http', 'https', 'ftp', 'ftps', 'mailto', 'tel', 'callto', 'sms', 'cid', 'xmpp'
+  'http',
+  'https',
+  'ftp',
+  'ftps',
+  'mailto',
+  'tel',
+  'callto',
+  'sms',
+  'cid',
+  'xmpp'
 ])
 
 function isSafeLinkHref(href: string): boolean {
   if (!href) return false
   // Relative URLs and anchors are safe.
-  if (href.startsWith('#') || href.startsWith('/') || href.startsWith('./') || href.startsWith('../')) return true
+  if (
+    href.startsWith('#') ||
+    href.startsWith('/') ||
+    href.startsWith('./') ||
+    href.startsWith('../')
+  )
+    return true
   const colonIdx = href.indexOf(':')
   if (colonIdx === -1) return true // no scheme — relative
   const scheme = href.slice(0, colonIdx).toLowerCase()
@@ -181,7 +220,7 @@ const MARK_PATTERNS: MarkPattern[] = [
   {
     type: 'link',
     regex: /\[([^\]]*)\]\(([^)\s]*)\)/y,
-    extractAttrs: (m) => isSafeLinkHref(m[2]) ? { href: m[2] } : null
+    extractAttrs: (m) => (isSafeLinkHref(m[2]) ? { href: m[2] } : null)
   },
   { type: 'bold', regex: /\*\*(.+?)\*\*/y },
   { type: 'bold', regex: /__(.+?)__/y, wordBoundary: true },
@@ -203,7 +242,8 @@ const MARK_PATTERNS: MarkPattern[] = [
   },
   {
     type: 'backgroundColor',
-    regex: /<span style="background-color:\s*([^;"]+?)\s*;?"[^>]*>(.+?)<\/span>/y,
+    regex:
+      /<span style="background-color:\s*([^;"]+?)\s*;?"[^>]*>(.+?)<\/span>/y,
     innerGroup: 2,
     extractAttrs: (m) => ({ color: m[1].trim() })
   }
@@ -356,11 +396,13 @@ function tokenizeInline(text: string): NodeJSON[] {
 // file. Default 'left' emits no marker. TASK blocks never emit a marker
 // (alignment is not supported on tasks).
 
-const ALIGN_MARKER_RE = /\s*<!-- silt-align: (left|center|right|justify) -->\s*$/
+const ALIGN_MARKER_RE =
+  /\s*<!-- silt-align: (left|center|right|justify) -->\s*$/
 
-export function stripAlignmentMarker(
-  cleanText: string
-): { body: string; align: string } {
+export function stripAlignmentMarker(cleanText: string): {
+  body: string
+  align: string
+} {
   const m = cleanText.match(ALIGN_MARKER_RE)
   if (m) {
     return { body: cleanText.slice(0, m.index).trimEnd(), align: m[1] }
@@ -661,7 +703,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
       // as brand-new prose.
       block.raw_text = `- [${block.status === 'DOING' ? '/' : block.status === 'DONE' ? 'x' : ' '}] ${block.status} TASK ${cleanText}`
     } else if (type === 'NOTE') {
-      const bullet: string = attrs.bullet || '- '
+      const bullet: string = attrs.bullet !== undefined ? attrs.bullet : '- '
       block.raw_text = `${bullet}${cleanText}`
     } else {
       // HEADER

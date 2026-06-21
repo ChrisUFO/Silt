@@ -119,6 +119,32 @@ func TestParseLine(t *testing.T) {
 	if block3.CleanText != "An bullet list note" {
 		t.Errorf("Expected clean text 'An bullet list note', got '%s'", block3.CleanText)
 	}
+
+	// Test numbered list note line 1.
+	numberedLine1 := "    1. A numbered list note <!-- id: 3a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8c -->"
+	block4, _, _ := ParseLine(numberedLine1, 4, 4)
+	if block4.Type != BlockNote {
+		t.Errorf("Expected BlockNote, got %s", block4.Type)
+	}
+	if block4.Depth != 1 {
+		t.Errorf("Expected depth 1, got %d", block4.Depth)
+	}
+	if block4.CleanText != "A numbered list note" {
+		t.Errorf("Expected clean text 'A numbered list note', got '%s'", block4.CleanText)
+	}
+
+	// Test numbered list note line 1)
+	numberedLine2 := "1) Another numbered note <!-- id: 3a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8d -->"
+	block5, _, _ := ParseLine(numberedLine2, 5, 4)
+	if block5.Type != BlockNote {
+		t.Errorf("Expected BlockNote, got %s", block5.Type)
+	}
+	if block5.Depth != 0 {
+		t.Errorf("Expected depth 0, got %d", block5.Depth)
+	}
+	if block5.CleanText != "Another numbered note" {
+		t.Errorf("Expected clean text 'Another numbered note', got '%s'", block5.CleanText)
+	}
 }
 
 // TestParseLine_PinAndProgress covers the [pin:: true] and [progress:: N]
@@ -622,6 +648,13 @@ func TestRenderFileContent_DefaultsBulletForNewBlockNote(t *testing.T) {
 	content = RenderFileContent([]ParsedBlock{block}, "", "", 4)
 	if !strings.HasPrefix(strings.TrimSpace(content), "* ") {
 		t.Errorf("expected '* ' bullet to be preserved, got: %s", content)
+	}
+
+	// An existing numbered note must preserve its specific prefix.
+	block.RawText = "3) numbered note <!-- id: new-block-id -->"
+	content = RenderFileContent([]ParsedBlock{block}, "", "", 4)
+	if !strings.HasPrefix(strings.TrimSpace(content), "3) ") {
+		t.Errorf("expected '3) ' prefix to be preserved, got: %s", content)
 	}
 }
 

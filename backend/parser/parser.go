@@ -71,6 +71,9 @@ var BlockRefRegex = regexp.MustCompile(`\(\(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}
 // EmbedRegex matches a live block embed {{embed:uuid}}.
 var EmbedRegex = regexp.MustCompile(`\{\{embed:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}\}`)
 
+// NumberedListRegex matches numbered list prefixes like 1. or 1) followed by space.
+var NumberedListRegex = regexp.MustCompile(`^(\d+[.)]\s)`)
+
 func generateUUIDv4() string {
 	return uuid.New().String()
 }
@@ -302,11 +305,13 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 		}
 	}
 
-	// Bullet note check (optional cleaning of bullet markers like "- ", "* ", "+ ")
+	// Bullet note check (optional cleaning of bullet markers like "- ", "* ", "+ ", or numbered list prefixes "1. ", "1) ")
 	depth := parseLeadingIndent(newLine, spacesPerTab)
 	rawCleaned := cleanLineTrimmed
 	if strings.HasPrefix(cleanLineTrimmed, "- ") || strings.HasPrefix(cleanLineTrimmed, "* ") || strings.HasPrefix(cleanLineTrimmed, "+ ") {
 		rawCleaned = cleanLineTrimmed[2:]
+	} else if m := NumberedListRegex.FindString(cleanLineTrimmed); m != "" {
+		rawCleaned = cleanLineTrimmed[len(m):]
 	}
 
 	return ParsedBlock{
@@ -663,6 +668,8 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 				prefix = "* "
 			} else if strings.HasPrefix(trimmedRaw, "+ ") {
 				prefix = "+ "
+			} else if m := NumberedListRegex.FindString(trimmedRaw); m != "" {
+				prefix = m
 			} else {
 				prefix = ""
 			}

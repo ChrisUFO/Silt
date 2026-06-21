@@ -804,7 +804,8 @@
               <div class="flex items-center gap-2 min-w-0">
                 <span
                   class="material-symbols-outlined text-[14px] text-text-muted cursor-grab active:cursor-grabbing shrink-0"
-                  title="Drag to reorder">drag_indicator</span
+                  title="Drag to reorder"
+                  spellcheck="false">drag_indicator</span
                 >
                 <span
                   class="w-2 h-2 rounded-full shrink-0"
@@ -938,9 +939,7 @@
                     {card.clean_content}
                   </p>
                   {#if card.progress > 0}
-                    <div
-                      class="h-0.5 bg-surface rounded overflow-hidden mb-2"
-                    >
+                    <div class="h-0.5 bg-surface rounded overflow-hidden mb-2">
                       <div
                         class="h-full bg-accent-secondary-start transition-all"
                         style="width: {card.progress}%"

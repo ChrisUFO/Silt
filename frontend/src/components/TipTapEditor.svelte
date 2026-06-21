@@ -32,16 +32,15 @@
   import { measureFrameBudget } from '../lib/perf/frame-budget'
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
-  import FormatToolbar from './editor/FormatToolbar.svelte'
   import FormattingFirstRunTip from './editor/FormattingFirstRunTip.svelte'
   import SelectionBubble from './editor/SelectionBubble.svelte'
-  import BlockHoverMenu from './editor/BlockHoverMenu.svelte'
-  import ViewModeToggle from './editor/ViewModeToggle.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
-  import { getViewMode, toggleViewMode } from '../lib/viewMode.svelte'
+  import { serializeInlineContent } from '../lib/editor/converters'
   import { DEFAULT_COLOR_PALETTE, resolveColor } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { dispatch as dispatchPluginEvent } from '../plugins/events'
+  import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
+  import { isSystemDark } from '../lib/systemTheme.svelte'
 
   // Map of slash command ids to their mark type (#168). 'clear' is special
   // (strips all marks); 'link' opens a URL prompt.
@@ -71,6 +70,9 @@
     onBlockFocus?: (blockId: string, ancestors: string[]) => void
     onBlockBlur?: () => void
     onUpdate: (updatedBlocks: ParsedBlock[]) => void
+    editorInstance?: Editor | null
+    activeMarks?: Set<string>
+    viewMode?: 'edit' | 'source'
   }
 
   let {
@@ -81,14 +83,11 @@
     activeFocusedBlockAncestors = [],
     onBlockFocus,
     onBlockBlur,
-    onUpdate
+    onUpdate,
+    editorInstance = $bindable(null),
+    activeMarks = $bindable(new Set()),
+    viewMode = 'edit'
   }: Props = $props()
-
-  // svelte-ignore non_reactive_update
-  // editorInstance is intentionally non-reactive to avoid per-keystroke
-  // re-renders of FormatToolbar/SelectionBubble/BlockHoverMenu. Components
-  // are gated behind the reactive `editorReady` flag instead.
-  let editorInstance: Editor | null = null
   let editorReady = $state(false)
   let saveTimeout: ReturnType<typeof setTimeout> | null = null
   let heartbeatInterval: ReturnType<typeof setInterval> | null = null
@@ -96,40 +95,39 @@
   let isFocused = $state(false)
   let suppressUpdate = false
   let showSlashMenu = $state(false)
+  let slashQuery = $state('')
+  let slashMenuDismissed = $state(false)
   let showTemplatePicker = $state(false)
 
   // Active inline marks in the current selection (#168). Updated on every
   // selection change so the FormatToolbar buttons reflect aria-pressed state.
-  const ALL_MARKS = ['bold', 'italic', 'underline', 'strike', 'code', 'highlight', 'subscript', 'superscript', 'link', 'textColor', 'backgroundColor']
-  let activeMarks = $state<Set<string>>(new Set())
+  const ALL_MARKS = [
+    'bold',
+    'italic',
+    'underline',
+    'strike',
+    'code',
+    'highlight',
+    'subscript',
+    'superscript',
+    'link',
+    'textColor',
+    'backgroundColor'
+  ]
 
   // Selection bubble state (#168): tracks whether the selection is non-
   // collapsed and the screen coords for positioning the floating bubble.
   let selectionEmpty = $state(true)
-  let selectionCoords = $state<{ left: number; top: number; bottom: number } | null>(null)
-
-  // show_format_toolbar config (default true; *bool on Go side, nil = true).
-  let showFormatToolbar = $derived(
-    settings.config?.ui?.show_format_toolbar !== false
-  )
+  let isLastBlock = $state(false)
+  let selectionCoords = $state<{
+    left: number
+    top: number
+    bottom: number
+  } | null>(null)
 
   // Track OS dark/light preference reactively so isDark updates when the
   // OS theme changes under mode === 'system' (#168 color palette).
-  let osPrefersDark = $state(
-    window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
-  )
-  $effect(() => {
-    const mql = window.matchMedia?.('(prefers-color-scheme: dark)')
-    if (!mql) return
-    const handler = (e: MediaQueryListEvent) => { osPrefersDark = e.matches }
-    mql.addEventListener('change', handler)
-    return () => mql.removeEventListener('change', handler)
-  })
-
-  let isDark = $derived(
-    themeState.mode === 'dark' ||
-    (themeState.mode === 'system' && osPrefersDark)
-  )
+  let isDark = $derived(isSystemDark())
 
   let colorEnabled = $derived(
     settings.config?.ui?.formatting?.color_enabled !== false
@@ -142,9 +140,7 @@
 
   // focus_mode config (default false; Phase 3). When true, CSS dims non-active
   // paragraphs for distraction-free writing.
-  let focusModeEnabled = $derived(
-    settings.config?.editor?.focus_mode === true
-  )
+  let focusModeEnabled = $derived(settings.config?.editor?.focus_mode === true)
 
   // Word count (updated on every editor transaction via CharacterCount storage).
   let wordCount = $state(0)
@@ -162,12 +158,7 @@
   let colorPickerMarkType = $state<'textColor' | 'backgroundColor'>('textColor')
   let colorPickerCoords = $state<{ left: number; top: number } | null>(null)
 
-  // View mode (#171): edit (TipTap WYSIWYG) vs source (raw markdown).
-  // Synced via $effect so it reacts to both prop changes and store toggles.
-  let viewMode = $state<'edit' | 'source'>('edit')
-  $effect(() => {
-    viewMode = getViewMode(notebook, section, page)
-  })
+  // View mode (#171) is managed by the parent container.
 
   // First-run tip: dismissed when 'formatting_tip_v1' is in dismissed_tips.
   let formatTipDismissed = $derived(
@@ -223,7 +214,9 @@
   }
 
   // --- Color picker popover (#170) -----------------------------------------
-  function openColorPickerPopover(markType: 'textColor' | 'backgroundColor'): void {
+  function openColorPickerPopover(
+    markType: 'textColor' | 'backgroundColor'
+  ): void {
     if (!editorInstance || editorInstance.isDestroyed) return
     try {
       const { selection } = editorInstance.state
@@ -237,14 +230,20 @@
   }
 
   function onOpenColorPicker(e: Event): void {
-    const markType = (e as CustomEvent).detail as 'textColor' | 'backgroundColor'
+    const markType = (e as CustomEvent).detail as
+      | 'textColor'
+      | 'backgroundColor'
     if (markType) openColorPickerPopover(markType)
   }
 
   function applyColorFromPopover(color: string | null): void {
     if (!editorInstance || editorInstance.isDestroyed) return
     if (color && HEX_COLOR_RE.test(color)) {
-      editorInstance.chain().focus().setMark(colorPickerMarkType, { color }).run()
+      editorInstance
+        .chain()
+        .focus()
+        .setMark(colorPickerMarkType, { color })
+        .run()
     } else if (!color) {
       editorInstance.chain().focus().unsetMark(colorPickerMarkType).run()
     }
@@ -341,9 +340,9 @@
       link: { openOnClick: false, autolink: true }
     }),
     ...SiltBlockExtensionsWithNodeViews,
-      ...SiltInlineMarkExtensions,
-      ...SiltColorMarkExtensions,
-      UniqueBlockIds,
+    ...SiltInlineMarkExtensions,
+    ...SiltColorMarkExtensions,
+    UniqueBlockIds,
     TaskMetaSuggest.configure({
       onChange: onMetaChange,
       onNavigate: onMetaNavigate,
@@ -366,8 +365,13 @@
       if (suppressUpdate) return
       detectSlashCommand()
       unsavedChanges = true
+      isLastBlock = editorInstance
+        ? editorInstance.state.doc.childCount <= 1
+        : false
       // Update word count from CharacterCount storage (#168 Phase 3).
-      const storage = editorInstance?.storage as unknown as Record<string, unknown> | undefined
+      const storage = editorInstance?.storage as unknown as
+        | Record<string, unknown>
+        | undefined
       const cc = storage?.characterCount as { words?: () => number } | undefined
       if (cc?.words) wordCount = cc.words()
       triggerAutoSave()
@@ -433,20 +437,13 @@
     onCreate: ({ editor }) => {
       editorInstance = editor as Editor
       editorReady = true
+      isLastBlock = editor.state.doc.childCount <= 1
     }
   })
-
-  function handleToggleViewMode(): void {
-    toggleViewMode(notebook, section, page)
-    viewMode = getViewMode(notebook, section, page)
-  }
 
   // Global event listeners for cross-component hotkeys.
   function onOpenLinkInput(): void {
     openLinkInput()
-  }
-  function onToggleViewModeEvent(): void {
-    handleToggleViewMode()
   }
   function onChangeBlockType(e: Event): void {
     const detail = (e as CustomEvent).detail
@@ -470,12 +467,18 @@
   function onDocumentClick(e: MouseEvent): void {
     const target = e.target as HTMLElement | null
     if (!target) return
-    if (target.closest('.ProseMirror') || target.closest('.selection-bubble')) return
+    if (
+      target.closest('.ProseMirror') ||
+      target.closest('.selection-bubble') ||
+      target.closest('.glass-palette')
+    )
+      return
     selectionCoords = null
+    showSlashMenu = false
+    slashMenuDismissed = true
   }
 
   window.addEventListener('silt:open-link-input', onOpenLinkInput)
-  window.addEventListener('toggle-view-mode', onToggleViewModeEvent)
   window.addEventListener('silt:change-block-type', onChangeBlockType)
   window.addEventListener('silt:set-block-align', onSetBlockAlign)
   window.addEventListener('silt:open-color-picker', onOpenColorPicker)
@@ -486,7 +489,6 @@
     stopHeartbeat()
     void flushPendingSave().then(() => releaseFocus())
     window.removeEventListener('silt:open-link-input', onOpenLinkInput)
-    window.removeEventListener('toggle-view-mode', onToggleViewModeEvent)
     window.removeEventListener('silt:change-block-type', onChangeBlockType)
     window.removeEventListener('silt:set-block-align', onSetBlockAlign)
     window.removeEventListener('silt:open-color-picker', onOpenColorPicker)
@@ -573,10 +575,40 @@
       0,
       sel.$from.parentOffset
     )
-    if (textBefore === '/') {
-      showSlashMenu = true
-    } else if (showSlashMenu && !textBefore.startsWith('/')) {
+    if (textBefore.startsWith('/')) {
+      if (!slashMenuDismissed) {
+        showSlashMenu = true
+        slashQuery = textBefore.slice(1)
+      }
+    } else {
       showSlashMenu = false
+      slashQuery = ''
+      slashMenuDismissed = false
+    }
+  }
+
+  function slashCoords(): { left: number; top: number } | null {
+    if (!showSlashMenu || !editorInstance || editorInstance.isDestroyed)
+      return null
+    const { selection } = editorInstance.state
+    const pos = selection.$from.start()
+    try {
+      const c = editorInstance.view.coordsAtPos(pos)
+      const paletteWidth = 256
+      const paletteHeight = 300
+      let left = c.left
+      let top = c.bottom
+      if (left + paletteWidth > window.innerWidth) {
+        left = window.innerWidth - paletteWidth - 8
+      }
+      if (top + paletteHeight > window.innerHeight) {
+        top = window.innerHeight - paletteHeight - 8
+      }
+      left = Math.max(8, left)
+      top = Math.max(8, top)
+      return { left, top }
+    } catch (err) {
+      return null
     }
   }
 
@@ -640,6 +672,8 @@
 
   function handleSlashSelect(commandId: string): void {
     showSlashMenu = false
+    slashQuery = ''
+    slashMenuDismissed = false
     if (!editorInstance || editorInstance.isDestroyed) return
 
     const sel = editorInstance.state.selection
@@ -672,9 +706,11 @@
     } else if (commandId === 'background-color') {
       openColorPickerPopover('backgroundColor')
     } else if (commandId === 'remove-color') {
-      if (editorInstance) editorInstance.chain().focus().unsetMark('textColor').run()
+      if (editorInstance)
+        editorInstance.chain().focus().unsetMark('textColor').run()
     } else if (commandId === 'remove-background') {
-      if (editorInstance) editorInstance.chain().focus().unsetMark('backgroundColor').run()
+      if (editorInstance)
+        editorInstance.chain().focus().unsetMark('backgroundColor').run()
     } else if (commandId === 'today') {
       const d = new Date()
       const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -787,31 +823,447 @@
       }
     }
   }
+
+  // Context Menu state
+  let contextMenu = $state<{
+    x: number
+    y: number
+    activeBlockId?: string
+    activeBlockNode?: ProseMirrorNode
+  } | null>(null)
+
+  $effect(() => {
+    if (contextMenu) {
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          e.stopPropagation()
+          contextMenu = null
+          editorInstance?.commands.focus()
+        }
+      }
+      window.addEventListener('keydown', handleKeyDown, true)
+      return () => {
+        window.removeEventListener('keydown', handleKeyDown, true)
+      }
+    }
+  })
+
+  // Context menu keyboard navigation (ArrowUp/Down, Home/End)
+  let contextMenuEl = $state<HTMLDivElement | null>(null)
+
+  $effect(() => {
+    if (contextMenu && contextMenuEl) {
+      const id = requestAnimationFrame(() => {
+        const first = contextMenuEl?.querySelector<HTMLButtonElement>(
+          'button:not([disabled])'
+        )
+        first?.focus()
+      })
+      return () => cancelAnimationFrame(id)
+    }
+  })
+
+  function handleMenuKeyDown(e: KeyboardEvent): void {
+    if (!contextMenuEl) return
+    const items = Array.from(
+      contextMenuEl.querySelectorAll<HTMLButtonElement>(
+        'button:not([disabled])'
+      )
+    )
+    if (items.length === 0) return
+    const currentIndex = items.findIndex(
+      (item) => item === document.activeElement
+    )
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault()
+        items[(currentIndex + 1) % items.length]?.focus()
+        break
+      case 'ArrowUp':
+        e.preventDefault()
+        items[(currentIndex - 1 + items.length) % items.length]?.focus()
+        break
+      case 'Home':
+        e.preventDefault()
+        items[0]?.focus()
+        break
+      case 'End':
+        e.preventDefault()
+        items[items.length - 1]?.focus()
+        break
+    }
+  }
+
+  function handleContextMenu(e: MouseEvent): void {
+    if (!editorInstance || editorInstance.isDestroyed) return
+    e.preventDefault()
+
+    // Move editor cursor to the click location if the click is outside the current selection.
+    const pos = editorInstance.view.posAtCoords({
+      left: e.clientX,
+      top: e.clientY
+    })
+    if (pos) {
+      const { selection } = editorInstance.state
+      if (pos.pos < selection.from || pos.pos > selection.to) {
+        editorInstance.commands.setTextSelection(pos.pos)
+      }
+    }
+
+    // Resolve the active block and its unique ID
+    let activeBlockId: string | undefined
+    let activeBlockNode: ProseMirrorNode | null = null
+    const selPos = editorInstance.state.selection.$from
+    for (let d = selPos.depth; d >= 1; d--) {
+      const node = selPos.node(d)
+      if (['noteBlock', 'taskBlock', 'headerBlock'].includes(node.type.name)) {
+        activeBlockId = node.attrs.id
+        activeBlockNode = node
+        break
+      }
+    }
+
+    // Viewport collision boundary adjustment to prevent offscreen rendering
+    const menuWidth = 220
+    const menuHeight = 320
+    const screenWidth = window.innerWidth
+    const screenHeight = window.innerHeight
+
+    let x = e.clientX
+    let y = e.clientY
+
+    if (x + menuWidth > screenWidth) {
+      x = screenWidth - menuWidth - 8
+    }
+    if (y + menuHeight > screenHeight) {
+      y = screenHeight - menuHeight - 8
+    }
+    x = Math.max(8, x)
+    y = Math.max(8, y)
+
+    contextMenu = {
+      x,
+      y,
+      activeBlockId,
+      activeBlockNode
+    }
+  }
+
+  // Menu action handlers
+  function closeContextMenu(): void {
+    contextMenu = null
+    editorInstance?.commands.focus()
+  }
+
+  function handleCut(): void {
+    if (!editorInstance) return
+    const { selection } = editorInstance.state
+    const text = editorInstance.state.doc.textBetween(
+      selection.from,
+      selection.to,
+      '\n'
+    )
+    navigator.clipboard.writeText(text).catch(() => {})
+    editorInstance.commands.deleteSelection()
+    closeContextMenu()
+  }
+
+  function handleCopy(): void {
+    if (!editorInstance) return
+    const { selection } = editorInstance.state
+    const text = editorInstance.state.doc.textBetween(
+      selection.from,
+      selection.to,
+      '\n'
+    )
+    navigator.clipboard.writeText(text).catch(() => {})
+    closeContextMenu()
+  }
+
+  async function handlePaste(): Promise<void> {
+    if (!editorInstance) return
+    try {
+      const text = await navigator.clipboard.readText()
+      if (text) {
+        editorInstance.commands.insertContent({ type: 'text', text })
+      }
+    } catch {
+      pushNotification({
+        kind: 'error',
+        message: 'Paste failed: clipboard could not be read.'
+      })
+    }
+    closeContextMenu()
+  }
+
+  async function handleCopyAsMarkdown(): Promise<void> {
+    if (!editorInstance) return
+    const { selection } = editorInstance.state
+    let md = ''
+    if (selection.empty) {
+      if (contextMenu?.activeBlockNode) {
+        const json = contextMenu.activeBlockNode.toJSON()
+        md = json.content ? serializeInlineContent(json.content) : ''
+      }
+    } else {
+      const slice = editorInstance.state.doc.slice(selection.from, selection.to)
+      const parts: string[] = []
+      slice.content.forEach((node) => {
+        const json = node.toJSON()
+        parts.push(
+          json.content ? serializeInlineContent(json.content) : json.text || ''
+        )
+      })
+      md = parts.join('\n')
+    }
+    await navigator.clipboard.writeText(md).catch(() => {})
+    closeContextMenu()
+  }
+
+  async function handleCopyAsPlainText(): Promise<void> {
+    if (!editorInstance) return
+    const { selection } = editorInstance.state
+    const text = selection.empty
+      ? ''
+      : editorInstance.state.doc.textBetween(selection.from, selection.to, '\n')
+    await navigator.clipboard.writeText(text).catch(() => {})
+    closeContextMenu()
+  }
+
+  async function handleCopyBlockReference(): Promise<void> {
+    if (contextMenu?.activeBlockId) {
+      await navigator.clipboard
+        .writeText(`((${contextMenu.activeBlockId}))`)
+        .catch(() => {})
+    }
+    closeContextMenu()
+  }
+
+  async function handleCopyBlockEmbed(): Promise<void> {
+    if (contextMenu?.activeBlockId) {
+      await navigator.clipboard
+        .writeText(`{{embed:${contextMenu.activeBlockId}}}`)
+        .catch(() => {})
+    }
+    closeContextMenu()
+  }
+
+  function handleDuplicateBlock(): void {
+    if (!editorInstance || !contextMenu?.activeBlockNode) return
+    const pos = editorInstance.state.selection.$from
+    let blockDepth = 1
+    for (let d = pos.depth; d >= 1; d--) {
+      const node = pos.node(d)
+      if (['noteBlock', 'taskBlock', 'headerBlock'].includes(node.type.name)) {
+        blockDepth = d
+        break
+      }
+    }
+    const endPos = pos.after(blockDepth)
+    const json = contextMenu.activeBlockNode.toJSON()
+    if (json.attrs && json.attrs.id) {
+      delete json.attrs.id
+    }
+    editorInstance.chain().insertContentAt(endPos, json).focus().run()
+    closeContextMenu()
+  }
+
+  function handleDeleteBlock(): void {
+    if (!editorInstance) return
+    const { doc } = editorInstance.state
+    if (doc.childCount <= 1) return
+    const pos = editorInstance.state.selection.$from
+    let blockDepth = 1
+    for (let d = pos.depth; d >= 1; d--) {
+      const node = pos.node(d)
+      if (['noteBlock', 'taskBlock', 'headerBlock'].includes(node.type.name)) {
+        blockDepth = d
+        break
+      }
+    }
+    const from = pos.before(blockDepth)
+    const to = pos.after(blockDepth)
+    editorInstance.chain().deleteRange({ from, to }).focus().run()
+    closeContextMenu()
+  }
+
+  function handleClearFormatting(): void {
+    editorInstance?.chain().focus().unsetAllMarks().run()
+    closeContextMenu()
+  }
 </script>
 
-<div class="tiptap-editor-host" class:focused={isFocused} class:focus-mode={focusModeEnabled}>
-  <div class="view-mode-bar">
-    <ViewModeToggle mode={viewMode} onToggle={handleToggleViewMode} />
-  </div>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- Contextmenu listener is on the outer host wrapper to handle editor-wide custom right-click menus -->
+<div
+  class="tiptap-editor-host"
+  class:focused={isFocused}
+  class:focus-mode={focusModeEnabled}
+  oncontextmenu={handleContextMenu}
+>
   {#if viewMode === 'source'}
     <MarkdownSourceViewer {blocks} filePath="{notebook}/{section}/{page}.md" />
   {:else}
     {#if editorReady}
-      {#if showFormatToolbar}
-        <FormatToolbar editor={editorInstance} {activeMarks} {isDark} {colorEnabled} />
+      <FormattingFirstRunTip
+        dismissed={formatTipDismissed}
+        onDismiss={dismissFormatTip}
+      />
+      <SelectionBubble
+        editor={editorInstance}
+        {activeMarks}
+        {selectionEmpty}
+        {selectionCoords}
+      />
+      {#if editorStore}
+        <EditorContent editor={$editorStore} />
       {/if}
-      <BlockHoverMenu editor={editorInstance} {colorEnabled} {isDark} />
-    <FormattingFirstRunTip dismissed={formatTipDismissed} onDismiss={dismissFormatTip} />
-    <SelectionBubble
-      editor={editorInstance}
-      {activeMarks}
-      {selectionEmpty}
-      {selectionCoords}
-    />
-    {#if editorStore}
-      <EditorContent editor={$editorStore} />
     {/if}
+
+    {#if contextMenu}
+      <div class="fixed inset-0 z-[180]">
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="absolute inset-0 cursor-default"
+          onclick={() => (contextMenu = null)}
+          oncontextmenu={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            contextMenu = null
+          }}
+        ></div>
+        <div
+          bind:this={contextMenuEl}
+          class="fixed context-menu-card"
+          style="left: {contextMenu.x}px; top: {contextMenu.y}px"
+          role="menu"
+          tabindex="-1"
+          aria-label="Editor actions"
+          oncontextmenu={(e) => e.preventDefault()}
+          onkeydown={handleMenuKeyDown}
+        >
+          <button
+            type="button"
+            class="context-menu-item"
+            role="menuitem"
+            onclick={handleCut}
+            disabled={selectionEmpty}
+          >
+            <span class="material-symbols-outlined text-[16px]"
+              >content_cut</span
+            >
+            Cut
+          </button>
+          <button
+            type="button"
+            class="context-menu-item"
+            role="menuitem"
+            onclick={handleCopy}
+            disabled={selectionEmpty}
+          >
+            <span class="material-symbols-outlined text-[16px]"
+              >content_copy</span
+            >
+            Copy
+          </button>
+          <button
+            type="button"
+            class="context-menu-item"
+            role="menuitem"
+            onclick={handlePaste}
+          >
+            <span class="material-symbols-outlined text-[16px]"
+              >content_paste</span
+            >
+            Paste
+          </button>
+
+          <div class="context-menu-separator"></div>
+
+          <button
+            type="button"
+            class="context-menu-item"
+            role="menuitem"
+            onclick={handleCopyAsMarkdown}
+          >
+            <span class="material-symbols-outlined text-[16px]">markdown</span>
+            Copy as Markdown
+          </button>
+          <button
+            type="button"
+            class="context-menu-item"
+            role="menuitem"
+            onclick={handleCopyAsPlainText}
+          >
+            <span class="material-symbols-outlined text-[16px]">notes</span>
+            Copy as Plain Text
+          </button>
+
+          {#if contextMenu.activeBlockId}
+            <div class="context-menu-separator"></div>
+            <button
+              type="button"
+              class="context-menu-item"
+              role="menuitem"
+              onclick={handleCopyBlockReference}
+            >
+              <span class="material-symbols-outlined text-[16px]">link</span>
+              Copy Block Reference
+            </button>
+            <button
+              type="button"
+              class="context-menu-item"
+              role="menuitem"
+              onclick={handleCopyBlockEmbed}
+            >
+              <span class="material-symbols-outlined text-[16px]"
+                >integration_instructions</span
+              >
+              Copy Block Embed
+            </button>
+
+            <div class="context-menu-separator"></div>
+            <button
+              type="button"
+              class="context-menu-item"
+              role="menuitem"
+              onclick={handleDuplicateBlock}
+            >
+              <span class="material-symbols-outlined text-[16px]"
+                >difference</span
+              >
+              Duplicate Block
+            </button>
+            <button
+              type="button"
+              class="context-menu-item text-status-danger"
+              role="menuitem"
+              onclick={handleDeleteBlock}
+              disabled={isLastBlock}
+            >
+              <span class="material-symbols-outlined text-[16px]">delete</span>
+              Delete Block
+            </button>
+          {/if}
+
+          <div class="context-menu-separator"></div>
+          <button
+            type="button"
+            class="context-menu-item"
+            role="menuitem"
+            onclick={handleClearFormatting}
+          >
+            <span class="material-symbols-outlined text-[16px]"
+              >format_clear</span
+            >
+            Clear Formatting
+          </button>
+        </div>
+      </div>
     {/if}
+
     {#if unsavedChanges || lastSaveError}
       <div
         class="unsaved-indicator {lastSaveError ? 'error' : ''}"
@@ -833,14 +1285,23 @@
     {/if}
     {#if showWordCount && wordCount > 0}
       <div class="word-count" role="status" aria-live="off">
-        {wordCount} {wordCount === 1 ? 'word' : 'words'}
+        {wordCount}
+        {wordCount === 1 ? 'word' : 'words'}
       </div>
     {/if}
     {#if showSlashMenu}
-      <CommandPalette
-        onSelect={handleSlashSelect}
-        onClose={() => (showSlashMenu = false)}
-      />
+      {@const coords = slashCoords()}
+      {#if coords}
+        <CommandPalette
+          style="position: fixed; left: {coords.left}px; top: {coords.top}px;"
+          query={slashQuery}
+          onSelect={handleSlashSelect}
+          onClose={() => {
+            showSlashMenu = false
+            slashMenuDismissed = true
+          }}
+        />
+      {/if}
     {/if}
     {#if metaPopup}
       {@const c = metaPopupCoords()}
@@ -875,8 +1336,13 @@
           placeholder="https://"
           bind:value={linkInputValue}
           onkeydown={(e) => {
-            if (e.key === 'Enter') { e.preventDefault(); applyLinkInput() }
-            else if (e.key === 'Escape') { e.preventDefault(); cancelLinkInput() }
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              applyLinkInput()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              cancelLinkInput()
+            }
           }}
           onblur={applyLinkInput}
         />
@@ -889,11 +1355,22 @@
         style="left:{colorPickerCoords.left}px; top:{colorPickerCoords.top}px"
         role="menu"
         tabindex="-1"
-        aria-label={colorPickerMarkType === 'textColor' ? 'Text color' : 'Background color'}
+        aria-label={colorPickerMarkType === 'textColor'
+          ? 'Text color'
+          : 'Background color'}
         onclick={(e) => e.stopPropagation()}
       >
-        <button type="button" class="cp-swatch cp-reset" onclick={() => applyColorFromPopover(null)} aria-label="No color">
-          <span class="material-symbols-outlined" style="font-size:16px" aria-hidden="true">format_color_reset</span>
+        <button
+          type="button"
+          class="cp-swatch cp-reset"
+          onclick={() => applyColorFromPopover(null)}
+          aria-label="No color"
+        >
+          <span
+            class="material-symbols-outlined"
+            style="font-size:16px"
+            aria-hidden="true">format_color_reset</span
+          >
         </button>
         {#each DEFAULT_COLOR_PALETTE as entry (entry.id)}
           <button
@@ -907,7 +1384,15 @@
           </button>
         {/each}
         <label class="cp-custom-row">
-          <input type="color" class="cp-custom-input" onchange={(e) => applyColorFromPopover((e.currentTarget as HTMLInputElement).value)} aria-label="Custom color" />
+          <input
+            type="color"
+            class="cp-custom-input"
+            onchange={(e) =>
+              applyColorFromPopover(
+                (e.currentTarget as HTMLInputElement).value
+              )}
+            aria-label="Custom color"
+          />
         </label>
       </div>
     {/if}
@@ -925,12 +1410,6 @@
 <style>
   .tiptap-editor-host {
     width: 100%;
-  }
-
-  .view-mode-bar {
-    display: flex;
-    justify-content: flex-end;
-    padding: 4px 8px;
   }
 
   .unsaved-indicator {
@@ -989,7 +1468,11 @@
     display: inline-block;
     padding: 0.125rem 0.5rem;
     border-radius: 9999px;
-    background: color-mix(in srgb, var(--color-surface, #1a1d24) 90%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-surface, #1a1d24) 90%,
+      transparent
+    );
     color: var(--color-text-muted, #8b95a3);
     font-size: 11px;
   }
@@ -1075,7 +1558,9 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .cp-swatch { transition: none; }
+    .cp-swatch {
+      transition: none;
+    }
   }
 
   .meta-suggest {
@@ -1121,5 +1606,64 @@
   .meta-suggest-desc {
     font-size: 0.8rem;
     opacity: 0.8;
+  }
+
+  .context-menu-card {
+    background-color: rgba(22, 22, 25, 0.9);
+    backdrop-filter: blur(12px) saturate(140%);
+    border: 1px solid var(--color-border-muted, #33333a);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    padding: 4px;
+    min-width: 180px;
+    z-index: 181;
+  }
+
+  .context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 12px;
+    border: none;
+    background: transparent;
+    color: var(--color-text-primary, #e6e6e6);
+    font-size: 12px;
+    font-family: var(--font-body, inherit);
+    text-align: left;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background-color 120ms ease-out;
+  }
+
+  .context-menu-item:hover {
+    background-color: var(--color-hover, #1e2128);
+  }
+
+  .context-menu-item:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .context-menu-item.text-status-danger {
+    color: var(--color-status-danger, #e5484d);
+  }
+
+  .context-menu-item.text-status-danger .material-symbols-outlined {
+    color: var(--color-status-danger, #e5484d);
+  }
+
+  .context-menu-item:hover.text-status-danger {
+    background-color: color-mix(
+      in srgb,
+      var(--color-status-danger, #e5484d) 15%,
+      transparent
+    );
+  }
+
+  .context-menu-separator {
+    height: 1px;
+    background: var(--color-border-muted, #33333a);
+    margin: 4px;
   }
 </style>

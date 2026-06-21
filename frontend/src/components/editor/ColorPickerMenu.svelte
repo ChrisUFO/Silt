@@ -1,6 +1,10 @@
 <script lang="ts">
   import type { Editor } from 'svelte-tiptap'
-  import { DEFAULT_COLOR_PALETTE, resolveColor, type ColorEntry } from '../../lib/editor/colors'
+  import {
+    DEFAULT_COLOR_PALETTE,
+    resolveColor,
+    type ColorEntry
+  } from '../../lib/editor/colors'
 
   interface Props {
     editor: Editor | null
@@ -11,6 +15,18 @@
   let { editor, markType, isDark }: Props = $props()
 
   let menuOpen = $state(false)
+  let wrapperEl = $state<HTMLDivElement | null>(null)
+
+  $effect(() => {
+    if (!menuOpen) return
+    const onClick = (e: MouseEvent) => {
+      if (wrapperEl && !wrapperEl.contains(e.target as Node)) {
+        menuOpen = false
+      }
+    }
+    document.addEventListener('click', onClick)
+    return () => document.removeEventListener('click', onClick)
+  })
 
   function applyColor(entry: ColorEntry): void {
     if (!editor) return
@@ -33,11 +49,15 @@
     menuOpen = false
   }
 
-  const triggerIcon = $derived(markType === 'textColor' ? 'format_color_text' : 'format_color_fill')
-  const triggerLabel = $derived(markType === 'textColor' ? 'Text color' : 'Background color')
+  const triggerIcon = $derived(
+    markType === 'textColor' ? 'format_color_text' : 'format_color_fill'
+  )
+  const triggerLabel = $derived(
+    markType === 'textColor' ? 'Text color' : 'Background color'
+  )
 </script>
 
-<div class="color-picker-wrapper">
+<div class="color-picker-wrapper" bind:this={wrapperEl}>
   <button
     type="button"
     class="color-trigger"
@@ -46,13 +66,22 @@
     aria-label={triggerLabel}
     onclick={() => (menuOpen = !menuOpen)}
   >
-    <span class="material-symbols-outlined" aria-hidden="true">{triggerIcon}</span>
+    <span class="material-symbols-outlined" aria-hidden="true"
+      >{triggerIcon}</span
+    >
   </button>
 
   {#if menuOpen}
     <div class="color-menu" role="menu" aria-label={triggerLabel}>
-      <button type="button" class="color-action" role="menuitem" onclick={removeColor}>
-        <span class="material-symbols-outlined" aria-hidden="true">format_color_reset</span>
+      <button
+        type="button"
+        class="color-action"
+        role="menuitem"
+        onclick={removeColor}
+      >
+        <span class="material-symbols-outlined" aria-hidden="true"
+          >format_color_reset</span
+        >
         <span>No color</span>
       </button>
       <div class="swatch-grid" role="group" aria-label="Color palette">
@@ -70,7 +99,12 @@
       </div>
       <label class="custom-color-row">
         <span class="custom-label">Custom</span>
-        <input type="color" class="custom-input" onchange={applyCustom} aria-label="Custom color" />
+        <input
+          type="color"
+          class="custom-input"
+          onchange={applyCustom}
+          aria-label="Custom color"
+        />
       </label>
     </div>
   {/if}
@@ -93,11 +127,17 @@
     background: transparent;
     color: var(--color-text-muted, #8b95a3);
     cursor: pointer;
-    transition: background 0.1s, color 0.1s;
+    transition:
+      background 0.1s,
+      color 0.1s;
   }
 
   .color-trigger:hover {
-    background: color-mix(in srgb, var(--color-accent-primary-start, #4f7cff) 15%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-start, #4f7cff) 15%,
+      transparent
+    );
     color: var(--color-text-primary, #e6e6e6);
   }
 
@@ -136,7 +176,11 @@
   }
 
   .color-action:hover {
-    background: color-mix(in srgb, var(--color-accent-primary-start, #4f7cff) 15%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-start, #4f7cff) 15%,
+      transparent
+    );
   }
 
   .color-action .material-symbols-outlined {
@@ -158,7 +202,9 @@
     border-radius: 5px;
     cursor: pointer;
     padding: 0;
-    transition: border-color 0.1s, transform 0.1s;
+    transition:
+      border-color 0.1s,
+      transform 0.1s;
   }
 
   .swatch:hover {

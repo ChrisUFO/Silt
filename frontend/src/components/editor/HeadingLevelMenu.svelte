@@ -8,13 +8,49 @@
   let { editor }: Props = $props()
 
   let menuOpen = $state(false)
+  let wrapperEl = $state<HTMLDivElement | null>(null)
 
-  type Option = { id: string; label: string; type: string; depth?: number; icon: string }
+  $effect(() => {
+    if (!menuOpen) return
+    const onClick = (e: MouseEvent) => {
+      if (wrapperEl && !wrapperEl.contains(e.target as Node)) {
+        menuOpen = false
+      }
+    }
+    document.addEventListener('click', onClick)
+    return () => document.removeEventListener('click', onClick)
+  })
+
+  type Option = {
+    id: string
+    label: string
+    type: string
+    depth?: number
+    icon: string
+  }
 
   const OPTIONS: Option[] = [
-    { id: 'h1', label: 'Heading 1', type: 'headerBlock', depth: 1, icon: 'title' },
-    { id: 'h2', label: 'Heading 2', type: 'headerBlock', depth: 2, icon: 'title' },
-    { id: 'h3', label: 'Heading 3', type: 'headerBlock', depth: 3, icon: 'title' },
+    {
+      id: 'h1',
+      label: 'Heading 1',
+      type: 'headerBlock',
+      depth: 1,
+      icon: 'title'
+    },
+    {
+      id: 'h2',
+      label: 'Heading 2',
+      type: 'headerBlock',
+      depth: 2,
+      icon: 'title'
+    },
+    {
+      id: 'h3',
+      label: 'Heading 3',
+      type: 'headerBlock',
+      depth: 3,
+      icon: 'title'
+    },
     { id: 'note', label: 'Text', type: 'noteBlock', icon: 'notes' },
     { id: 'task', label: 'Task', type: 'taskBlock', icon: 'check_box' }
   ]
@@ -59,7 +95,7 @@
   let label = $derived(currentLabel())
 </script>
 
-<div class="heading-menu-wrapper">
+<div class="heading-menu-wrapper" bind:this={wrapperEl}>
   <button
     type="button"
     class="heading-trigger"
@@ -69,7 +105,9 @@
     onclick={() => (menuOpen = !menuOpen)}
   >
     {label}
-    <span class="material-symbols-outlined chevron" aria-hidden="true">expand_more</span>
+    <span class="material-symbols-outlined chevron" aria-hidden="true"
+      >expand_more</span
+    >
   </button>
 
   {#if menuOpen}
@@ -83,10 +121,14 @@
           aria-checked={isCurrent(opt)}
           onclick={() => select(opt)}
         >
-          <span class="material-symbols-outlined" aria-hidden="true">{opt.icon}</span>
+          <span class="material-symbols-outlined" aria-hidden="true"
+            >{opt.icon}</span
+          >
           <span>{opt.label}</span>
           {#if isCurrent(opt)}
-            <span class="material-symbols-outlined check" aria-hidden="true">check</span>
+            <span class="material-symbols-outlined check" aria-hidden="true"
+              >check</span
+            >
           {/if}
         </button>
       {/each}
@@ -112,11 +154,17 @@
     color: var(--color-text-muted, #8b95a3);
     font-size: 0.78rem;
     cursor: pointer;
-    transition: background 0.1s, color 0.1s;
+    transition:
+      background 0.1s,
+      color 0.1s;
   }
 
   .heading-trigger:hover {
-    background: color-mix(in srgb, var(--color-accent-primary-start, #4f7cff) 15%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-start, #4f7cff) 15%,
+      transparent
+    );
     color: var(--color-text-primary, #e6e6e6);
   }
 
@@ -155,7 +203,11 @@
   }
 
   .menu-item:hover {
-    background: color-mix(in srgb, var(--color-accent-primary-start, #4f7cff) 15%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-start, #4f7cff) 15%,
+      transparent
+    );
   }
 
   .menu-item.active {

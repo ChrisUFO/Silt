@@ -20,7 +20,7 @@
 //   the Go serializer (renderBlock) preserves the original bullet marker.
 //   The editor-created default is '- ' (matching renderBlock's default).
 
-import { Node, Mark, mergeAttributes } from '@tiptap/core'
+import { Node, Mark, mergeAttributes, InputRule } from '@tiptap/core'
 import Highlight from '@tiptap/extension-highlight'
 import Subscript from '@tiptap/extension-subscript'
 import Superscript from '@tiptap/extension-superscript'
@@ -51,8 +51,7 @@ export const TextColor = Mark.create({
     return {
       color: {
         default: null,
-        parseHTML: (el) =>
-          (el as HTMLElement).style.color?.trim() || null,
+        parseHTML: (el) => (el as HTMLElement).style.color?.trim() || null,
         renderHTML: (attrs) =>
           attrs.color ? { style: `color: ${attrs.color}` } : {}
       }
@@ -202,7 +201,10 @@ export const NoteBlock = Node.create({
       bullet: {
         // '- ' (default), '* ', '+ ', or '' (plain prose, no bullet marker)
         default: '- ',
-        parseHTML: (el) => el.getAttribute('data-bullet') || '- ',
+        parseHTML: (el) => {
+          const b = el.getAttribute('data-bullet')
+          return b !== null ? b : '- '
+        },
         renderHTML: (attrs) => ({ 'data-bullet': attrs.bullet })
       },
       // Block-level text alignment (#173). Only NOTE and HEADER support it;
@@ -230,6 +232,47 @@ export const NoteBlock = Node.create({
 
   renderHTML({ HTMLAttributes }) {
     return ['div', mergeAttributes({ 'data-type': 'note' }, HTMLAttributes), 0]
+  },
+
+  addInputRules() {
+    return [
+      new InputRule({
+        find: /^\s*([-*+])\s$/,
+        handler: ({ state, range, match }) => {
+          const $start = state.doc.resolve(range.from)
+          if ($start.parentOffset !== range.from - $start.start()) {
+            return null
+          }
+          const depth = $start.depth
+          const nodePos = $start.before(depth)
+          const node = $start.node(depth)
+          if (node.type.name !== 'noteBlock') {
+            return null
+          }
+          const tr = state.tr.delete(range.from, range.to)
+          tr.setNodeAttribute(nodePos, 'bullet', match[1] + ' ')
+          return tr
+        }
+      }),
+      new InputRule({
+        find: /^\s*(\d+[.)])\s$/,
+        handler: ({ state, range, match }) => {
+          const $start = state.doc.resolve(range.from)
+          if ($start.parentOffset !== range.from - $start.start()) {
+            return null
+          }
+          const depth = $start.depth
+          const nodePos = $start.before(depth)
+          const node = $start.node(depth)
+          if (node.type.name !== 'noteBlock') {
+            return null
+          }
+          const tr = state.tr.delete(range.from, range.to)
+          tr.setNodeAttribute(nodePos, 'bullet', match[1] + ' ')
+          return tr
+        }
+      })
+    ]
   }
 })
 

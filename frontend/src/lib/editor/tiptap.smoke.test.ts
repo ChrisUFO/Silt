@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
+import { SiltBlockExtensions } from './index'
 
 // Phase 1 smoke test: proves the TipTap v3 + ProseMirror engine boots and
 // round-trips content inside the project's Vitest/jsdom environment. This is
@@ -23,6 +24,86 @@ describe('TipTap engine smoke', () => {
     // Insert content via the command API (exercises the ProseMirror transaction path).
     editor.commands.setContent('<p>world</p>')
     expect(editor.getText()).toBe('world')
+
+    editor.destroy()
+  })
+
+  it('triggers input rules for bullets and numbered lists', () => {
+    const editor = new Editor({
+      extensions: [
+        StarterKit.configure({
+          paragraph: false,
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false
+        }),
+        ...SiltBlockExtensions
+      ],
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'noteBlock',
+            attrs: { id: 'test-id', depth: 0, bullet: '' }
+          }
+        ]
+      }
+    })
+
+    editor.commands.focus()
+    editor.commands.insertContent('1)')
+    editor.view.someProp('handleTextInput', (f) =>
+      (f as any)(editor.view, 3, 3, ' ')
+    )
+
+    const node = editor.state.doc.child(0)
+    expect(node.attrs.bullet).toBe('1) ')
+    expect(editor.getText()).toBe('')
+
+    editor.destroy()
+  })
+
+  it('triggers input rules for standard bullets', () => {
+    const editor = new Editor({
+      extensions: [
+        StarterKit.configure({
+          paragraph: false,
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false
+        }),
+        ...SiltBlockExtensions
+      ],
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'noteBlock',
+            attrs: { id: 'test-id', depth: 0, bullet: '' }
+          }
+        ]
+      }
+    })
+
+    editor.commands.focus()
+    editor.commands.insertContent('-')
+    editor.view.someProp('handleTextInput', (f) =>
+      (f as any)(editor.view, 2, 2, ' ')
+    )
+
+    const node = editor.state.doc.child(0)
+    expect(node.attrs.bullet).toBe('- ')
+    expect(editor.getText()).toBe('')
 
     editor.destroy()
   })

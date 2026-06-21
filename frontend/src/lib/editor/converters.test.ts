@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
-import { SiltBlockExtensions, SiltInlineMarkExtensions, SiltColorMarkExtensions, UniqueBlockIds } from './index'
+import {
+  SiltBlockExtensions,
+  SiltInlineMarkExtensions,
+  SiltColorMarkExtensions,
+  UniqueBlockIds
+} from './index'
 import { EmbedNode, BlockReferenceNode } from './schema'
 import {
   blocksToDoc,
@@ -152,6 +157,20 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
       const doc = blocksToDoc(blocks)
       const noteNode = doc.content[0]
       expect(noteNode?.attrs?.bullet).toBe(bullet)
+    }
+  })
+
+  it('round-trips numbered list prefixes for notes', () => {
+    for (const bullet of ['1. ', '1) ', '10. ', '99) ']) {
+      const blocks = [
+        mkBlock('NOTE', { raw_text: `${bullet}note`, clean_text: 'note' })
+      ]
+      const doc = blocksToDoc(blocks)
+      const noteNode = doc.content[0]
+      expect(noteNode?.attrs?.bullet).toBe(bullet)
+      const back = docToBlocks(doc)
+      expect(back[0].raw_text).toBe(`${bullet}note`)
+      expect(back[0].clean_text).toBe('note')
     }
   })
 
@@ -729,7 +748,8 @@ describe('color mark round-trips (#170)', () => {
   })
 
   it('round-trips background color', () => {
-    const cleanText = 'this is <span style="background-color: #facc15">highlighted</span> text'
+    const cleanText =
+      'this is <span style="background-color: #facc15">highlighted</span> text'
     const block = mkBlock('NOTE', { clean_text: cleanText })
     const back = docToBlocks(blocksToDoc([block]))
     expect(back[0].clean_text).toBe(cleanText)
@@ -798,7 +818,8 @@ describe('color mark round-trips (#170)', () => {
   })
 
   it('span with onmouseover attribute is stripped on round-trip', () => {
-    const cleanText = '<span style="color: #ff0000" onmouseover="alert(1)">red</span>'
+    const cleanText =
+      '<span style="color: #ff0000" onmouseover="alert(1)">red</span>'
     const block = mkBlock('NOTE', { clean_text: cleanText })
     const back = docToBlocks(blocksToDoc([block]))
     expect(back[0].clean_text).toContain('color: #ff0000')
