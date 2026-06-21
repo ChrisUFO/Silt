@@ -145,4 +145,18 @@ describe('viewMode (#199 — LRU eviction)', () => {
     expect(getViewMode(N, S, 'p0')).toBe('source') // still present
     expect(getViewMode(N, S, 'p1')).toBe('edit') // evicted
   })
+
+  it('insertion-sequence tie-breaker resolves same-millisecond eviction', () => {
+    // Without tick() between inserts, all 51 keys share Date.now()=0. The
+    // insertion-sequence tie-breaker must evict the oldest-inserted key
+    // (p0) rather than relying on for...in order, which ECMA-262 leaves
+    // unspecified.
+    for (let i = 0; i < 51; i++) {
+      setViewMode(N, S, `p${i}`, 'source')
+    }
+    mocks.config.editor.default_view_mode = 'edit'
+    expect(getViewMode(N, S, 'p0')).toBe('edit') // evicted: oldest-inserted
+    expect(getViewMode(N, S, 'p1')).toBe('source') // would be wrong victim without tie-breaker
+    expect(getViewMode(N, S, 'p50')).toBe('source') // most-recent insert survives
+  })
 })

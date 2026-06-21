@@ -76,11 +76,13 @@ export function setViewMode(
   mode: ViewMode
 ): void {
   const key = pageKey(notebook, section, page)
+  // Capture newness before mutating either record — both writes below would
+  // otherwise mask the check. The token lets the LRU tie-breaker resolve
+  // same-millisecond timestamps deterministically across JS engines.
+  const isNew = !(key in viewModes)
   viewModes[key] = mode
   lastUsed[key] = Date.now()
-  // Mint a fresh insertion-order token for new keys so the LRU tie-breaker
-  // can resolve same-millisecond timestamps deterministically.
-  if (!(key in lastUsed)) insertionSeq[key] = insertionCounter++
+  if (isNew) insertionSeq[key] = insertionCounter++
   if (Object.keys(viewModes).length > MAX_VIEW_MODES) evictLRU()
 }
 
