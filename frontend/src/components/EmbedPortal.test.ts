@@ -34,15 +34,16 @@ vi.mock('../../wailsjs/runtime/runtime.js', () => ({
   EventsOn: mocks.eventsOn
 }))
 
-// Mock RichText to avoid pulling in the full Smart Graph resolution chain
-vi.mock('./RichText.svelte', () => ({
-  default: EmbedPortal_RichTextMock
-}))
-
-// A trivial RichText mock that renders the text content.
-function EmbedPortal_RichTextMock(props: { text: string }) {
-  return { props }
-}
+// Mock RichText with a proper Svelte stub component (RichText.stub.svelte)
+// so the mock renders the text prop into the DOM. An async factory import
+// avoids the circular dependency (RichText → BlockReferenceChip/EmbedPortal)
+// and ensures vitest can resolve the compiled .svelte stub at mock time.
+// (#127 review: the prior { props } return was not a valid Svelte 5
+// component and silently rendered nothing.)
+vi.mock('./RichText.svelte', async () => {
+  const mod = await import('./RichText.stub.svelte')
+  return { default: mod.default }
+})
 
 const FIXTURE_UUID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
 
@@ -65,7 +66,7 @@ describe('EmbedPortal (#127)', () => {
     await tick()
   })
 
-  it('renders the referenced block content on the happy path', async () => {
+  it('renders the embed shell with breadcrumb on the happy path', async () => {
     mocks.resolveBlockReference.mockResolvedValue({
       exists: true,
       id: FIXTURE_UUID,

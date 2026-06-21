@@ -156,9 +156,25 @@
   }
 
   function handleCycleTab(dir: 1 | -1): void {
-    const result = cycleTabState({ tabs: openTabs, activeId: activeTabId }, dir)
+    // Cycle within the displayed (per-notebook) tabs only — Ctrl+Tab must
+    // not jump to a hidden tab in another notebook (#142 review: cycling
+    // across openTabs violated per-notebook scoping).
+    const result = cycleTabState(
+      { tabs: displayedTabs, activeId: activeTabId },
+      dir
+    )
+    // Merge the MRU-bumped tabs (from the cycled subset) back into the
+    // full openTabs array. cycleTabState → activateTab bumps
+    // lastActivatedAt on the newly-active tab; without this merge,
+    // repeated Ctrl+Tab presses would use stale timestamps and the
+    // cycling order would degrade (#142 review: discarded MRU bump).
+    openTabs = openTabs.map((t) => {
+      const updated = result.tabs.find((x) => x.id === t.id)
+      return updated ?? t
+    })
     activeTabId = result.activeId
     syncActiveFromTab()
+    schedulePersistTabs()
   }
 
   // --- Tab persistence (debounced 250ms, pinned-only) ----------------------
@@ -236,9 +252,16 @@
           )
           if (active) {
             activeTabId = active.id
-            syncActiveFromTab()
           }
         }
+        // Fallback: if no active tab was persisted (or the persisted active
+        // was pruned by the Go-side stale-tab check), activate the first
+        // restored tab so the user sees a tab on launch instead of a blank
+        // state. (#142 review: nil active_tab left displayedTabs empty.)
+        if (!activeTabId && openTabs.length > 0) {
+          activeTabId = openTabs[0].id
+        }
+        syncActiveFromTab()
         // Update the hot-reload baseline so this load doesn't immediately
         // trigger a re-hydrate cycle.
         prevOpenTabsKey = tabSetKey(
@@ -400,7 +423,12 @@
         }
         if (matchHotkey(e, hotkeys.close_tab)) {
           e.preventDefault()
-          if (activeTabId) handleCloseTab(activeTabId)
+          // Guard: only close if the active tab is visible in the current
+          // notebook's displayed set (#142 review: closing a hidden tab
+          // from another notebook would be surprising to the user).
+          if (activeTabId && displayedTabs.some((t) => t.id === activeTabId)) {
+            handleCloseTab(activeTabId)
+          }
         }
       }
     }
@@ -554,12 +582,21 @@
     blockId: string
   ) {
     // Route through openPage (VS Code preview-tab semantics, #142).
-    // If the target is already the active page, openPage('preview') →
-    // activate-only (no tab change, just scroll-to-block).
-    openPage({ notebook, section, page }, 'preview', {
-      fileDate: date,
-      blockId
-    })
+    // Use activate-only when the target IS the active page so block
+    // navigation does not re-bump the MRU timestamp (the state machine's
+    // activate-only path is a true no-op on tab state, just sets the
+    // scroll-to-block target). Otherwise open in preview mode.
+    const activeTab = openTabs.find((t) => t.id === activeTabId)
+    const isSamePage =
+      activeTab &&
+      activeTab.notebook === notebook &&
+      activeTab.section === section &&
+      activeTab.page === page
+    openPage(
+      { notebook, section, page },
+      isSamePage ? 'activate-only' : 'preview',
+      { fileDate: date, blockId }
+    )
     activeView = 'notes'
     searchTargetDate = date
     searchTargetBlockId = blockId
