@@ -18,6 +18,16 @@
     }
     return `font-size: ${sizes[level as keyof typeof sizes] || '1em'}; font-weight: ${level <= 2 ? '700' : '600'}; text-align: ${align};`
   })
+
+  $effect(() => {
+    const id = node.attrs.id
+    if (id) {
+      const el = document.querySelector(`[data-id="${id}"]`)
+      if (el) {
+        el.setAttribute('data-depth', String(level))
+      }
+    }
+  })
 </script>
 
 <NodeViewWrapper

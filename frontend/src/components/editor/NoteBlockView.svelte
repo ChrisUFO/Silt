@@ -7,6 +7,16 @@
   let align = $derived(node.attrs.align || 'left')
   let bullet = $derived(node.attrs.bullet || '')
   let depth = $derived(node.attrs.depth || 0)
+
+  $effect(() => {
+    const id = node.attrs.id
+    if (id) {
+      const el = document.querySelector(`[data-id="${id}"]`)
+      if (el) {
+        el.setAttribute('data-depth', String(depth))
+      }
+    }
+  })
 </script>
 
 <NodeViewWrapper
