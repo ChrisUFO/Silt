@@ -46,6 +46,7 @@ export class AutosaveManager {
 
   /** Schedule a debounced save. Call on every editor transaction. */
   trigger(): void {
+    this.markDirty()
     if (this.timeout) {
       clearTimeout(this.timeout)
       this.timeout = null
@@ -55,6 +56,12 @@ export class AutosaveManager {
       this.timeout = null
       void this.save()
     }, delay)
+  }
+
+  /** Mark the editor as dirty (e.g. on editor transaction). */
+  markDirty(): void {
+    this.deps.onStateChange(true, null)
+    this.emitSaveState(true, null)
   }
 
   /** Flush any pending save immediately. Call on unmount or page change. */

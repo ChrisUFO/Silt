@@ -6,12 +6,8 @@
   import Placeholder from '@tiptap/extension-placeholder'
   import { CharacterCount, Focus } from '@tiptap/extensions'
   import Typography from '@tiptap/extension-typography'
-  import {
-    SaveFileBlocks,
-    AcquireFocusLock,
-    RefreshFocusLock,
-    ReleaseFocusLock
-  } from '../../wailsjs/go/main/App.js'
+  import { AutosaveManager } from '../lib/editor/useAutosave'
+  import { FocusLockManager } from '../lib/editor/useFocusLock'
   import {
     SiltBlockExtensionsWithNodeViews,
     SiltInlineMarkExtensions,
@@ -23,14 +19,12 @@
     TaskMetaSuggest,
     applyMetaSuggestion,
     filterMetaKeys,
-    blocksToDoc,
-    docToBlocks
+    blocksToDoc
   } from '../lib/editor'
   import type { ParsedBlock, MetaKey, SuggestContext } from '../lib/editor'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
   import { themeState } from '../theme/store.svelte'
-  import { measureFrameBudget } from '../lib/perf/frame-budget'
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
   import FormattingFirstRunTip from './editor/FormattingFirstRunTip.svelte'
@@ -98,9 +92,6 @@
     onSaveStateChange
   }: Props = $props()
   let editorReady = $state(false)
-  let saveTimeout: ReturnType<typeof setTimeout> | null = null
-  let heartbeatInterval: ReturnType<typeof setInterval> | null = null
-  let hasFocusLock = false
   let isFocused = $state(false)
   let suppressUpdate = false
   let showSlashMenu = $state(false)
@@ -383,8 +374,6 @@
     onUpdate: () => {
       if (suppressUpdate) return
       detectSlashCommand()
-      unsavedChanges = true
-      emitSaveState()
       isLastBlock = editorInstance
         ? editorInstance.state.doc.childCount <= 1
         : false
@@ -532,80 +521,30 @@
     })
     suppressUpdate = false
     // Reset save state — new content loaded, nothing is dirty (#167).
-    unsavedChanges = false
-    lastSaveError = null
-    lastEmittedSaveState = { dirty: false, error: null }
-    emitSaveState()
+    autosave.markClean()
   })
 
   // --- Auto-save (debounced, config-driven, same contract as legacy) --------
 
-  function triggerAutoSave(): void {
-    if (saveTimeout) {
-      clearTimeout(saveTimeout)
-      saveTimeout = null
-    }
-    const delay = Math.max(
-      settings.config?.editor?.auto_save_delay_ms ?? 500,
-      50
-    )
-    saveTimeout = setTimeout(() => {
-      saveTimeout = null
-      void doSave()
-    }, delay)
-  }
-
   let unsavedChanges = $state(false)
   let lastSaveError: string | null = $state(null)
-  // Tracks the last-emitted snapshot so onSaveStateChange only fires on
-  // actual transitions (avoids churn on every keystroke).
-  let lastEmittedSaveState = { dirty: false, error: null as string | null }
 
-  function emitSaveState() {
-    const next = { dirty: unsavedChanges, error: lastSaveError }
-    if (
-      next.dirty !== lastEmittedSaveState.dirty ||
-      next.error !== lastEmittedSaveState.error
-    ) {
-      lastEmittedSaveState = next
-      onSaveStateChange?.(next)
-    }
-  }
+  const autosave = new AutosaveManager({
+    getEditor: () => editorInstance,
+    notebook,
+    section,
+    page,
+    getDelay: () => Math.max(settings.config?.editor?.auto_save_delay_ms ?? 500, 50),
+    onUpdate,
+    onStateChange: (dirty, error) => {
+      unsavedChanges = dirty
+      lastSaveError = error
+    },
+    onSaveStateChange
+  })
 
-  async function doSave(): Promise<void> {
-    if (!editorInstance || editorInstance.isDestroyed) return
-    const updatedBlocks = measureFrameBudget('tiptap-transaction', () =>
-      docToBlocks(editorInstance.getJSON())
-    )
-    try {
-      await SaveFileBlocks(notebook, section, page, updatedBlocks)
-      lastSaveError = null
-      unsavedChanges = false
-      emitSaveState()
-      // Emit editor:save on the plugin event bus (#110).
-      dispatchPluginEvent('editor:save', { notebook, section, page })
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      console.error('TipTapEditor: SaveFileBlocks failed:', e)
-      lastSaveError = msg
-      emitSaveState()
-      pushNotification({
-        kind: 'error',
-        message: `Save failed: ${msg}`,
-        action: { label: 'Retry', run: () => doSave() }
-      })
-    }
-    onUpdate(updatedBlocks)
-  }
-
-  function flushPendingSave(): Promise<void> {
-    if (saveTimeout) {
-      clearTimeout(saveTimeout)
-      saveTimeout = null
-      return doSave()
-    }
-    return Promise.resolve()
-  }
+  function triggerAutoSave(): void { autosave.trigger() }
+  function flushPendingSave(): Promise<void> { return autosave.flush() }
 
   // --- Slash menu -----------------------------------------------------------
 
@@ -779,71 +718,19 @@
 
   // --- Focus lock (reuses the #38 TTL-lease bindings) -----------------------
 
-  async function acquireFocus(): Promise<void> {
-    try {
-      await AcquireFocusLock(notebook, section, page)
-      hasFocusLock = true
-    } catch (e) {
-      console.error('TipTapEditor: AcquireFocusLock failed:', e)
-    }
-  }
+  const focusLock = new FocusLockManager({
+    notebook,
+    section,
+    page,
+    getEditor: () => editorInstance,
+    onBlockFocus
+  })
 
-  async function releaseFocus(): Promise<void> {
-    if (!hasFocusLock) return
-    hasFocusLock = false
-    try {
-      await ReleaseFocusLock(notebook, section, page)
-    } catch (e) {
-      console.error('TipTapEditor: ReleaseFocusLock failed:', e)
-    }
-  }
-
-  function startHeartbeat(): void {
-    stopHeartbeat()
-    heartbeatInterval = setInterval(() => {
-      RefreshFocusLock(notebook, section, page).catch(() => {
-        // Transient IPC error — the next tick retries.
-      })
-    }, 20000)
-  }
-
-  function stopHeartbeat(): void {
-    if (heartbeatInterval !== null) {
-      clearInterval(heartbeatInterval)
-      heartbeatInterval = null
-    }
-  }
-
-  // --- Focus ancestry notification (for guide-rail highlighting) -----------
-
-  function notifyFocus(): void {
-    if (!onBlockFocus) return
-    if (!editorInstance || editorInstance.isDestroyed) return
-    const pos = editorInstance.state.selection.$from
-    // Walk up to depth 1 (direct child of doc) to find the block node.
-    for (let d = pos.depth; d >= 1; d--) {
-      const node = pos.node(d)
-      if (node && node.attrs && (node.attrs as Record<string, unknown>).id) {
-        const blockId = (node.attrs as Record<string, unknown>).id as string
-        // Build ancestor chain: all parent block ids from root to this block.
-        const ancestors: string[] = [blockId]
-        for (let pd = d - 1; pd >= 1; pd--) {
-          const pnode = pos.node(pd)
-          if (
-            pnode &&
-            pnode.attrs &&
-            (pnode.attrs as Record<string, unknown>).id
-          ) {
-            ancestors.unshift(
-              (pnode.attrs as Record<string, unknown>).id as string
-            )
-          }
-        }
-        onBlockFocus(blockId, ancestors)
-        return
-      }
-    }
-  }
+  function acquireFocus(): void { void focusLock.acquire() }
+  function releaseFocus(): void { void focusLock.release() }
+  function startHeartbeat(): void { focusLock.startHeartbeat() }
+  function stopHeartbeat(): void { focusLock.stopHeartbeat() }
+  function notifyFocus(): void { focusLock.notifyFocus() }
 
   // Context Menu state
   let contextMenu = $state<{
