@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net"
+	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -147,5 +151,92 @@ func TestRedirectSafeHeaders_AllowlistIntegrity(t *testing.T) {
 		if redirectSafeHeaders[h] {
 			t.Errorf("redirectSafeHeaders[%q] should be false (sensitive header)", h)
 		}
+	}
+}
+
+// withSafeFetchLookupIP swaps the package-level resolver used by
+// newSafeFetchClient's DialContext and restores it at test cleanup. Tests
+// inject a stub to deterministically simulate DNS failure / empty lookups
+// (#234 fail-closed contract).
+func withSafeFetchLookupIP(t *testing.T, fn func(ctx context.Context, network, host string) ([]net.IP, error)) {
+	t.Helper()
+	orig := safeFetchLookupIP
+	safeFetchLookupIP = fn
+	t.Cleanup(func() { safeFetchLookupIP = orig })
+}
+
+// newSafeFetchClient's DialContext MUST fail-closed when LookupIP returns an
+// error for a hostname — the previous code fell through to dialer.DialContext
+// with the literal address, letting the OS resolver pick an IP that bypasses
+// the dial-time isInternalIP check (#234 DNS-rebinding bypass).
+func TestSafeFetchClient_DialerFailsClosedOnLookupError(t *testing.T) {
+	withSafeFetchLookupIP(t, func(_ context.Context, _, _ string) ([]net.IP, error) {
+		return nil, errors.New("simulated DNS outage")
+	})
+	client := newSafeFetchClient(1_000_000_000)
+	// Issue a request whose host is NOT an IP literal. The production
+	// DialContext must call the stubbed resolver, see the error, find that
+	// net.ParseIP returns nil for a hostname, and return fail-closed. It must
+	// NOT fall through to dialer.DialContext (the #234 bypass).
+	req, _ := http.NewRequest("GET", "http://example.invalid/", nil)
+	_, err := client.Do(req)
+	if err == nil {
+		t.Fatal("expected fail-closed error on DNS lookup failure, got nil")
+	}
+	if !strings.Contains(err.Error(), "DNS lookup failed") {
+		t.Errorf("error = %v, want to mention 'DNS lookup failed'", err)
+	}
+}
+
+// The fail-closed branch also fires when LookupIP succeeds with zero IPs
+// (the other half of the `lookupErr != nil || len(ips) == 0` condition).
+// Today's code falls through to the system dialer; the fix must reject.
+func TestSafeFetchClient_DialerFailsClosedOnLookupEmpty(t *testing.T) {
+	withSafeFetchLookupIP(t, func(_ context.Context, _, _ string) ([]net.IP, error) {
+		return nil, nil // zero IPs, no error
+	})
+	client := newSafeFetchClient(1_000_000_000)
+	req, _ := http.NewRequest("GET", "http://example.invalid/", nil)
+	_, err := client.Do(req)
+	if err == nil {
+		t.Fatal("expected fail-closed error on empty DNS lookup, got nil")
+	}
+	if !strings.Contains(err.Error(), "DNS lookup failed") {
+		t.Errorf("error = %v, want to mention 'DNS lookup failed'", err)
+	}
+}
+
+// A literal IP-literal host MUST still dial successfully after isInternalIP
+// re-validation, even when LookupIP itself fails. This is the legitimate
+// case the #234 fix must not break: http://8.8.8.8/api should connect when
+// DNS is down, but http://10.0.0.1/api must still be rejected as private.
+func TestSafeFetchClient_DialerHandlesIPLiteral(t *testing.T) {
+	withSafeFetchLookupIP(t, func(_ context.Context, _, _ string) ([]net.IP, error) {
+		return nil, errors.New("simulated DNS outage — IP-literal path must NOT depend on this")
+	})
+	client := newSafeFetchClient(1_000_000_000)
+
+	// Public IP literal: must bypass the resolver and reach the dialer. There
+	// is no server on 8.8.8.8:80 in CI, so the connect fails — but the error
+	// must NOT be "DNS lookup failed" (that would mean the IP-literal branch
+	// was missed and the fail-closed path ran instead).
+	req, _ := http.NewRequest("GET", "http://8.8.8.8/", nil)
+	_, err := client.Do(req)
+	if err == nil {
+		// A successful connect would mean 8.8.8.8:80 is reachable; still
+		// acceptable (we reached the dialer), but unusual in CI.
+	} else if strings.Contains(err.Error(), "DNS lookup failed") {
+		t.Errorf("public IP-literal must not hit the fail-closed path; got %v", err)
+	}
+
+	// Private IP literal: must be rejected by isInternalIP at the IP-literal
+	// branch, BEFORE the dialer is invoked.
+	req, _ = http.NewRequest("GET", "http://10.0.0.1/", nil)
+	_, err = client.Do(req)
+	if err == nil {
+		t.Fatal("expected isInternalIP rejection for private IP-literal")
+	}
+	if !strings.Contains(err.Error(), "blocked") {
+		t.Errorf("error = %v, want to mention 'blocked'", err)
 	}
 }

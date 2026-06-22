@@ -97,6 +97,13 @@ func isPrivateIP(ip net.IP) bool {
 	return false
 }
 
+// safeFetchLookupIP is the resolver used by newSafeFetchClient's DialContext.
+// Package-level so tests can swap in a stub that simulates DNS failure and
+// pin the fail-closed contract (#234) without exercising the real resolver.
+var safeFetchLookupIP = func(ctx context.Context, network, host string) ([]net.IP, error) {
+	return net.DefaultResolver.LookupIP(ctx, network, host)
+}
+
 // newSafeFetchClient returns an *http.Client with the SSRF-defended transport
 // used by every privileged plugin HTTP call (#115 + #101 review). It:
 //
@@ -119,12 +126,22 @@ func newSafeFetchClient(timeout time.Duration) *http.Client {
 			if splitErr != nil {
 				return nil, splitErr
 			}
-			ips, lookupErr := net.DefaultResolver.LookupIP(ctx, "ip", host)
+			ips, lookupErr := safeFetchLookupIP(ctx, "ip", host)
 			if lookupErr != nil || len(ips) == 0 {
-				// Fall through to the system dialer with the literal address;
-				// net.Dialer will surface the lookup error in its own error
-				// chain, so the call still fails closed.
-				return dialer.DialContext(ctx, network, addr)
+				// IP-literal hosts bypass DNS entirely — validate + dial them
+				// directly so a lookup failure for "1.2.3.4" doesn't wrongly
+				// block a legitimate connect.
+				if parsed := net.ParseIP(host); parsed != nil {
+					if isInternalIP(parsed) {
+						return nil, fmt.Errorf("blocked: dial to %s is a blocked address %s", host, parsed)
+					}
+					return dialer.DialContext(ctx, network, net.JoinHostPort(parsed.String(), port))
+				}
+				// Hostname that won't resolve: fail closed. Falling through to
+				// the system dialer would let the OS resolver pick an IP that
+				// bypasses the dial-time isInternalIP check (#234 DNS-rebinding
+				// bypass).
+				return nil, fmt.Errorf("blocked: DNS lookup failed for %q: %w", host, lookupErr)
 			}
 			// Re-validate every resolved IP at dial time so a DNS rebind
 			// between isSafeFetchUrl and the actual connect is rejected.
