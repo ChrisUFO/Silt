@@ -143,7 +143,7 @@
     aria-label="Settings"
     tabindex="-1"
     class="relative z-10 w-full max-w-4xl h-[80vh] glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex"
-    style="backdrop-filter: blur(16px) saturate(140%); background: rgba(22, 22, 25, 0.94);"
+    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 94%, transparent);"
   >
     <!-- Left rail: tab list -->
     <nav
@@ -172,8 +172,12 @@
 
     <!-- Right: active panel -->
     <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
-      <div class="flex items-center justify-between px-6 py-4 border-b border-border-muted flex-shrink-0">
-        <h2 class="font-headline-md text-headline-md text-text-primary capitalize">
+      <div
+        class="flex items-center justify-between px-6 py-4 border-b border-border-muted flex-shrink-0"
+      >
+        <h2
+          class="font-headline-md text-headline-md text-text-primary capitalize"
+        >
           {tabs.find((t) => t.id === activeTab)?.label}
         </h2>
         <button
@@ -193,7 +197,9 @@
           </div>
         {:else if !settings.config && settings.error}
           <div class="p-8">
-            <div class="flex items-start gap-2 p-3 rounded-lg bg-error/10 border border-error/30 text-error text-[12px] font-body-md max-w-xl">
+            <div
+              class="flex items-start gap-2 p-3 rounded-lg bg-error/10 border border-error/30 text-error text-[12px] font-body-md max-w-xl"
+            >
               <span class="material-symbols-outlined text-[18px]">error</span>
               <span class="flex-1">{settings.error}</span>
             </div>
@@ -203,11 +209,7 @@
         {:else if activeTab === 'appearance'}
           <AppearanceTab />
         {:else if activeTab === 'plugins'}
-          <PluginsTab
-            {activeNotebook}
-            {activeSection}
-            {activePage}
-          />
+          <PluginsTab {activeNotebook} {activeSection} {activePage} />
         {:else if activeTab === 'about'}
           <AboutTab />
         {/if}

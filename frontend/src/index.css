@@ -138,27 +138,39 @@ body {
    A theme opts in by emitting --silt-texture-display + -image / -opacity /
    -blend (see backend/themes Texture + Theme.Flatten). The overlay defaults
    to display:none, so non-textured themes (Cyber Forest, Graphite, …) never
-   instantiate the full-screen layer at all — only a theme that declares a
-   texture flips it to block. The overlay is purely decorative: fixed,
-   covers the viewport, ignores pointer events, and blends with the page so
-   the canvas reads as textured paper without harming text legibility (a low
-   overall opacity multiplied by low-alpha weave threads keeps the effect
-   felt-not-seen; the WCAG harness tests token pairs, not this overlay). */
-body::before {
+   instantiate the layer at all — only a theme that declares a texture flips
+   it to block. The overlay is scoped to the page writing surface (the scroll
+   container in VirtualScrollContainer) so it textures the "paper" the user
+   writes on, not the titlebar/sidebar/toolbars (#261).
+
+   The ::before uses position: sticky so the texture stays pinned within the
+   scroll container's visible viewport at all scroll positions — an
+   absolutely positioned element inside an overflow-y-auto container would
+   scroll out of view on long pages, leaving the lower portion untextured. */
+.silt-texture-surface {
+  position: relative;
+}
+.silt-texture-surface::before {
   content: '';
   display: var(--silt-texture-display, none);
-  position: fixed;
-  inset: 0;
-  /* Below the modal layer (scrims start at z-[150]) and the command palette
-     (z-[100]) so dimmed backdrops and elevated UI read crisp and untinted;
-     above all persistent app chrome (titlebar/sidebar/menus, <= z-[70]) so
-     the ambient paper grain textures the canvas the user actually works on. */
-  z-index: 80;
+  position: sticky;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  margin-bottom: -100%;
+  z-index: 0;
   pointer-events: none;
   background-image: var(--silt-texture-image, none);
   background-repeat: repeat;
   opacity: var(--silt-texture-opacity, 0);
   mix-blend-mode: var(--silt-texture-blend, normal);
+}
+
+/* Lift content above the texture overlay so text stays legible. */
+.silt-texture-surface > * {
+  position: relative;
+  z-index: 1;
 }
 
 /* Global transitions for interactive states */
@@ -262,7 +274,7 @@ body::before {
 /* Frosted glass palette style */
 .glass-palette {
   backdrop-filter: blur(12px) saturate(140%);
-  background: rgba(22, 22, 25, 0.75);
+  background: color-mix(in srgb, var(--color-panel) 75%, transparent);
 }
 
 /* Custom checkbox states */
@@ -317,7 +329,7 @@ body::before {
   height: 100%;
   background: radial-gradient(
     circle at center,
-    #131a18 0%,
+    color-mix(in srgb, var(--color-surface) 60%, var(--color-void)) 0%,
     var(--color-void) 100%
   );
   padding: 2rem;

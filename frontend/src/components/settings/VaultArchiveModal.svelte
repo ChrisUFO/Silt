@@ -37,19 +37,20 @@
   let busy = $state(false)
   let error = $state('')
   // Streaming progress: {phase, current, total} from vault:archive:progress.
-  let progress = $state<{ phase: string; current: number; total: number } | null>(null)
+  let progress = $state<{
+    phase: string
+    current: number
+    total: number
+  } | null>(null)
   // Success screen.
-  let done = $state<
-    | null
-    | {
-        kind: 'export' | 'import'
-        path: string
-        files: number
-        bytes: number
-        pages: number
-        skippedSymlinks: number
-      }
-  >(null)
+  let done = $state<null | {
+    kind: 'export' | 'import'
+    path: string
+    files: number
+    bytes: number
+    pages: number
+    skippedSymlinks: number
+  }>(null)
 
   let dialogEl = $state<HTMLDivElement | null>(null)
   let previouslyFocused: HTMLElement | null = null
@@ -75,7 +76,11 @@
   $effect(() => {
     offProgress = EventsOn('vault:archive:progress', (p: any) => {
       if (p && typeof p.current === 'number' && typeof p.total === 'number') {
-        progress = { phase: String(p.phase ?? ''), current: p.current, total: p.total }
+        progress = {
+          phase: String(p.phase ?? ''),
+          current: p.current,
+          total: p.total
+        }
       }
     })
     return () => {
@@ -100,7 +105,10 @@
       if (e.shiftKey && (active === first || !dialogEl.contains(active))) {
         e.preventDefault()
         last.focus()
-      } else if (!e.shiftKey && (active === last || !dialogEl.contains(active))) {
+      } else if (
+        !e.shiftKey &&
+        (active === last || !dialogEl.contains(active))
+      ) {
         e.preventDefault()
         first.focus()
       }
@@ -149,12 +157,12 @@
         ? exportDest !== ''
         : // Import needs both an archive AND an empty destination that is not
           // the currently-open vault (SwitchVault refuses a same-path).
-          archivePath !== '' &&
-            importDest !== '' &&
-            importDest !== currentPath)
+          archivePath !== '' && importDest !== '' && importDest !== currentPath)
   )
 
-  let primaryLabel = $derived(mode === 'export' ? 'Export vault' : 'Import vault')
+  let primaryLabel = $derived(
+    mode === 'export' ? 'Export vault' : 'Import vault'
+  )
 
   function fmtBytes(n: number): string {
     if (n < 1024) return `${n} B`
@@ -241,24 +249,31 @@
     aria-labelledby="vault-archive-title"
     tabindex="-1"
     class="relative z-10 w-full max-w-lg glass-palette border border-border-zinc rounded-xl shadow-2xl p-6"
-    style="backdrop-filter: blur(16px) saturate(140%); background: rgba(22, 22, 25, 0.94);"
+    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 94%, transparent);"
   >
     <div class="flex items-start gap-3 mb-4">
-      <span class="material-symbols-outlined text-accent-primary-start text-[24px] mt-0.5">
+      <span
+        class="material-symbols-outlined text-accent-primary-start text-[24px] mt-0.5"
+      >
         {mode === 'export' ? 'archive' : 'unarchive'}
       </span>
       <div class="flex-1 min-w-0">
-        <h2 id="vault-archive-title" class="font-headline-md text-headline-md text-text-primary">
+        <h2
+          id="vault-archive-title"
+          class="font-headline-md text-headline-md text-text-primary"
+        >
           {mode === 'export' ? 'Export vault' : 'Import vault'}
         </h2>
         <p class="text-text-muted text-[12px] font-body-md mt-1">
           {#if mode === 'export'}
-            Back up or migrate this vault as a single portable <strong>.silt-vault</strong>
-            archive. Your notes, config, themes, templates, and plugins are bundled; the
-            search index is rebuilt when the archive is imported.
+            Back up or migrate this vault as a single portable <strong
+              >.silt-vault</strong
+            >
+            archive. Your notes, config, themes, templates, and plugins are bundled;
+            the search index is rebuilt when the archive is imported.
           {:else}
-            Restore a <strong>.silt-vault</strong> archive into a new empty folder and open
-            it. The archive is checksum-verified before anything is written.
+            Restore a <strong>.silt-vault</strong> archive into a new empty folder
+            and open it. The archive is checksum-verified before anything is written.
           {/if}
         </p>
       </div>
@@ -268,12 +283,18 @@
       <!-- Pickers -->
       {#if mode === 'export'}
         <div class="mb-4">
-          <span class="text-text-muted text-[11px] font-label-sm-bold">Archive file</span>
+          <span class="text-text-muted text-[11px] font-label-sm-bold"
+            >Archive file</span
+          >
           <div
             class="flex items-center gap-2 mt-1.5 bg-surface border border-border-zinc rounded-lg px-3 py-2"
           >
-            <span class="material-symbols-outlined text-text-muted text-[18px]">archive</span>
-            <span class="text-text-primary text-[13px] font-body-md truncate flex-1">
+            <span class="material-symbols-outlined text-text-muted text-[18px]"
+              >archive</span
+            >
+            <span
+              class="text-text-primary text-[13px] font-body-md truncate flex-1"
+            >
               {exportDest || 'No file selected'}
             </span>
             <button
@@ -292,12 +313,18 @@
         </div>
       {:else}
         <div class="mb-4">
-          <span class="text-text-muted text-[11px] font-label-sm-bold">Archive</span>
+          <span class="text-text-muted text-[11px] font-label-sm-bold"
+            >Archive</span
+          >
           <div
             class="flex items-center gap-2 mt-1.5 bg-surface border border-border-zinc rounded-lg px-3 py-2"
           >
-            <span class="material-symbols-outlined text-text-muted text-[18px]">archive</span>
-            <span class="text-text-primary text-[13px] font-body-md truncate flex-1">
+            <span class="material-symbols-outlined text-text-muted text-[18px]"
+              >archive</span
+            >
+            <span
+              class="text-text-primary text-[13px] font-body-md truncate flex-1"
+            >
               {archivePath || 'No archive selected'}
             </span>
             <button
@@ -312,12 +339,18 @@
           </div>
         </div>
         <div class="mb-4">
-          <span class="text-text-muted text-[11px] font-label-sm-bold">Destination folder</span>
+          <span class="text-text-muted text-[11px] font-label-sm-bold"
+            >Destination folder</span
+          >
           <div
             class="flex items-center gap-2 mt-1.5 bg-surface border border-border-zinc rounded-lg px-3 py-2"
           >
-            <span class="material-symbols-outlined text-text-muted text-[18px]">folder</span>
-            <span class="text-text-primary text-[13px] font-body-md truncate flex-1">
+            <span class="material-symbols-outlined text-text-muted text-[18px]"
+              >folder</span
+            >
+            <span
+              class="text-text-primary text-[13px] font-body-md truncate flex-1"
+            >
               {importDest || 'No folder selected'}
             </span>
             <button
@@ -336,16 +369,22 @@
       {/if}
 
       <p class="text-text-muted text-[11px] font-label-sm mb-4">
-        <span class="material-symbols-outlined text-[14px] align-middle mr-0.5">link_off</span>
+        <span class="material-symbols-outlined text-[14px] align-middle mr-0.5"
+          >link_off</span
+        >
         Linked notebooks are external folders and are never included in the archive.
       </p>
 
       <!-- Live region: streaming progress + errors -->
       <div aria-live="polite" class="min-h-[20px]">
         {#if busy && progress}
-          <div class="mb-1 flex items-center justify-between text-accent-primary-start text-[12px] font-body-md">
+          <div
+            class="mb-1 flex items-center justify-between text-accent-primary-start text-[12px] font-body-md"
+          >
             <span class="flex items-center gap-2">
-              <span class="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>
+              <span class="material-symbols-outlined text-[16px] animate-spin"
+                >progress_activity</span
+              >
               <span>{progressLabel}</span>
             </span>
             <span>{pct}%</span>
@@ -373,7 +412,11 @@
             <span class="material-symbols-outlined text-[16px] animate-spin"
               >progress_activity</span
             >
-            <span>{mode === 'export' ? 'Preparing archive…' : 'Verifying archive…'}</span>
+            <span
+              >{mode === 'export'
+                ? 'Preparing archive…'
+                : 'Verifying archive…'}</span
+            >
           </div>
           <p class="text-text-muted text-[11px] font-label-sm mt-1.5">
             This can't be cancelled mid-write — please wait for it to finish.
@@ -391,7 +434,9 @@
       {/if}
 
       <!-- Actions -->
-      <div class="flex items-center justify-end gap-2 pt-4 mt-2 border-t border-border-muted">
+      <div
+        class="flex items-center justify-end gap-2 pt-4 mt-2 border-t border-border-muted"
+      >
         <button
           onclick={onClose}
           disabled={busy}
@@ -427,7 +472,8 @@
             {/if}
           {:else}
             <p>
-              Imported {done.files} files ({fmtBytes(done.bytes)}). The vault is now open.
+              Imported {done.files} files ({fmtBytes(done.bytes)}). The vault is
+              now open.
             </p>
             <p class="text-text-muted text-[11px] font-label-sm mt-1 truncate">
               {done.path}
@@ -435,7 +481,9 @@
           {/if}
         </div>
       </div>
-      <div class="flex items-center justify-end gap-2 pt-4 mt-4 border-t border-border-muted">
+      <div
+        class="flex items-center justify-end gap-2 pt-4 mt-4 border-t border-border-muted"
+      >
         <button
           onclick={onClose}
           disabled={busy}

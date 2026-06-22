@@ -150,7 +150,10 @@ export const SiltBlockKeymaps = Extension.create({
         const info = currentBlockInfo(this.editor)
         if (!info) return false
 
-        let nextBullet = '- '
+        // Default to a plain (no-bullet) line. Only noteBlocks inherit /
+        // resequence the bullet marker — pressing Enter after a task or
+        // header should start a fresh plain line, not a bulleted one (#258).
+        let nextBullet = ''
         if (info.node.type.name === 'noteBlock') {
           nextBullet = getNextBullet(info.node.attrs.bullet || '')
         }

@@ -1064,7 +1064,7 @@
 
 <style>
   .context-menu-card {
-    background-color: rgba(22, 22, 25, 0.9);
+    background-color: color-mix(in srgb, var(--color-panel) 90%, transparent);
     backdrop-filter: blur(12px) saturate(140%);
     border: 1px solid var(--color-border-active);
     border-radius: 8px;

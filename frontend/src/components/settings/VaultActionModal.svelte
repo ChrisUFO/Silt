@@ -32,7 +32,12 @@
   let confirmDelete = $state(false)
   let busy = $state(false)
   let error = $state('')
-  let done = $state<null | { path: string; files: number; bytes: number; skippedSymlinks: number }>(null)
+  let done = $state<null | {
+    path: string
+    files: number
+    bytes: number
+    skippedSymlinks: number
+  }>(null)
 
   let dialogEl = $state<HTMLDivElement | null>(null)
   let previouslyFocused: HTMLElement | null = null
@@ -71,7 +76,10 @@
       if (e.shiftKey && (active === first || !dialogEl.contains(active))) {
         e.preventDefault()
         last.focus()
-      } else if (!e.shiftKey && (active === last || !dialogEl.contains(active))) {
+      } else if (
+        !e.shiftKey &&
+        (active === last || !dialogEl.contains(active))
+      ) {
         e.preventDefault()
         first.focus()
       }
@@ -172,14 +180,19 @@
     aria-labelledby="vault-action-title"
     tabindex="-1"
     class="relative z-10 w-full max-w-lg glass-palette border border-border-zinc rounded-xl shadow-2xl p-6"
-    style="backdrop-filter: blur(16px) saturate(140%); background: rgba(22, 22, 25, 0.94);"
+    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 94%, transparent);"
   >
     <div class="flex items-start gap-3 mb-4">
-      <span class="material-symbols-outlined text-accent-primary-start text-[24px] mt-0.5">
+      <span
+        class="material-symbols-outlined text-accent-primary-start text-[24px] mt-0.5"
+      >
         {mode === 'move' ? 'drive_file_move' : 'content_copy'}
       </span>
       <div class="flex-1 min-w-0">
-        <h2 id="vault-action-title" class="font-headline-md text-headline-md text-text-primary">
+        <h2
+          id="vault-action-title"
+          class="font-headline-md text-headline-md text-text-primary"
+        >
           {mode === 'move' ? 'Move vault' : 'Copy vault'}
         </h2>
         <p class="text-text-muted text-[12px] font-body-md mt-1">
@@ -199,12 +212,18 @@
     {#if !done}
       <!-- Destination picker -->
       <div class="mb-4">
-        <span class="text-text-muted text-[11px] font-label-sm-bold">Destination</span>
+        <span class="text-text-muted text-[11px] font-label-sm-bold"
+          >Destination</span
+        >
         <div
           class="flex items-center gap-2 mt-1.5 bg-surface border border-border-zinc rounded-lg px-3 py-2"
         >
-          <span class="material-symbols-outlined text-text-muted text-[18px]">folder</span>
-          <span class="text-text-primary text-[13px] font-body-md truncate flex-1">
+          <span class="material-symbols-outlined text-text-muted text-[18px]"
+            >folder</span
+          >
+          <span
+            class="text-text-primary text-[13px] font-body-md truncate flex-1"
+          >
             {destination || 'No folder selected'}
           </span>
           <button
@@ -235,7 +254,9 @@
           </span>
         </label>
         {#if removeOld}
-          <label class="flex items-center gap-2.5 mb-3 ml-6 cursor-pointer select-none">
+          <label
+            class="flex items-center gap-2.5 mb-3 ml-6 cursor-pointer select-none"
+          >
             <input
               bind:checked={confirmDelete}
               disabled={busy}
@@ -250,15 +271,21 @@
       {/if}
 
       <p class="text-text-muted text-[11px] font-label-sm mb-4">
-        <span class="material-symbols-outlined text-[14px] align-middle mr-0.5">link_off</span>
+        <span class="material-symbols-outlined text-[14px] align-middle mr-0.5"
+          >link_off</span
+        >
         Linked notebooks are external folders and are not affected.
       </p>
 
       <!-- Live region: status / errors -->
       <div aria-live="polite" class="min-h-[20px]">
         {#if busy}
-          <div class="flex items-center gap-2 text-accent-primary-start text-[12px] font-body-md">
-            <span class="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>
+          <div
+            class="flex items-center gap-2 text-accent-primary-start text-[12px] font-body-md"
+          >
+            <span class="material-symbols-outlined text-[16px] animate-spin"
+              >progress_activity</span
+            >
             <span>{mode === 'move' ? 'Moving vault…' : 'Copying vault…'}</span>
           </div>
         {/if}
@@ -274,7 +301,9 @@
       {/if}
 
       <!-- Actions -->
-      <div class="flex items-center justify-end gap-2 pt-4 mt-2 border-t border-border-muted">
+      <div
+        class="flex items-center justify-end gap-2 pt-4 mt-2 border-t border-border-muted"
+      >
         <button
           onclick={onClose}
           disabled={busy}
@@ -309,7 +338,9 @@
           {/if}
         </div>
       </div>
-      <div class="flex items-center justify-end gap-2 pt-4 mt-4 border-t border-border-muted">
+      <div
+        class="flex items-center justify-end gap-2 pt-4 mt-4 border-t border-border-muted"
+      >
         <button
           onclick={onClose}
           disabled={busy}
