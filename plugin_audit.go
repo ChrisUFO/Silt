@@ -122,12 +122,17 @@ func (a *App) ClearNetworkAudit() error {
 		networkAuditMu.Unlock()
 		return nil
 	}
-	// Enqueue the clear so it is processed in order with concurrent
-	// auditNetwork appends. The blocking send is safe — the 256-slot buffer
-	// is never full in practice (would need >5000 RPS), and the lock is held
-	// for microseconds. The wait happens OUTSIDE the lock so concurrent
-	// fetches can keep appending to the in-memory slice while the writer
-	// truncates files.
+	// The clear op MUST be enqueued while holding networkAuditMu so it is
+	// ordered relative to concurrent auditNetwork appends. Both producers
+	// send on w.ch under this lock; without it, a concurrent auditNetwork
+	// could enqueue its entry AFTER our networkAudit = nil but BEFORE our
+	// clear op, causing the writer to append-then-truncate (deleting a
+	// post-clear entry from disk — a #157 restart-persistence regression).
+	// The blocking send is safe: the 256-slot buffer makes it non-blocking
+	// in practice (would need >5000 RPS to fill), and in the degraded case
+	// (writer stuck on slow I/O), blocking is correct backpressure. The
+	// wait on op.done happens OUTSIDE the lock so concurrent fetches can
+	// keep appending to the in-memory slice while the writer truncates.
 	op := &networkAuditOp{clear: true, done: make(chan struct{})}
 	w.ch <- op
 	networkAuditMu.Unlock()
