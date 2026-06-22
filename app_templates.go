@@ -13,6 +13,8 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+// templatesDir returns the on-disk user-template directory, mirroring themesDir.
+// Returns "" when no vault is open (the embedded set is still served).
 func (a *App) templatesDir() string {
 	if a.vaultPath == "" {
 		return ""
@@ -313,7 +315,3 @@ func (a *App) RenderTemplateBlocks(id string, vars map[string]string) ([]parser.
 	}
 	return blocks, nil
 }
-
-// ResolveBlockReference looks up a ((uuid)) reference, returning its content
-// and location for hover previews and scroll-to-source navigation. Missing
-// UUIDs return Exists=false (no error) so the UI can render a broken-link chip.

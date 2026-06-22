@@ -162,7 +162,7 @@ func (a *App) shutdown(ctx context.Context) {
 		runtime.EventsEmit(a.ctx, "vault:closing", struct{}{})
 	}
 	// Wait for any in-flight Wails-bound calls (UpdateBlockState,
-	// QueryTasks, FetchSectionTimeline) to complete before tearing
+	// QueryTasks) to complete before tearing
 	// down the DB, tracker, and watcher. Without this a fast window
 	// close could race an in-progress file write.
 	a.wg.Wait()
@@ -851,12 +851,6 @@ func (a *App) ImportVault(archivePath, destPath string) (vault.ImportResult, err
 	}
 	return res, nil
 }
-
-// FetchPageBlocks returns a flat list of all blocks for a page, ordered by
-// line_number. A page is a single file; each block carries its own file_date.
-// The notebook's source is resolved server-side from its (globally-unique)
-// name so a linked notebook sharing a display name with a vault notebook
-// returns its own page (#100).
 
 // migratePerDayFiles converts old-model per-day files (<page>/<date>.md) into
 // the new single-file-per-page model (<page>.md). For each directory that

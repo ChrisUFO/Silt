@@ -11,6 +11,9 @@ import (
 	"time"
 )
 
+// networkAuditMu guards the in-memory network audit log. The log is a simple
+// append-only slice of {plugin, host, status, time} entries, surfaced in
+// Settings → Plugins so a user can see what a networked plugin is doing (#115).
 var (
 	networkAuditMu sync.Mutex
 	networkAudit   []NetworkAuditEntry
@@ -25,10 +28,9 @@ type NetworkAuditEntry struct {
 	At     string `json:"at"` // RFC3339
 }
 
-// PluginFetch performs an HTTP request through the Go backend (CORS-free),
-// with timeout / size / redirect caps. Gated by the network capability.
-// The host + status are appended to the in-memory audit log (never the body).
-// Per-plugin rate-limited (#153): a network-granted plugin's RPS is capped.
+// truncateNetworkLog reads the log file, keeps the last n lines, and rewrites
+// it. Best-effort — errors are silently ignored (the audit log is not a
+// security boundary, just a diagnostic aid).
 func truncateNetworkLog(path string, keepLines int) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -42,6 +44,7 @@ func truncateNetworkLog(path string, keepLines int) {
 	_ = os.WriteFile(path, []byte(strings.Join(kept, "\n")+"\n"), 0o644)
 }
 
+// GetNetworkAudit returns the in-memory plugin network audit log (#115).
 func (a *App) GetNetworkAudit() ([]NetworkAuditEntry, error) {
 	networkAuditMu.Lock()
 	defer networkAuditMu.Unlock()
@@ -200,5 +203,3 @@ func (a *App) auditNetwork(pluginID, method, rawURL string, status int) {
 	}
 	networkAuditMu.Unlock()
 }
-
-// newUUID mints a UUIDv4 string. Wraps the existing uuid import so the v2

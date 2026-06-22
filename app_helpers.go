@@ -11,6 +11,11 @@ import (
 
 var updateLineIDRegex = regexp.MustCompile(`<!-- id: ([a-f0-9\-]{36}) -->`)
 
+// fileOrDefaultDate returns the file's modification date (YYYY-MM-DD), falling
+// back to today if the stat fails. Used consistently by SaveFileBlocks,
+// MutateBlock, and UpdateBlockState as the defaultDate passed to
+// ParseFileContent — ensures old blocks without a @ date suffix inherit the
+// file's actual mtime rather than silently shifting to today.
 func fileOrDefaultDate(filePath string) string {
 	if fi, err := os.Stat(filePath); err == nil {
 		return fi.ModTime().Format("2006-01-02")

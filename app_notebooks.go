@@ -15,6 +15,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+// CreateNotebook creates a top-level notebook folder under the vault root.
 func (a *App) CreateNotebook(name string) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()

@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// isSafeUrl reports whether url uses an allowed scheme (http/https/mailto).
+// Used by PluginOpenUrl (browser-open path).
 func isSafeUrl(rawURL string) bool {
 	u := strings.TrimSpace(rawURL)
 	if u == "" {
@@ -95,6 +97,20 @@ func isPrivateIP(ip net.IP) bool {
 	return false
 }
 
+// newSafeFetchClient returns an *http.Client with the SSRF-defended transport
+// used by every privileged plugin HTTP call (#115 + #101 review). It:
+//
+//  1. Caps the per-request lifetime with timeout.
+//  2. Re-validates every redirect destination against isSafeFetchUrl +
+//     blockInternalHost so a 302 to an internal host is rejected even if the
+//     initial URL was approved.
+//  3. Pins the resolved IP at dial time via a custom DialContext. A name
+//     that resolves to 1.2.3.4 at validation and 169.254.169.254 at connect
+//     (DNS rebinding) is rejected because the dialer re-runs blockInternalHost
+//     against the IPs it actually plans to connect to.
+//
+// Tests can override the DialContext to swap the resolver (see
+// app_plugins_v2_test.go) and exercise the rebinding defense deterministically.
 func newSafeFetchClient(timeout time.Duration) *http.Client {
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	transport := &http.Transport{
@@ -172,8 +188,15 @@ func isInternalIP(ip net.IP) bool {
 	return isPrivateIP(ip)
 }
 
-// isForbiddenPluginHeader reports whether lowerKey is a request header that a
-// plugin must never set on outbound fetches.
+// isForbiddenPluginHeader reports whether a (lower-cased) header name must
+// NOT be settable by a plugin. These headers are controlled by the transport
+// layer or carry security-sensitive semantics:
+//   - Host / Connection / Content-Length / Transfer-Encoding: request
+//     smuggling vectors or would subvert the SSRF dial-time IP check.
+//   - Proxy-* / Sec-*: hop-by-hop or browser-fetch metadata that a plugin
+//     must not forge.
+//   - Cookie / Authorization: would let a plugin exfiltrate or reuse host
+//     credentials.
 func isForbiddenPluginHeader(lowerKey string) bool {
 	switch lowerKey {
 	case "host", "connection", "content-length", "transfer-encoding",

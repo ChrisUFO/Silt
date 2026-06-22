@@ -19,6 +19,11 @@ import (
 // than silently overwriting the in-flight edit.
 var errBlockBeingEdited = fmt.Errorf("block is being edited in another view")
 
+// FetchPageBlocks returns a flat list of all blocks for a page, ordered by
+// line_number. A page is a single file; each block carries its own file_date.
+// The notebook's source is resolved server-side from its (globally-unique)
+// name so a linked notebook sharing a display name with a vault notebook
+// returns its own page (#100).
 func (a *App) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBlock, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -207,6 +212,9 @@ func (a *App) emitBlockChanged(id, notebook, section, page, fileDate string) {
 	})
 }
 
+// ResolveBlockReference looks up a ((uuid)) reference, returning its content
+// and location for hover previews and scroll-to-source navigation. Missing
+// UUIDs return Exists=false (no error) so the UI can render a broken-link chip.
 func (a *App) ResolveBlockReference(blockID string) (parser.BlockReference, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -361,9 +369,3 @@ func (a *App) MutateBlock(blockID, newText string) error {
 	a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, "")
 	return nil
 }
-
-// fileOrDefaultDate returns the file's modification date (YYYY-MM-DD), falling
-// back to today if the stat fails. Used consistently by SaveFileBlocks,
-// MutateBlock, and UpdateBlockState as the defaultDate passed to
-// ParseFileContent — ensures old blocks without a @ date suffix inherit the
-// file's actual mtime rather than silently shifting to today.

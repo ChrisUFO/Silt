@@ -256,6 +256,3 @@ func (a *App) ExportActiveTheme(dstPath string) error {
 	}
 	return themes.ExportThemeToPath(a.themesDir(), settings.ActiveTheme, dstPath)
 }
-
-// templatesDir returns the on-disk user-template directory, mirroring themesDir.
-// Returns "" when no vault is open (the embedded set is still served).

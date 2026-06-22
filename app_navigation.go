@@ -312,19 +312,13 @@ func (a *App) walkSections(
 }
 
 func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j-1] > s[j]; j-- {
-			s[j-1], s[j] = s[j], s[j-1]
-		}
-	}
+	sort.Strings(s)
 }
 
 func sortNavPages(p []parser.NavigationPage) {
-	for i := 1; i < len(p); i++ {
-		for j := i; j > 0 && p[j-1].Name > p[j].Name; j-- {
-			p[j-1], p[j] = p[j], p[j-1]
-		}
-	}
+	sort.Slice(p, func(i, j int) bool {
+		return p[i].Name < p[j].Name
+	})
 }
 
 // QueryTagHierarchy returns the hierarchical tag tree for the Tags Explorer.
@@ -476,5 +470,3 @@ func (a *App) RefreshFocusLock(notebook, section, page string) error {
 	a.watcher.RefreshFocus(fp)
 	return nil
 }
-
-// CreateNotebook creates a top-level notebook folder under the vault root.

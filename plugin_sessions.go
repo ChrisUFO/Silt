@@ -5,6 +5,10 @@ import (
 	"silt/backend/plugins"
 )
 
+// RegisterPluginSession mints a session token for pluginID and stores it so
+// privileged bindings can verify the caller's identity (#151). Called by the
+// frontend loader at plugin load time. Returns the token the SDK captures in
+// its closures.
 func (a *App) RegisterPluginSession(pluginID string) (string, error) {
 	if !plugins.IsValidID(pluginID) {
 		return "", fmt.Errorf("invalid plugin id %q", pluginID)
