@@ -139,7 +139,9 @@
     dropTabTarget = { id: tab.id, before }
   }
 
-  function handleTabDragLeave(): void {
+  function handleTabDragLeave(e: DragEvent): void {
+    const tabEl = e.currentTarget as HTMLElement
+    if (e.relatedTarget && tabEl.contains(e.relatedTarget as Node)) return
     dropTabTarget = null
   }
 

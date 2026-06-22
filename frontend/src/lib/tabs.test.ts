@@ -599,18 +599,16 @@ describe('mergeReorderedTabs (#175)', () => {
     expect(full.map((t) => t.id)).toEqual(originalIds)
   })
 
-  it('falls back to original tab when reorderedDisplayed is shorter than expected', () => {
+  it('returns a safe no-op copy when lengths mismatch', () => {
     const full = [
       mkTab(WA, { id: 'wa' }),
       mkTab(PA, { id: 'pa' }),
       mkTab(WB, { id: 'wb' }),
       mkTab(WC, { id: 'wc' })
     ]
-    // Only 1 entry for 3 Work tabs — overflow positions keep their originals.
     const reordered = [mkTab(WB, { id: 'wb' })]
     const merged = mergeReorderedTabs(full, reordered, 'Work')
-    // First Work slot consumed reordered[0]; remaining Work slots fall back.
-    expect(merged.map((t) => t.id)).toEqual(['wb', 'pa', 'wb', 'wc'])
-    expect(merged.every((t) => t !== undefined)).toBe(true)
+    expect(merged.map((t) => t.id)).toEqual(['wa', 'pa', 'wb', 'wc'])
+    expect(merged).not.toBe(full)
   })
 })

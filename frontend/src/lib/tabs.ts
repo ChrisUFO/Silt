@@ -381,12 +381,12 @@ export function mergeReorderedTabs(
   reorderedDisplayed: TabEntry[],
   notebook: string
 ): TabEntry[] {
+  const notebookCount = fullTabs.filter(
+    (t) => t.notebook === notebook
+  ).length
+  if (reorderedDisplayed.length !== notebookCount) return fullTabs.slice()
   let displayIdx = 0
-  return fullTabs.map((t) => {
-    if (t.notebook === notebook) {
-      if (displayIdx >= reorderedDisplayed.length) return t
-      return reorderedDisplayed[displayIdx++]
-    }
-    return t
-  })
+  return fullTabs.map((t) =>
+    t.notebook === notebook ? reorderedDisplayed[displayIdx++] : t
+  )
 }
