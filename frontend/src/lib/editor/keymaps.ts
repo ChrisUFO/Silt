@@ -1,5 +1,6 @@
 import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
+import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { TextSelection } from '@tiptap/pm/state'
 
 // SiltBlockKeymaps — outliner keyboard semantics for the TipTap editor.
@@ -15,7 +16,30 @@ import { TextSelection } from '@tiptap/pm/state'
 // The extension reads the indent/unindent hotkeys live from the settings store
 // so users can remap or disable them from Settings → General.
 
-const BLOCK_TYPES = ['taskBlock', 'noteBlock', 'headerBlock']
+/** The three Silt block node types, in canonical order. */
+export const BLOCK_TYPES = ['taskBlock', 'noteBlock', 'headerBlock'] as const
+
+/**
+ * Walk up from the editor's current selection to the nearest enclosing block
+ * node (noteBlock / taskBlock / headerBlock). Returns the block node and its
+ * depth, or `null` if the selection is not inside a block.
+ *
+ * Shared by every consumer that needs "the block I'm currently in" —
+ * previously inlined 4× in TipTapEditor and 2× in HeadingLevelMenu with
+ * subtly different return shapes.
+ */
+export function findActiveBlock(
+  editor: Editor
+): { node: ProseMirrorNode; depth: number } | null {
+  const pos = editor.state.selection.$from
+  for (let d = pos.depth; d >= 1; d--) {
+    const node = pos.node(d)
+    if (BLOCK_TYPES.includes(node.type.name as (typeof BLOCK_TYPES)[number])) {
+      return { node, depth: d }
+    }
+  }
+  return null
+}
 
 function getNextBullet(currentBullet: string): string {
   if (!currentBullet) return ''
@@ -39,52 +63,43 @@ export function convertToBlock(
   type: 'headerBlock' | 'noteBlock' | 'taskBlock',
   headerDepth?: number
 ): boolean {
-  const { selection } = editor.state
-  const pos = selection.$from
-  for (let d = pos.depth; d >= 1; d--) {
-    const node = pos.node(d)
-    if (BLOCK_TYPES.includes(node.type.name)) {
-      const baseAttrs = {
-        id: node.attrs.id,
-        depth:
-          type === 'headerBlock' ? (headerDepth ?? 1) : (node.attrs.depth ?? 0),
-        file_date: node.attrs.file_date || ''
-      }
-      if (type === 'noteBlock') {
-        editor.commands.setNode(type, { ...baseAttrs, bullet: '- ' })
-      } else if (type === 'taskBlock') {
-        editor.commands.setNode(type, {
-          ...baseAttrs,
-          status: 'TODO',
-          owner: '',
-          start_date: '',
-          due_date: '',
-          priority: 3
-        })
-      } else {
-        editor.commands.setNode(type, baseAttrs)
-      }
-      return true
-    }
+  const active = findActiveBlock(editor)
+  if (!active) return false
+  const node = active.node
+  const baseAttrs = {
+    id: node.attrs.id,
+    depth:
+      type === 'headerBlock' ? (headerDepth ?? 1) : (node.attrs.depth ?? 0),
+    file_date: node.attrs.file_date || ''
   }
-  return false
+  if (type === 'noteBlock') {
+    editor.commands.setNode(type, { ...baseAttrs, bullet: '- ' })
+  } else if (type === 'taskBlock') {
+    editor.commands.setNode(type, {
+      ...baseAttrs,
+      status: 'TODO',
+      owner: '',
+      start_date: '',
+      due_date: '',
+      priority: 3
+    })
+  } else {
+    editor.commands.setNode(type, baseAttrs)
+  }
+  return true
 }
 
 function currentBlockInfo(editor: Editor) {
-  const { selection } = editor.state
-  const pos = selection.$from
-  for (let d = pos.depth; d >= 1; d--) {
-    const node = pos.node(d)
-    if (BLOCK_TYPES.includes(node.type.name)) {
-      return {
-        node,
-        pos: pos.before(d),
-        depth: node.attrs.depth || 0,
-        index: pos.index(d)
-      }
-    }
+  const active = findActiveBlock(editor)
+  if (!active) return null
+  const { node, depth } = active
+  const pos = editor.state.selection.$from
+  return {
+    node,
+    pos: pos.before(depth),
+    depth: node.attrs.depth || 0,
+    index: pos.index(depth)
   }
-  return null
 }
 
 function setBlockDepth(
@@ -117,19 +132,13 @@ function focusBlockAt(editor: Editor, blockIndex: number): void {
 // Shared by the keymap shortcuts and TipTapEditor's slash command handler.
 export function setBlockAlign(editor: Editor, align: string): boolean {
   if (!editor || editor.isDestroyed) return false
-  const { selection } = editor.state
-  const pos = selection.$from
-  for (let d = pos.depth; d >= 1; d--) {
-    const node = pos.node(d)
-    if (node.type.name === 'taskBlock') return true // silently skip
-    if (BLOCK_TYPES.includes(node.type.name)) {
-      const nodePos = pos.before(d)
-      const tr = editor.state.tr.setNodeAttribute(nodePos, 'align', align)
-      editor.view.dispatch(tr)
-      return true
-    }
-  }
-  return false
+  const active = findActiveBlock(editor)
+  if (!active) return false
+  if (active.node.type.name === 'taskBlock') return true // silently skip
+  const nodePos = editor.state.selection.$from.before(active.depth)
+  const tr = editor.state.tr.setNodeAttribute(nodePos, 'align', align)
+  editor.view.dispatch(tr)
+  return true
 }
 
 export const SiltBlockKeymaps = Extension.create({

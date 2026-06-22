@@ -36,8 +36,8 @@
   import PluginStatusBar from './components/PluginStatusBar.svelte'
   import { setActiveLocation } from './plugins/location.svelte'
   import ToastContainer from './components/ToastContainer.svelte'
+  import Onboarding from './components/Onboarding.svelte'
   import { pushNotification } from './notifications/store.svelte'
-  import logo from './assets/logo.svg'
   import {
     openPage as openPageState,
     closeTab as closeTabState,
@@ -50,6 +50,7 @@
     type PageRef,
     type OpenPageMode
   } from './lib/tabs'
+  import { nextView } from './lib/viewCycle'
 
   let isInitialized = $state(false)
   let loading = $state(true)
@@ -712,14 +713,8 @@
   // Ordered view cycle for the cycle_view_layout hotkey (default Alt+Tab).
   // If the current view is not in the list (e.g. a plugin view), jump to
   // 'notes' as the anchor.
-  const VIEW_CYCLE = ['notes', 'tags', 'agenda', 'calendar', 'kanban'] as const
   function cycleView() {
-    const idx = VIEW_CYCLE.indexOf(activeView as (typeof VIEW_CYCLE)[number])
-    if (idx === -1) {
-      activeView = 'notes'
-    } else {
-      activeView = VIEW_CYCLE[(idx + 1) % VIEW_CYCLE.length]
-    }
+    activeView = nextView(activeView)
   }
 
   // Order-independent string-array equality (the disabled list is a set
@@ -751,34 +746,12 @@
 <main
   class="w-full h-full flex flex-col bg-void text-text-primary overflow-hidden font-body-md"
 >
-  {#if loading}
-    <div class="onboarding-container">
-      <div class="text-text-muted animate-pulse text-lg font-headline-md">
-        Initializing Silt Core…
-      </div>
-    </div>
-  {:else if !isInitialized}
-    <!-- First run onboarding -->
-    <div class="onboarding-container select-none">
-      <div class="onboarding-card">
-        <img
-          src={logo}
-          alt="Silt Logo"
-          class="onboarding-logo animate-spin-slow"
-        />
-        <h1 class="onboarding-title font-headline-lg">Silt</h1>
-        <p class="onboarding-description font-body-md">
-          Capture ideas. Connect them. Get work done. A fast, private workspace
-          for your notes and tasks.
-        </p>
-        <button
-          class="onboarding-btn font-label-sm-bold"
-          onclick={handleSelectFolder}
-        >
-          Initialize Workspace Folder
-        </button>
-      </div>
-    </div>
+  {#if loading || !isInitialized}
+    <Onboarding
+      {loading}
+      initialized={isInitialized}
+      onSelectFolder={handleSelectFolder}
+    />
   {:else}
     <TitleBar
       bind:activeView
@@ -850,7 +823,11 @@
               ? { ...t, section: toSection }
               : t
           )
-          if (activeNotebook === nb && activePage === page && activeSection === fromSection) {
+          if (
+            activeNotebook === nb &&
+            activePage === page &&
+            activeSection === fromSection
+          ) {
             activeSection = toSection
           }
           schedulePersistTabs()
@@ -876,7 +853,8 @@
             onCloseTab={handleCloseTab}
             onPromoteTab={handlePromoteTab}
             onReorderTab={handleReorderTab}
-            showDirtyIndicators={settings.config?.ui?.show_tab_dirty_indicators !== false}
+            showDirtyIndicators={settings.config?.ui
+              ?.show_tab_dirty_indicators !== false}
           />
           {#if notesReady}
             <div
@@ -1020,17 +998,3 @@
 
 <ToastContainer />
 <PluginStatusBar />
-
-<style>
-  .animate-spin-slow {
-    animation: spin 8s linear infinite;
-  }
-  @keyframes spin {
-    from {
-      transform: rotate(0deg);
-    }
-    to {
-      transform: rotate(360deg);
-    }
-  }
-</style>

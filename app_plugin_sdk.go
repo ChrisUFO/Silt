@@ -283,7 +283,7 @@ func (a *App) PluginUpdateTaskMeta(blockID string, pin int, progress int) (bool,
 				return
 			}
 
-			frontmatter, body := splitFrontmatter(string(contentBytes))
+			frontmatter, body := parser.SplitFrontmatter(string(contentBytes))
 			if frontmatter == "" {
 				// Use the date from the parsed metadata (derived from the
 				// file's mtime or frontmatter fallback), NOT time.Now(), so

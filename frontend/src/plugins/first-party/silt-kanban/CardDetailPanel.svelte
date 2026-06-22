@@ -1,30 +1,8 @@
 <script lang="ts">
   import { fly } from 'svelte/transition'
   import type { PluginContext, TaskStatus } from '../../sdk'
-
-  // Mirrors the KanbanCard shape from Kanban.svelte. Re-declared (and
-  // exported) here so the panel is self-documenting and type-checks without
-  // a circular import back into the parent component.
-  export interface KanbanCard {
-    id: string
-    notebook: string
-    section: string
-    page: string
-    file_date: string
-    clean_content: string
-    status: TaskStatus
-    owner: string
-    start_date: string
-    due_date: string
-    priority: number
-    pinned: boolean
-    progress: number
-    comments_count: number
-    links_count: number
-    // Pipe-delimited raw tag paths from a GROUP_CONCAT subquery; absent
-    // when the card has no tags.
-    tags?: string
-  }
+  import type { KanbanCard } from './types'
+  import { PRIORITY_LABELS, laneLabel } from './types'
 
   interface Props {
     card: KanbanCard | null
@@ -38,15 +16,6 @@
 
   let { card, ctx, onClose, onMetaChanged }: Props = $props()
 
-  const PRIORITY_LABELS: Record<number, string> = {
-    1: 'Critical',
-    2: 'Normal',
-    3: 'Low'
-  }
-
-  function statusLabel(s: TaskStatus): string {
-    return s === 'TODO' ? 'To Do' : s === 'DOING' ? 'In Progress' : 'Done'
-  }
   function statusChipClass(s: TaskStatus): string {
     if (s === 'TODO') return 'text-text-muted border-border-muted bg-surface'
     if (s === 'DOING')
@@ -237,7 +206,7 @@
                   >radio_button_checked</span
                 >
               {/if}
-              {statusLabel(card.status)}
+              {laneLabel(card.status)}
             </dd>
           </div>
           <div class="flex items-center justify-between">

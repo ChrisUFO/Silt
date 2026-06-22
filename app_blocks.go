@@ -143,7 +143,7 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 				return
 			}
 
-			frontmatter, body := splitFrontmatter(string(contentBytes))
+			frontmatter, body := parser.SplitFrontmatter(string(contentBytes))
 			if frontmatter == "" {
 				today := time.Now().Format("2006-01-02")
 				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(today))
@@ -334,7 +334,7 @@ func (a *App) MutateBlock(blockID, newText string) error {
 				return
 			}
 
-			frontmatter, body := splitFrontmatter(string(contentBytes))
+			frontmatter, body := parser.SplitFrontmatter(string(contentBytes))
 			if frontmatter == "" {
 				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(time.Now().Format("2006-01-02")))
 			}

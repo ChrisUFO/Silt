@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Editor } from 'svelte-tiptap'
+  import { findActiveBlock } from '../../lib/editor/keymaps'
 
   interface Props {
     editor: Editor | null
@@ -57,31 +58,26 @@
 
   function currentLabel(): string {
     if (!editor) return 'Note'
-    const pos = editor.state.selection.$from
-    for (let d = pos.depth; d >= 1; d--) {
-      const node = pos.node(d)
-      if (node.type.name === 'headerBlock') {
-        const depth = node.attrs.depth || 1
-        return `H${depth}`
-      }
-      if (node.type.name === 'taskBlock') return 'Task'
-      if (node.type.name === 'noteBlock') return 'Note'
+    const active = findActiveBlock(editor)
+    if (!active) return 'Note'
+    const node = active.node
+    if (node.type.name === 'headerBlock') {
+      const depth = node.attrs.depth || 1
+      return `H${depth}`
     }
+    if (node.type.name === 'taskBlock') return 'Task'
     return 'Note'
   }
 
   function isCurrent(opt: Option): boolean {
     if (!editor) return false
-    const pos = editor.state.selection.$from
-    for (let d = pos.depth; d >= 1; d--) {
-      const node = pos.node(d)
-      if (opt.type === 'headerBlock' && node.type.name === 'headerBlock') {
-        return (node.attrs.depth || 1) === (opt.depth || 1)
-      }
-      if (opt.type === node.type.name) return true
-      return false
+    const active = findActiveBlock(editor)
+    if (!active) return false
+    const node = active.node
+    if (opt.type === 'headerBlock' && node.type.name === 'headerBlock') {
+      return (node.attrs.depth || 1) === (opt.depth || 1)
     }
-    return false
+    return opt.type === node.type.name
   }
 
   function select(opt: Option): void {

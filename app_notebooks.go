@@ -669,7 +669,7 @@ func (a *App) writePageFileLocked(filePath, source, notebook, section, page stri
 		return fmt.Errorf("failed to read existing file: %w", err)
 	}
 
-	frontmatter, body := splitFrontmatter(string(contentBytes))
+	frontmatter, body := parser.SplitFrontmatter(string(contentBytes))
 
 	if frontmatter == "" {
 		today := time.Now().Format("2006-01-02")

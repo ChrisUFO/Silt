@@ -3,12 +3,14 @@
   import { cubicOut } from 'svelte/easing'
   import { untrack, onDestroy } from 'svelte'
   import type { PluginContext, PluginManifest, TaskStatus } from '../../sdk'
-  import { plusDaysISO } from '../../sdk'
   import { settings, updatePluginSetting } from '../../../settings/store.svelte'
   import { measureFrameBudget } from '../../../lib/perf/frame-budget'
   import { EventsOn } from '../../../../wailsjs/runtime/runtime.js'
-  import FilterBar, { type KanbanFilters } from './FilterBar.svelte'
-  import CardDetailPanel, { type KanbanCard } from './CardDetailPanel.svelte'
+  import FilterBar from './FilterBar.svelte'
+  import CardDetailPanel from './CardDetailPanel.svelte'
+  import type { KanbanCard, KanbanFilters, Scope } from './types'
+  import { PRIORITY_LABELS, laneLabel, priorityClass } from './types'
+  import { buildQuery } from './query'
 
   interface Props {
     ctx: PluginContext
@@ -16,8 +18,6 @@
   }
 
   let { ctx, manifest }: Props = $props()
-
-  type Scope = 'vault' | 'notebook' | 'section' | 'page'
 
   const ALL_STATUSES: TaskStatus[] = ['TODO', 'DOING', 'DONE']
   const SCOPES: Scope[] = ['vault', 'notebook', 'section', 'page']
@@ -235,84 +235,6 @@
     }
   })
 
-  function buildQuery(
-    s: Scope,
-    f: KanbanFilters
-  ): { sql: string; params: unknown[] } {
-    // t.pinned is a tri-state cache column (#135): NULL (no [pin::] token),
-    // 0 ([pin:: false]), or 1 ([pin:: true]). The Kanban chrome treats only
-    // `1` as "pinned"; NULL and 0 are both not-pinned, so the lossy null/0
-    // merge is intentional here (the board does not need to distinguish
-    // explicit-unpinned from no-token). The parser/renderer preserve the full
-    // tri-state round-trip regardless.
-    const baseSelect = `SELECT b.id, b.notebook, b.section, b.page, b.file_date, b.line_number,
-           b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority,
-           t.pinned, t.progress, t.comments_count, t.links_count,
-           (SELECT GROUP_CONCAT(raw_path, '|') FROM tags WHERE block_id = b.id) AS tags
-    FROM blocks b JOIN tasks t ON b.id = t.block_id`
-    const orderBy = ` ORDER BY t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC`
-    const where: string[] = []
-    const params: unknown[] = []
-    switch (s) {
-      case 'vault':
-        break
-      case 'notebook':
-        where.push('b.notebook = ?')
-        params.push(ctx.activeNotebook)
-        break
-      case 'section':
-        where.push('b.notebook = ?', 'b.section = ?')
-        params.push(ctx.activeNotebook, ctx.activeSection)
-        break
-      case 'page':
-        where.push('b.notebook = ?', 'b.section = ?', 'b.page = ?')
-        params.push(ctx.activeNotebook, ctx.activeSection, ctx.activePage)
-        break
-    }
-    // Active filters contribute parameterised WHERE fragments so the board
-    // narrows in place (the scope + filter effects re-run reload()).
-    if (f.owners.length) {
-      where.push(`t.owner IN (${f.owners.map(() => '?').join(', ')})`)
-      params.push(...f.owners)
-    }
-    if (f.priorities.length) {
-      where.push(`t.priority IN (${f.priorities.map(() => '?').join(', ')})`)
-      params.push(...f.priorities)
-    }
-    // Due-date quick-pick clauses. Compare against the LOCAL day (ctx.today)
-    // via bound params, NOT SQLite's date('now') which is UTC and produced
-    // off-by-one results near local midnight (#118). due_date is stored as
-    // YYYY-MM-DD text, so lexicographic comparison against the param matches
-    // the old date('now') semantics exactly — only the date source changed.
-    if (f.dueDate) {
-      const today = ctx.today
-      if (f.dueDate === 'overdue') {
-        where.push('t.due_date < ?')
-        params.push(today)
-      } else if (f.dueDate === 'today') {
-        where.push('t.due_date = ?')
-        params.push(today)
-      } else if (f.dueDate === 'week') {
-        where.push('t.due_date BETWEEN ? AND ?')
-        params.push(today, plusDaysISO(today, 7))
-      } else if (f.dueDate === 'none') {
-        where.push("(t.due_date IS NULL OR t.due_date = '')")
-      }
-    }
-    if (f.tags.length) {
-      where.push(
-        `b.id IN (SELECT block_id FROM tags WHERE raw_path IN (${f.tags
-          .map(() => '?')
-          .join(', ')}))`
-      )
-      params.push(...f.tags)
-    }
-    const whereClause = where.length
-      ? ' WHERE ' + where.join(' AND ')
-      : ' WHERE 1=1'
-    return { sql: baseSelect + whereClause + orderBy, params }
-  }
-
   // Monotonic token so concurrent reload() calls can identify their own
   // response vs a later one. Without this, a slow page-scope query landing
   // after a fast vault-scope query would silently overwrite the fresh data.
@@ -323,7 +245,12 @@
     loading = true
     errorMsg = ''
     try {
-      const { sql, params } = buildQuery(scope, filters)
+      const { sql, params } = buildQuery(scope, filters, {
+        activeNotebook: ctx.activeNotebook,
+        activeSection: ctx.activeSection,
+        activePage: ctx.activePage,
+        today: ctx.today
+      })
       const { rows, truncated: wasTruncated } = await ctx.sqliteQuery(
         sql,
         params
@@ -636,25 +563,6 @@
       e.preventDefault()
       selectedCard = card
     }
-  }
-
-  const PRIORITY_LABELS: Record<number, string> = {
-    1: 'Critical',
-    2: 'Normal',
-    3: 'Low'
-  }
-  function priorityClass(p: number): string {
-    if (p <= 1) return 'text-error border-error/20 bg-error/10'
-    if (p === 2)
-      return 'text-accent-primary-start border-accent-primary-start/20 bg-accent-primary-glow'
-    return 'text-text-muted border-border-muted bg-surface'
-  }
-  // Standard statuses get friendly labels; custom lanes show their raw name.
-  function laneLabel(s: string): string {
-    if (s === 'TODO') return 'To Do'
-    if (s === 'DOING') return 'In Progress'
-    if (s === 'DONE') return 'Done'
-    return s
   }
 </script>
 

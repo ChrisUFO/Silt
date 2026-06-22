@@ -399,7 +399,7 @@ func (a *App) removeBlockFromSourcePage(filePath, source, notebook, section, pag
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read source file: %w", err)
 	}
-	frontmatter, body := splitFrontmatter(string(contentBytes))
+	frontmatter, body := parser.SplitFrontmatter(string(contentBytes))
 	if frontmatter == "" {
 		frontmatter = fmt.Sprintf("---\nnotebook: %q\nsection: %q\npage: %q\ndate: %q\ntags: []\n---\n",
 			notebook, section, page, time.Now().Format("2006-01-02"))

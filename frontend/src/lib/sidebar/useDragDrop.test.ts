@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { DragDropManager } from './useDragDrop'
-import type { DragDropDeps, NavSection } from './useDragDrop'
+import type { DragDropDeps } from './useDragDrop'
+import type { NavSection } from './types'
 import { NavOrderManager } from './navOrder'
 
 // Mock the Wails IPC bindings.
@@ -14,11 +15,17 @@ function makeSections(): NavSection[] {
   return [
     {
       name: 'Journal',
-      pages: [{ name: '2026-06-22' }, { name: '2026-06-21' }]
+      pages: [
+        { name: '2026-06-22', count: 0 },
+        { name: '2026-06-21', count: 0 }
+      ]
     },
     {
       name: 'Projects',
-      pages: [{ name: 'Roadmap' }, { name: 'Backlog' }]
+      pages: [
+        { name: 'Roadmap', count: 0 },
+        { name: 'Backlog', count: 0 }
+      ]
     }
   ]
 }
@@ -38,9 +45,7 @@ function makeDeps(overrides: Partial<DragDropDeps> = {}): DragDropDeps {
   }
 }
 
-function makeDragEvent(
-  overrides: Partial<DragEvent> = {}
-): DragEvent {
+function makeDragEvent(overrides: Partial<DragEvent> = {}): DragEvent {
   return {
     preventDefault: vi.fn(),
     stopPropagation: vi.fn(),
@@ -75,7 +80,10 @@ describe('DragDropManager', () => {
       section: undefined
     })
     expect(e.dataTransfer!.effectAllowed).toBe('move')
-    expect(e.dataTransfer!.setData).toHaveBeenCalledWith('text/plain', 'Journal')
+    expect(e.dataTransfer!.setData).toHaveBeenCalledWith(
+      'text/plain',
+      'Journal'
+    )
   })
 
   it('handleDragOver sets dropTarget for same-level', () => {
@@ -139,7 +147,12 @@ describe('DragDropManager', () => {
     dnd.handleDragOver(e, 'section', 'Projects')
     await dnd.handleDrop(e, 'section', 'Projects', 'Work', 'Projects')
 
-    expect(MovePage).toHaveBeenCalledWith('Work', 'Journal', 'Projects', '2026-06-22')
+    expect(MovePage).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'Projects',
+      '2026-06-22'
+    )
     expect(deps.onMoved).toHaveBeenCalled()
     expect(deps.onPageMoved).toHaveBeenCalledWith(
       'Work',
@@ -158,6 +171,38 @@ describe('DragDropManager', () => {
     dnd.handleDragStart(e, 'page', '2026-06-22', 'Journal')
     dnd.handleDragOver(e, 'section', 'Journal')
     await dnd.handleDrop(e, 'section', 'Journal', 'Work', 'Journal')
+
+    expect(MovePage).not.toHaveBeenCalled()
+  })
+
+  it('handleDrop page→__root__ moves the page out of its section', async () => {
+    const { MovePage } = await import('../../../wailsjs/go/main/App.js')
+    const deps = makeDeps()
+    const dnd = new DragDropManager(deps)
+    const e = makeDragEvent()
+
+    dnd.handleDragStart(e, 'page', '2026-06-22', 'Journal')
+    // Root dropzone calls handleDrop with targetName='__root__' + section='' (#177).
+    await dnd.handleDrop(e, 'section', '__root__', 'Work', '')
+
+    expect(MovePage).toHaveBeenCalledWith('Work', 'Journal', '', '2026-06-22')
+    expect(deps.onPageMoved).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      '',
+      '2026-06-22'
+    )
+  })
+
+  it('handleDrop page→__root__ is a no-op when the page is already at root', async () => {
+    const { MovePage } = await import('../../../wailsjs/go/main/App.js')
+    const deps = makeDeps()
+    const dnd = new DragDropManager(deps)
+    const e = makeDragEvent()
+
+    // dragItem.section === '' → page already at root.
+    dnd.handleDragStart(e, 'page', '2026-06-22', '')
+    await dnd.handleDrop(e, 'section', '__root__', 'Work', '')
 
     expect(MovePage).not.toHaveBeenCalled()
   })

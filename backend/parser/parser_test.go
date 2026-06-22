@@ -726,7 +726,7 @@ func TestRenderFileContent_RoundTripIdentity(t *testing.T) {
 				t.Fatalf("first parse: %v", err)
 			}
 			// First render: no body to preserve (all content is in `first`).
-			fm, _ := splitFrontmatterForTest(tc.src)
+			fm, _ := SplitFrontmatter(tc.src)
 			rendered := RenderFileContent(first, "", fm, 4)
 			second, _, _, _, err := ParseFileContent(rendered, meta.Notebook, meta.Section, meta.Page, meta.Date, 4)
 			if err != nil {
@@ -751,7 +751,7 @@ func TestRenderFileContent_RoundTripIdentity(t *testing.T) {
 			"```go\nfunc main() {}\n```\n" +
 			"- After code <!-- id: bbbbbbbb-2222-2222-2222-111111111111 -->\n"
 		first, _, _, _, _ := ParseFileContent(src, "NB", "", "PG", "2026-06-14", 4)
-		fm, body := splitFrontmatterForTest(src)
+		fm, body := SplitFrontmatter(src)
 		rendered := RenderFileContent(first, body, fm, 4)
 		if !strings.Contains(rendered, "```go") || !strings.Contains(rendered, "func main()") {
 			t.Errorf("code fence was dropped from rendered output:\n%s", rendered)
@@ -774,7 +774,7 @@ func TestRenderFileContent_DeletedBlockDropped(t *testing.T) {
 			kept = append(kept, b)
 		}
 	}
-	fm, body := splitFrontmatterForTest(src)
+	fm, body := SplitFrontmatter(src)
 	out := RenderFileContent(kept, body, fm, 4)
 	if strings.Contains(out, "Drop me") {
 		t.Errorf("deleted managed block was kept:\n%s", out)
@@ -818,21 +818,6 @@ func TestRenderFileContent_ScaffoldSnapshot(t *testing.T) {
 	if reparsed[1].Status != "TODO" || reparsed[1].Owner != "Chris" {
 		t.Errorf("task fields not preserved: %+v", reparsed[1])
 	}
-}
-
-// splitFrontmatterForTest mirrors app.splitFrontmatter for the parser tests
-// (which live in a different package and can't call the unexported helper).
-func splitFrontmatterForTest(content string) (frontmatter, body string) {
-	lines := strings.Split(content, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return "", content
-	}
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			return strings.Join(lines[:i+1], "\n") + "\n", strings.Join(lines[i+1:], "\n")
-		}
-	}
-	return "", content
 }
 
 // --- Phase 5c: symlink loop handling (#32) ---

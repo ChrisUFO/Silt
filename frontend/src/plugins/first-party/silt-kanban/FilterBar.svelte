@@ -1,14 +1,6 @@
 <script lang="ts">
   import { fly } from 'svelte/transition'
-
-  // Shared filter shape for the Kanban board. Persisted in
-  // config.yaml under plugins.plugin_settings.silt-kanban.filters.
-  export interface KanbanFilters {
-    owners: string[]
-    priorities: number[]
-    dueDate: '' | 'overdue' | 'today' | 'week' | 'none'
-    tags: string[]
-  }
+  import type { KanbanFilters } from './types'
 
   interface Props {
     filters: KanbanFilters
