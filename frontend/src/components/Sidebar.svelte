@@ -176,7 +176,7 @@
       await loadNavigation()
       await navOrderManager.load()
     },
-    onPageMoved
+    onPageMoved: (nb, from, to, page) => onPageMoved?.(nb, from, to, page)
   })
 
   function handleDragStart(e: DragEvent, level: string, name: string, section?: string) {

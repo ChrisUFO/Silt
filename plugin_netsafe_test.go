@@ -70,6 +70,9 @@ func TestRedirectSafeHeaders_AllowlistIntegrity(t *testing.T) {
 			t.Errorf("redirectSafeHeaders[%q] = %v, want %v", k, redirectSafeHeaders[k], v)
 		}
 	}
+	if len(redirectSafeHeaders) != len(expected) {
+		t.Errorf("redirectSafeHeaders has %d entries, want exactly %d — unexpected key added or removed", len(redirectSafeHeaders), len(expected))
+	}
 	for _, h := range []string{"authorization", "cookie", "x-api-key", "x-forwarded-for"} {
 		if redirectSafeHeaders[h] {
 			t.Errorf("redirectSafeHeaders[%q] should be false (sensitive header)", h)

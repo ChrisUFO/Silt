@@ -535,12 +535,12 @@
     getSection: () => section,
     getPage: () => page,
     getDelay: () => Math.max(settings.config?.editor?.auto_save_delay_ms ?? 500, 50),
-    onUpdate,
+    onUpdate: (blocks) => onUpdate(blocks),
     onStateChange: (dirty, error) => {
       unsavedChanges = dirty
       lastSaveError = error
     },
-    onSaveStateChange
+    onSaveStateChange: (state) => onSaveStateChange?.(state)
   })
 
   function triggerAutoSave(): void { autosave.trigger() }
@@ -723,7 +723,7 @@
     getSection: () => section,
     getPage: () => page,
     getEditor: () => editorInstance,
-    onBlockFocus
+    onBlockFocus: (id, ancestors) => onBlockFocus?.(id, ancestors)
   })
 
   function acquireFocus(): void { void focusLock.acquire() }
