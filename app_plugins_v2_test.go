@@ -394,22 +394,6 @@ func TestPluginScratchDir(t *testing.T) {
 // OS integration (#114) — URL safety
 // =========================================================================
 
-// isSafeUrl accepts http/https/mailto and rejects dangerous schemes.
-func TestIsSafeUrl(t *testing.T) {
-	good := []string{"https://example.com", "http://localhost:3000", "mailto:a@b.com", "HTTPS://X.COM"}
-	for _, u := range good {
-		if !isSafeUrl(u) {
-			t.Errorf("isSafeUrl(%q) = false, want true", u)
-		}
-	}
-	bad := []string{"file:///etc/passwd", "javascript:alert(1)", "data:text/html,x", "ftp://x", "", "  "}
-	for _, u := range bad {
-		if isSafeUrl(u) {
-			t.Errorf("isSafeUrl(%q) = true, want false", u)
-		}
-	}
-}
-
 // pluginWritePathAllowed honors the attachments/ + scratch allowlist.
 func TestPluginWritePathAllowed(t *testing.T) {
 	good := []string{

@@ -16,10 +16,10 @@
     DeletePage,
     DeleteSection,
     DeleteNotebook,
-    GetNavOrder,
-    SetNavOrder,
     MovePage
   } from '../../wailsjs/go/main/App.js'
+  import { NavOrderManager, sortByName } from '../lib/sidebar/navOrder'
+  import { DragDropManager } from '../lib/sidebar/useDragDrop'
 
   interface NavPage {
     name: string
@@ -159,187 +159,37 @@
     }, 4000)
   }
 
-  function sortByName<T extends { name: string }>(
-    items: T[],
-    order: string[] | undefined
-  ): T[] {
-    if (!order || order.length === 0) return items
-    const orderMap = new Map(order.map((n, i) => [n, i]))
-    return [...items].sort((a, b) => {
-      const ai = orderMap.has(a.name) ? orderMap.get(a.name)! : Infinity
-      const bi = orderMap.has(b.name) ? orderMap.get(b.name)! : Infinity
-      if (ai !== bi) return ai - bi
-      return a.name.localeCompare(b.name)
-    })
-  }
+  const navOrderManager = new NavOrderManager({
+    onStateChange: (s) => { navOrder = s }
+  })
 
-  async function loadNavOrder() {
-    try {
-      const order = await GetNavOrder()
-      navOrder = {
-        notebooks: order.notebooks ?? [],
-        sections: Object.fromEntries(Object.entries(order.sections ?? {})),
-        pages: Object.fromEntries(Object.entries(order.pages ?? {}))
-      }
-    } catch {
-      // Pre-vault or config not loaded — alphabetical fallback
-    }
-  }
+  async function loadNavOrder() { await navOrderManager.load() }
 
-  async function persistSectionOrder(notebook: string, sections: string[]) {
-    navOrder.sections[notebook] = sections
-    try {
-      await SetNavOrder({
-        notebooks: navOrder.notebooks,
-        sections: navOrder.sections,
-        pages: navOrder.pages
-      })
-    } catch (e) {
-      console.error('SetNavOrder failed:', e)
-    }
-  }
+  const dnd = new DragDropManager({
+    getActiveNotebook: () => activeNotebook,
+    getActiveNotebookSections: () => activeNotebookObj?.sections ?? [],
+    navOrder: navOrderManager,
+    onDragItemChange: (item) => { dragItem = item },
+    onDropTargetChange: (target) => { dropTarget = target },
+    onError: showDndError,
+    onMoved: async () => {
+      await loadNavigation()
+      await navOrderManager.load()
+    },
+    onPageMoved: (nb, from, to, page) => onPageMoved?.(nb, from, to, page)
+  })
 
-  async function persistPageOrder(sectionKey: string, pages: string[]) {
-    navOrder.pages[sectionKey] = pages
-    try {
-      await SetNavOrder({
-        notebooks: navOrder.notebooks,
-        sections: navOrder.sections,
-        pages: navOrder.pages
-      })
-    } catch (e) {
-      console.error('SetNavOrder failed:', e)
-    }
+  function handleDragStart(e: DragEvent, level: string, name: string, section?: string) {
+    dnd.handleDragStart(e, level, name, section)
   }
-
-  // Drag-and-drop handlers (#68)
-  function handleDragStart(
-    e: DragEvent,
-    level: string,
-    name: string,
-    section?: string
-  ) {
-    dragItem = { level, name, section }
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move'
-      e.dataTransfer.setData('text/plain', name)
-    }
-  }
-
   function handleDragOver(e: DragEvent, level: string, name: string) {
-    if (!dragItem) return
-    // Same-level reorder (section↔section, page↔page) is always allowed.
-    // Page→section drop (move into section, #177) is also allowed so users
-    // can drag a page onto a section header to reparent it.
-    if (dragItem.level !== level && !(dragItem.level === 'page' && level === 'section')) {
-      return
-    }
-    e.preventDefault()
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
-    // Determine if dropping before or after based on mouse position
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    const before = e.clientY < rect.top + rect.height / 2
-    dropTarget = { level, name, before }
+    dnd.handleDragOver(e, level, name)
   }
-
-  function handleDragLeave() {
-    dropTarget = null
+  function handleDragLeave() { dnd.handleDragLeave() }
+  async function handleDrop(e: DragEvent, level: string, targetName: string, notebook?: string, section?: string) {
+    await dnd.handleDrop(e, level, targetName, notebook, section)
   }
-
-  async function handleDrop(
-    e: DragEvent,
-    level: string,
-    targetName: string,
-    notebook?: string,
-    section?: string
-  ) {
-    e.preventDefault()
-    e.stopPropagation()
-    if (!dragItem) {
-      dropTarget = null
-      return
-    }
-    // Allow same-level reorder and page→section cross-section move (#177).
-    const isPageToSection = dragItem.level === 'page' && level === 'section'
-    if (dragItem.level !== level && !isPageToSection) {
-      dragItem = null
-      dropTarget = null
-      return
-    }
-    if (dragItem.name === targetName && !isPageToSection) {
-      dragItem = null
-      dropTarget = null
-      return
-    }
-
-    if (isPageToSection && section !== undefined) {
-      // Page dropped onto a section header → cross-section move (#177).
-      // `section` here is the sectionKey (full path) passed by
-      // SidebarSection's ondrop handler.
-      const fromSection = dragItem.section ?? ''
-      const toSection = section
-      if (fromSection === toSection) {
-        dragItem = null
-        dropTarget = null
-        return
-      }
-      try {
-        await MovePage(notebook ?? activeNotebook, fromSection, toSection, dragItem.name)
-        await loadNavigation()
-        await loadNavOrder()
-        onPageMoved?.(notebook ?? activeNotebook, fromSection, toSection, dragItem.name)
-      } catch (err) {
-        showDndError(
-          err instanceof Error ? err.message : 'Failed to move page'
-        )
-      }
-    } else if (level === 'section' && notebook) {
-      const sorted = sortByName(
-        activeNotebookObj?.sections ?? [],
-        navOrder.sections[notebook]
-      )
-      const names = sorted.map((s) => s.name)
-      const fromIdx = names.indexOf(dragItem.name)
-      const toIdx = names.indexOf(targetName)
-      if (fromIdx === -1 || toIdx === -1) {
-        dragItem = null
-        dropTarget = null
-        return
-      }
-      names.splice(fromIdx, 1)
-      const insertAt = dropTarget?.before
-        ? names.indexOf(targetName)
-        : names.indexOf(targetName) + 1
-      names.splice(insertAt, 0, dragItem.name)
-      persistSectionOrder(notebook, names)
-    } else if (level === 'page' && section) {
-      const sec = activeNotebookObj?.sections.find((s) => s.name === section)
-      const sectionKey = `${notebook ?? activeNotebook}/${section}`
-      const sorted = sortByName(sec?.pages ?? [], navOrder.pages[sectionKey])
-      const names = sorted.map((p) => p.name)
-      const fromIdx = names.indexOf(dragItem.name)
-      const toIdx = names.indexOf(targetName)
-      if (fromIdx === -1 || toIdx === -1) {
-        dragItem = null
-        dropTarget = null
-        return
-      }
-      names.splice(fromIdx, 1)
-      const insertAt = dropTarget?.before
-        ? names.indexOf(targetName)
-        : names.indexOf(targetName) + 1
-      names.splice(insertAt, 0, dragItem.name)
-      persistPageOrder(sectionKey, names)
-    }
-
-    dragItem = null
-    dropTarget = null
-  }
-
-  function handleDragEnd() {
-    dragItem = null
-    dropTarget = null
-  }
+  function handleDragEnd() { dnd.handleDragEnd() }
 
   // Expanded section names (within the active notebook). The active section is
   // always expanded so the active path stays visible (spatial memory).
@@ -739,9 +589,9 @@
   >
     <!-- Notebook selector -->
     <div class="px-1 mb-3 relative">
-      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div
         onclick={() => (showNotebookDropdown = !showNotebookDropdown)}
+        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showNotebookDropdown = !showNotebookDropdown } }}
         class="flex items-center gap-2 cursor-pointer group py-1.5 rounded hover:bg-hover transition-colors"
         role="button"
         tabindex="0"
