@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,6 +10,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+)
+
+// maxPluginNetworkLogBytes bounds a single per-plugin on-disk network.log so
+// it cannot grow unbounded across a long session. When exceeded, the log is
+// truncated to the most recent maxPluginNetworkLogLines.
+const (
+	maxPluginNetworkLogBytes = 1 * 1024 * 1024 // 1 MB
+	maxPluginNetworkLogLines = 200             // keep-lines on truncation
 )
 
 // networkAuditMu guards the in-memory network audit log. The log is a simple
@@ -44,6 +53,49 @@ func truncateNetworkLog(path string, keepLines int) {
 	_ = os.WriteFile(path, []byte(strings.Join(kept, "\n")+"\n"), 0o600)
 }
 
+// appendNetworkAuditLine writes one entry to the per-plugin on-disk log file.
+// Extracted from auditNetwork's pre-#235 inline path; the I/O is identical.
+// Best-effort — errors are silently ignored (the audit log is diagnostic).
+func appendNetworkAuditLine(vaultPath string, entry *NetworkAuditEntry) {
+	if vaultPath == "" {
+		return
+	}
+	logPath := filepath.Join(vaultPath, ".system", "plugins", entry.Plugin, "network.log")
+	line := fmt.Sprintf("%s %s %s %d %s\n", entry.At, entry.Method, entry.Host, entry.Status, entry.Plugin)
+	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
+	if info, err := os.Stat(logPath); err == nil && info.Size() > maxPluginNetworkLogBytes {
+		truncateNetworkLog(logPath, maxPluginNetworkLogLines)
+	}
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err == nil {
+		_, _ = f.WriteString(line)
+		_ = f.Close()
+	}
+}
+
+// clearNetworkAuditFiles empties every per-plugin on-disk network.log under
+// the vault's .system/plugins/ tree. Extracted from ClearNetworkAudit's
+// pre-#235 inline path; best-effort (errors silently ignored).
+func clearNetworkAuditFiles(vaultPath string) {
+	if vaultPath == "" {
+		return
+	}
+	pluginsDir := filepath.Join(vaultPath, ".system", "plugins")
+	entries, err := os.ReadDir(pluginsDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		logPath := filepath.Join(pluginsDir, e.Name(), "network.log")
+		if _, err := os.Stat(logPath); err == nil {
+			_ = os.WriteFile(logPath, []byte{}, 0o600)
+		}
+	}
+}
+
 // GetNetworkAudit returns the in-memory plugin network audit log (#115).
 func (a *App) GetNetworkAudit() ([]NetworkAuditEntry, error) {
 	networkAuditMu.Lock()
@@ -55,30 +107,31 @@ func (a *App) GetNetworkAudit() ([]NetworkAuditEntry, error) {
 
 // ClearNetworkAudit empties the in-memory audit log AND truncates the on-disk
 // per-plugin network.log files so a clear is durable across restarts (#157).
-// The on-disk truncation runs under the same lock auditNetwork holds while
-// appending, so a concurrent fetch cannot interleave a fresh line into a file
-// we just emptied (the I/O is bounded by the small number of plugin dirs).
+// When the background writer is running, the on-disk truncation is enqueued
+// and processed in FIFO order with concurrent auditNetwork appends so a
+// fetch that fires after the clear click cannot interleave a line into a file
+// we just emptied. When the writer is not running (tests, pre-initialize),
+// the truncation runs inline — the pre-#235 behavior.
 func (a *App) ClearNetworkAudit() error {
 	networkAuditMu.Lock()
-	defer networkAuditMu.Unlock()
 	networkAudit = nil
-	// Best-effort on-disk truncation: walk <vault>/.system/plugins/*/network.log
-	// and empty each file. Errors are non-fatal (audit log is diagnostic).
-	if a.vaultPath != "" {
-		pluginsDir := filepath.Join(a.vaultPath, ".system", "plugins")
-		entries, err := os.ReadDir(pluginsDir)
-		if err == nil {
-			for _, e := range entries {
-				if !e.IsDir() {
-					continue
-				}
-				logPath := filepath.Join(pluginsDir, e.Name(), "network.log")
-				if _, err := os.Stat(logPath); err == nil {
-					_ = os.WriteFile(logPath, []byte{}, 0o600)
-				}
-			}
-		}
+	w := currentNetworkAuditWriter()
+	if w == nil {
+		// Writer not running: truncate inline (pre-#235 path).
+		clearNetworkAuditFiles(a.vaultPath)
+		networkAuditMu.Unlock()
+		return nil
 	}
+	// Enqueue the clear so it is processed in order with concurrent
+	// auditNetwork appends. The blocking send is safe — the 256-slot buffer
+	// is never full in practice (would need >5000 RPS), and the lock is held
+	// for microseconds. The wait happens OUTSIDE the lock so concurrent
+	// fetches can keep appending to the in-memory slice while the writer
+	// truncates files.
+	op := &networkAuditOp{clear: true, done: make(chan struct{})}
+	w.ch <- op
+	networkAuditMu.Unlock()
+	<-op.done
 	return nil
 }
 
@@ -184,22 +237,133 @@ func (a *App) auditNetwork(pluginID, method, rawURL string, status int) {
 	if len(networkAudit) > 500 {
 		networkAudit = networkAudit[len(networkAudit)-500:]
 	}
-	// Persist to the on-disk log inside the same lock so concurrent
-	// PluginFetch calls cannot interleave file writes and corrupt lines.
-	// The I/O is a single WriteString — holding the lock briefly is fine.
-	const maxPluginNetworkLogBytes = 1 * 1024 * 1024 // 1 MB
-	if a.vaultPath != "" {
-		logPath := filepath.Join(a.vaultPath, ".system", "plugins", pluginID, "network.log")
-		line := fmt.Sprintf("%s %s %s %d %s\n", entry.At, entry.Method, entry.Host, entry.Status, pluginID)
-		_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
-		if info, err := os.Stat(logPath); err == nil && info.Size() > maxPluginNetworkLogBytes {
-			truncateNetworkLog(logPath, 200)
+	// Decouple the on-disk write from the lock: enqueue onto the background
+	// writer's channel (non-blocking — the 256-slot buffer handles burst rates
+	// far beyond any plugin's allotment). If the writer is not running, fall
+	// back to inline I/O so behavior is identical for tests that don't start
+	// the writer (#235).
+	w := currentNetworkAuditWriter()
+	if w != nil {
+		select {
+		case w.ch <- &networkAuditOp{entry: &entry}:
+		default:
+			log.Printf("auditNetwork: writer queue full; dropping on-disk write for plugin %q", pluginID)
 		}
-		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-		if err == nil {
-			_, _ = f.WriteString(line)
-			_ = f.Close()
-		}
+	} else {
+		appendNetworkAuditLine(a.vaultPath, &entry)
 	}
 	networkAuditMu.Unlock()
+}
+
+// --- Background audit-log writer (#235) ----------------------------------
+//
+// The writer drains on-disk audit writes off the networkAuditMu lock so
+// concurrent PluginFetch calls don't serialize on per-plugin file I/O. A
+// single goroutine processes the channel in FIFO order, preserving the
+// "no interleaved line in a file we just emptied" invariant ClearNetworkAudit
+// relies on.
+
+// networkAuditOp is one operation queued to the background writer.
+type networkAuditOp struct {
+	entry *NetworkAuditEntry // non-nil = append to on-disk log
+	clear bool               // true = truncate on-disk logs
+	done  chan struct{}      // optional: closed when this op is fully processed
+}
+
+// networkAuditWriterState is the background writer's mutable state. It is
+// non-nil while the writer goroutine is running.
+type networkAuditWriterState struct {
+	ch        chan *networkAuditOp
+	stop      chan struct{}
+	done      chan struct{} // closed when the goroutine has exited
+	vaultPath string
+}
+
+var (
+	networkAuditWriterMu sync.Mutex // guards networkAuditWriter
+	networkAuditWriter   *networkAuditWriterState
+)
+
+// currentNetworkAuditWriter returns the active writer state, or nil if the
+// writer is not running. Thread-safe; callers may use the returned pointer
+// without holding networkAuditWriterMu (the state struct is never mutated
+// after creation; only the package-level pointer is swapped).
+func currentNetworkAuditWriter() *networkAuditWriterState {
+	networkAuditWriterMu.Lock()
+	defer networkAuditWriterMu.Unlock()
+	return networkAuditWriter
+}
+
+// startNetworkAuditWriter launches the background audit-log writer goroutine
+// for the given vault. Idempotent — a second call while the writer is running
+// is a no-op. The writer drains on-disk audit writes off the networkAuditMu
+// lock so concurrent PluginFetch calls don't serialize on file I/O (#235).
+func startNetworkAuditWriter(vaultPath string) {
+	networkAuditWriterMu.Lock()
+	defer networkAuditWriterMu.Unlock()
+	if networkAuditWriter != nil {
+		return
+	}
+	w := &networkAuditWriterState{
+		ch:        make(chan *networkAuditOp, 256),
+		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
+		vaultPath: vaultPath,
+	}
+	networkAuditWriter = w
+	go w.run()
+}
+
+// stopNetworkAuditWriter signals the writer to drain remaining ops and exit,
+// then blocks until the goroutine is done. Idempotent. Guarantees no queued
+// entry is lost on vault close (#157 persistent-audit contract).
+func stopNetworkAuditWriter() {
+	networkAuditWriterMu.Lock()
+	w := networkAuditWriter
+	if w == nil {
+		networkAuditWriterMu.Unlock()
+		return
+	}
+	networkAuditWriter = nil
+	networkAuditWriterMu.Unlock()
+	close(w.stop)
+	<-w.done
+}
+
+// run is the writer goroutine body. It processes ops in FIFO order until
+// stop is closed, then drains every remaining queued op before exiting so
+// no entry is lost on shutdown.
+func (w *networkAuditWriterState) run() {
+	defer close(w.done)
+	for {
+		select {
+		case op := <-w.ch:
+			w.process(op)
+		case <-w.stop:
+			// Drain every queued op before exiting so no entry is lost.
+			for {
+				select {
+				case op := <-w.ch:
+					w.process(op)
+				default:
+					return
+				}
+			}
+		}
+	}
+}
+
+// process handles one op. Entry appends to the per-plugin on-disk log; clear
+// empties every on-disk log. If done is non-nil it is closed after the op
+// completes so the caller (ClearNetworkAudit) can synchronize.
+func (w *networkAuditWriterState) process(op *networkAuditOp) {
+	if op.entry != nil {
+		appendNetworkAuditLine(w.vaultPath, op.entry)
+	}
+	if op.clear {
+		clearNetworkAuditFiles(w.vaultPath)
+	}
+	if op.done != nil {
+		close(op.done)
+	}
 }

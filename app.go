@@ -183,6 +183,10 @@ func (a *App) shutdown(ctx context.Context) {
 // and CloseVault (workspace switch) so the two paths can't drift. Safe to
 // call when services are already nil (each close is guarded).
 func (a *App) teardownVaultServices() {
+	// Stop the audit writer FIRST so it drains queued entries for the closing
+	// vault before any service it depends on (just vaultPath at this point)
+	// goes away. After this returns, every enqueued audit write is on disk.
+	stopNetworkAuditWriter()
 	if a.watcher != nil {
 		// Drop every focus lease before tearing the watcher down so a clean
 		// exit can't strand a file under fsnotify suppression (#38).
@@ -439,8 +443,10 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	}
 
 	// Seed the in-memory network audit log from the on-disk per-plugin
-	// network.log files so entries survive a restart (#157).
+	// network.log files so entries survive a restart (#157). The writer is
+	// started AFTER seeding so it never races the seed (#235).
 	seedNetworkAuditFromDisk(vaultPath)
+	startNetworkAuditWriter(vaultPath)
 
 	// Report any paths the watcher could not subscribe to (fsnotify
 	// limits, permissions, etc.) so the UI can inform the user.
