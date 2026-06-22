@@ -154,6 +154,38 @@ describe('reconcileActiveAfterDelete', () => {
     )
     expect(next).toEqual({ notebook: '', section: '', page: '' })
   })
+
+  it('does not clear section when a same-named section in a different notebook is deleted', () => {
+    const current = { notebook: 'Work', section: 'Journal', page: 'Today' }
+    const next = reconcileActiveAfterDelete(
+      { level: 'section', notebook: 'Personal', section: 'Journal' },
+      current
+    )
+    expect(next).toEqual(current)
+  })
+
+  it('does not clear page when a same-named page in a different notebook is deleted', () => {
+    const current = { notebook: 'Work', section: 'Journal', page: 'Today' }
+    const next = reconcileActiveAfterDelete(
+      {
+        level: 'page',
+        notebook: 'Personal',
+        section: 'Journal',
+        page: 'Today'
+      },
+      current
+    )
+    expect(next).toEqual(current)
+  })
+
+  it('does not clear page when a same-named page in a different section of the same notebook is deleted', () => {
+    const current = { notebook: 'Work', section: 'Tasks', page: 'Review' }
+    const next = reconcileActiveAfterDelete(
+      { level: 'page', notebook: 'Work', section: 'Journal', page: 'Review' },
+      current
+    )
+    expect(next).toEqual(current)
+  })
 })
 
 describe('findNotebook', () => {

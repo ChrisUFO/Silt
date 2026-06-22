@@ -286,4 +286,33 @@ describe('deleteBlock', () => {
     deleteBlock(makeDeps(editor))
     expect(deleteRange).not.toHaveBeenCalled()
   })
+
+  it('is a no-op when no block node is found in the tree', () => {
+    const nonBlockNode = { type: { name: 'paragraph' } }
+    const editor = makeEditor({
+      state: {
+        selection: {
+          from: 0,
+          to: 0,
+          empty: true,
+          $from: {
+            depth: 1,
+            node: () => nonBlockNode,
+            after: () => 0,
+            before: () => 0
+          }
+        },
+        doc: { childCount: 5, slice: vi.fn(), textBetween: vi.fn() }
+      }
+    })
+    const deleteRange = vi.fn()
+    editor.chain = () => ({
+      insertContentAt: vi.fn().mockReturnThis(),
+      deleteRange,
+      focus: vi.fn().mockReturnThis(),
+      run: vi.fn()
+    })
+    deleteBlock(makeDeps(editor))
+    expect(deleteRange).not.toHaveBeenCalled()
+  })
 })

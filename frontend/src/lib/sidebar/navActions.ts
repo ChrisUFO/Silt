@@ -79,10 +79,19 @@ export function reconcileActiveAfterDelete(
   if (target.level === 'notebook' && current.notebook === target.notebook) {
     return { notebook: '', section: '', page: '' }
   }
-  if (target.level === 'section' && current.section === target.section) {
+  if (
+    target.level === 'section' &&
+    current.notebook === target.notebook &&
+    current.section === target.section
+  ) {
     return { ...current, section: '', page: '' }
   }
-  if (target.level === 'page' && current.page === target.page) {
+  if (
+    target.level === 'page' &&
+    current.notebook === target.notebook &&
+    current.section === target.section &&
+    current.page === target.page
+  ) {
     return { ...current, page: '' }
   }
   return { ...current }

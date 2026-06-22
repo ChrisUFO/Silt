@@ -1,6 +1,7 @@
 import type { Editor } from 'svelte-tiptap'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { serializeInlineContent } from './converters'
+import { findActiveBlock } from './keymaps'
 import { pushNotification } from '../../notifications/store.svelte'
 
 /**
@@ -27,32 +28,6 @@ export interface ClipboardDeps {
 /** writeText but never throws — clipboard permissions are best-effort. */
 async function writeTextSilent(text: string): Promise<void> {
   await navigator.clipboard.writeText(text).catch(() => {})
-}
-
-/**
- * Walk up from the editor's current selection to the nearest block node
- * (noteBlock / taskBlock / headerBlock). Returns the node and its depth, or
- * `{ depth: 1, node: null }` if none found (depth 1 is the safe fallback for
- * `pos.after(depth)` / `pos.before(depth)` calls).
- *
- * Shared by duplicate/delete — previously inlined 2× in TipTapEditor.
- */
-function findActiveBlockDepth(editor: Editor): {
-  depth: number
-  node: ProseMirrorNode | null
-} {
-  const pos = editor.state.selection.$from
-  for (let d = pos.depth; d >= 1; d--) {
-    const node = pos.node(d)
-    if (
-      node.type.name === 'noteBlock' ||
-      node.type.name === 'taskBlock' ||
-      node.type.name === 'headerBlock'
-    ) {
-      return { depth: d, node }
-    }
-  }
-  return { depth: 1, node: null }
 }
 
 export function cutSelection(deps: ClipboardDeps): void {
@@ -148,8 +123,9 @@ export function duplicateBlock(deps: ClipboardDeps): void {
   const { editor, menu } = deps
   const active = menu()?.activeBlockNode
   if (!active) return
-  const { depth } = findActiveBlockDepth(editor)
-  const endPos = editor.state.selection.$from.after(depth)
+  const block = findActiveBlock(editor)
+  if (!block) return
+  const endPos = editor.state.selection.$from.after(block.depth)
   const json = active.toJSON()
   if (json.attrs && json.attrs.id) {
     delete json.attrs.id
@@ -165,9 +141,10 @@ export function deleteBlock(deps: ClipboardDeps): void {
   const { editor } = deps
   const { doc } = editor.state
   if (doc.childCount <= 1) return
-  const { depth } = findActiveBlockDepth(editor)
+  const block = findActiveBlock(editor)
+  if (!block) return
   const pos = editor.state.selection.$from
-  const from = pos.before(depth)
-  const to = pos.after(depth)
+  const from = pos.before(block.depth)
+  const to = pos.after(block.depth)
   editor.chain().deleteRange({ from, to }).focus().run()
 }
