@@ -179,13 +179,13 @@
 
 <style>
   .drag-region {
-    -webkit-app-region: drag;
+    --wails-draggable: drag;
   }
   /* Interactive children stay clickable while empty header space drags the window. */
   .drag-region :global(button),
   .drag-region :global(nav),
   .drag-region :global(input),
   .drag-region :global(a) {
-    -webkit-app-region: no-drag;
+    --wails-draggable: no-drag;
   }
 </style>
