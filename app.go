@@ -580,7 +580,7 @@ func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult,
 	}
 	dest := destPath
 	// Snapshot the instant the copy+verify completed. Used before removeOld
-	// to detect an external edit (e.g. VS Code) that landed in the source
+	// to detect an external edit (e.g. an external editor) that landed in the source
 	// during the cutover — deleting the source then would silently lose it.
 	copyDoneAt := time.Now()
 
@@ -3213,7 +3213,7 @@ func updateFrontmatterField(content, key, newVal string) string {
 		}
 	}
 	// If the frontmatter exists but the key was absent, insert it before
-	// the closing --- so externally-authored files (Obsidian/VS Code) that
+	// the closing --- so externally-authored files (external editors) that
 	// lack the key gain it on rename rather than silently no-oping.
 	if inFM && !found && closeIdx >= 0 {
 		newLine := fmt.Sprintf("%s: %s", key, strconv.Quote(newVal))
@@ -3376,15 +3376,21 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 
 		// 4. Rewrite the section: frontmatter at the new path. An empty
 		// safeTo produces `section: ""` (section-less), matching the
-		// parser's section-less convention.
+		// parser's section-less convention. If this fails, the file is at
+		// the new path with stale frontmatter — we log the error and
+		// continue through the index cleanup (step 5) so the index doesn't
+		// dangle at the old path. The scanner will reconcile on next pass.
+		var fmErr error
 		content := updateFrontmatterField(string(contentBytes), "section", safeTo)
 		a.tracker.RegisterWrite(newFile)
 		if err := parser.WriteFileAtomic(newFile, []byte(content)); err != nil {
-			runErr = err
-			return
+			log.Printf("MovePage: WriteFileAtomic failed at %s (file already moved): %v", newFile, err)
+			fmErr = err
 		}
 
-		// 5. Clear old index entries + re-index at the new path.
+		// 5. Clear old index entries + re-index at the new path. These run
+		// unconditionally — even if the frontmatter write failed, the file
+		// has already moved and the old index entries must be cleaned up.
 		a.coordinator.WithDBWrite(func() {
 			_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeFrom, safePage)
 		})
@@ -3392,6 +3398,7 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 			_ = a.db.ForgetFile(oldFile)
 		})
 		a.reindexFile(newFile, safeNotebook, safeTo, safePage)
+		runErr = fmErr
 	})
 	if runErr != nil {
 		return runErr
@@ -3401,8 +3408,15 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 	// and append it to the new section's ordering. RenamePage omits this
 	// step — MovePage must keep nav_order consistent with the new on-disk
 	// layout so the sidebar doesn't fall back to alphabetical for a moved
-	// page (#177).
-	a.updateNavOrderForMove(safeNotebook, safeFrom, safeTo, safePage)
+	// page (#177). Note: this runs outside the LockFileWrite lambda, so
+	// there is a microsecond window where a concurrent SetNavOrder could
+	// interleave — the consequence is stale ordering (not data loss).
+	// If the config save fails, the file move has already succeeded, so
+	// we log but don't return an error — the in-memory cfg is correct and
+	// the next config save (any UI action) will flush it.
+	if err := a.updateNavOrderForMove(safeNotebook, safeFrom, safeTo, safePage); err != nil {
+		log.Printf("MovePage: nav_order persist failed (file move succeeded): %v", err)
+	}
 	return nil
 }
 
@@ -3412,7 +3426,7 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 // present). The sectionKey format mirrors the frontend: `${notebook}/${section}`
 // (empty section for root pages). Persisted atomically with self-write
 // suppression so the config watcher doesn't double-fire.
-func (a *App) updateNavOrderForMove(notebook, fromSection, toSection, page string) {
+func (a *App) updateNavOrderForMove(notebook, fromSection, toSection, page string) error {
 	oldKey := notebook + "/" + fromSection
 	newKey := notebook + "/" + toSection
 
@@ -3450,7 +3464,7 @@ func (a *App) updateNavOrderForMove(notebook, fromSection, toSection, page strin
 	if a.configWatcher != nil {
 		a.configWatcher.RegisterSelfWrite()
 	}
-	_ = config.Save(a.vaultPath, cfg)
+	return config.Save(a.vaultPath, cfg)
 }
 
 // RenameSection renames a section folder and updates the section: frontmatter
@@ -3955,7 +3969,7 @@ type OpenTabsResult struct {
 
 // GetOpenTabs returns the persisted open-tab set + active tab from
 // config.yaml. Only pinned tabs are persisted (preview tabs are ephemeral —
-// VS Code parity). Stale tabs — references to pages that no longer exist on
+// industry-standard parity). Stale tabs — references to pages that no longer exist on
 // disk (deleted/renamed since last launch) — are pruned silently against the
 // live ListNavigation tree before returning, so the frontend never mounts a
 // tab for a missing page. The on-disk tree is the source of truth, not the
@@ -4699,7 +4713,7 @@ func (a *App) seedFirstPartyGrants() {
 // UpdatePluginSetting atomically updates a single per-plugin setting key and
 // persists it — the targeted read-modify-write that replaces the frontend
 // read-mutate-saveConfig dance which could race an external config.yaml edit
-// (e.g. VS Code) landing between the read and the Go-side atomic write (#120).
+// (e.g. an external editor) landing between the read and the Go-side atomic write (#120).
 // Only plugins.plugin_settings[pluginID][key] is touched; every other config
 // field is preserved verbatim, so a concurrent external edit to an unrelated
 // section is not clobbered.

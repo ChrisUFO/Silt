@@ -106,7 +106,7 @@ The Go runtime orchestrates system access, monitors local storage directories, p
 
 2.1 File System Monitor (fsnotify Pipeline)
 
-To allow interoperability with external plain-text editors (e.g., VS Code), the Go backend implements an active directory watcher using github.com/fsnotify/fsnotify.
+To allow interoperability with external plain-text editors (e.g. an external editor), the Go backend implements an active directory watcher using github.com/fsnotify/fsnotify.
 
 The Feedback Loop Prevention Strategy
 
@@ -582,7 +582,7 @@ func (a *App) GetAppVersion() string
 // set + active tab, pruned against ListNavigation (stale tabs for deleted
 // pages are silently dropped). SetOpenTabs atomically persists the pinned set
 // + active via configMu + RegisterSelfWrite + config.Save. Only pinned tabs
-// are persisted (preview tabs are ephemeral — VS Code parity).
+// are persisted (preview tabs are ephemeral — industry-standard parity).
 func (a *App) GetOpenTabs() (OpenTabsResult, error)
 func (a *App) SetOpenTabs(openTabs []config.TabRef, activeTab *config.TabRef) error
 
@@ -592,6 +592,8 @@ func (a *App) SetOpenTabs(openTabs []config.TabRef, activeTab *config.TabRef) er
 // sectionKeys on a cross-section move (RenamePage omits this step).
 func (a *App) GetNavOrder() (config.NavOrder, error)
 func (a *App) SetNavOrder(order config.NavOrder) error
+func (a *App) GetSidebarWidth() (int, error)
+func (a *App) SetSidebarWidth(width int) error
 
 
 4.4 Theme Engine IPC & Pipeline
@@ -738,7 +740,7 @@ The frontend uses Svelte 5's fine-grained compiler. The editor surface is built 
 Each **open tab** renders a single TipTap editor instance
 (`TipTapEditor.svelte`) containing all of that page's blocks. The tab strip
 (`TabStrip.svelte`, directly above the editor in the content area) manages the
-VS Code-style preview-vs-pinned model: a single-click opens a transient
+standard preview-vs-pinned model: a single-click opens a transient
 **preview tab** (reusable slot); a double-click, middle-click, or first edit
 promotes it to a dedicated **pinned tab**. Multiple editors coexist (one per
 open tab, hidden via `display:none` to preserve per-tab scroll, cursor, and
@@ -760,7 +762,7 @@ The editor's transaction lifecycle is wired to the Go backend:
 - **Load:** `FetchPageBlocks(notebook, section, page)` returns a flat `[]ParsedBlock`; `blocksToDoc(blocks)` converts to ProseMirror doc JSON; `editor.commands.setContent(doc)` populates the editor.
 - **Save:** `editor.on('update')` (debounced via `editor.auto_save_delay_ms`) → `docToBlocks(editor.getJSON())` → `SaveFileBlocks(notebook, section, page, blocks)`. Go's `RenderFileContent` remains the single on-disk serializer.
 - **Focus lock (#38):** the editor's `onFocus`/`onBlur` events drive `Acquire/ReleaseFocusLock`; a 20s heartbeat (`RefreshFocusLock`) keeps the lease alive while focused.
-- **Per-tab save-state (#167):** `TipTapEditor` exposes `onSaveStateChange({ dirty, error })` on dirty/error/clean transitions. The callback threads through `VirtualScrollContainer` → `App.svelte`, which writes `TabEntry.dirty` / `TabEntry.saveError`. The tab strip renders a dirty glyph (• in `--text-muted`) or error glyph (! in `--status-danger`) before the page name, visible from any tab — not just the active one. Controlled by `ui.show_tab_dirty_indicators` (default true). The in-editor footer indicator remains the authoritative surface; the tab glyph is a secondary always-visible hint.
+- **Per-tab save-state (#167):** `TipTapEditor` exposes `onSaveStateChange({ dirty, error })` on dirty/error/clean transitions. The callback threads through `VirtualScrollContainer` → `App.svelte`, which writes `TabEntry.dirty` / `TabEntry.saveError`. The tab strip renders a dirty glyph (`circle` icon in `--color-text-muted`) or error glyph (`error` icon in `--color-status-danger`) before the page name, visible from any tab — not just the active one. Controlled by `ui.show_tab_dirty_indicators` (default true). The in-editor footer indicator remains the authoritative surface; the tab glyph is a secondary always-visible hint.
 
 The ProseMirror schema defines three block node types (`taskBlock`, `noteBlock`, `headerBlock`) that map 1:1 to `parser.ParsedBlock`. Each carries a UUID `id` attr and a per-block `file_date`. A `UniqueBlockIds` extension (`appendTransaction`) mints fresh UUIDs for pasted/duplicated blocks to prevent `blocks`-table PK collisions.
 
@@ -817,7 +819,7 @@ func (ec *ExecutionCoordinator) LockFileWrite(filepath string, task func()) {
 
 6.2 Viewport Sync Conflict Mitigation
 
-If you edit a markdown file in VS Code while the Silt dashboard is open, the file-watcher triggers a rebuild of the SQLite cache. If Svelte is actively editing the same line, the changes could conflict.
+If you edit a markdown file in an external editor while the Silt dashboard is open, the file-watcher triggers a rebuild of the SQLite cache. If Svelte is actively editing the same line, the changes could conflict.
 
 Mitigation Plan:
 

@@ -1,4 +1,4 @@
-// Pure state machine for the VS Code-style preview/pin tab model (#142).
+// Pure state machine for the standard preview/pin tab model (#142).
 //
 // Every function here is PURE: it takes the current tab list + active id and
 // returns the next state without mutation. The Svelte layer (App.svelte)
@@ -6,7 +6,7 @@
 // `$state` runes. Keeping the logic pure makes it exhaustively unit-testable
 // (tabs.test.ts) and decouples the tab model from Svelte's reactivity.
 //
-// VS Code parity (the contract this module implements):
+// industry-standard parity (the contract this module implements):
 // - Single-click in the Explorer opens a page in a transient PREVIEW tab
 //   (rendered italic). The same preview slot is reused: clicking another
 //   page replaces its content.
@@ -41,7 +41,7 @@ export interface PageRef {
 
 /**
  * A single open tab. `id` is the stable slot id; `preview` distinguishes the
- * transient VS Code preview tab from dedicated pinned tabs.
+ * transient preview tab from dedicated pinned tabs.
  */
 export interface TabEntry extends PageRef {
   id: string
@@ -59,8 +59,8 @@ export interface TabEntry extends PageRef {
 
 /**
  * How a caller wants a page opened.
- * - `'preview'` — open in the reusable preview tab (VS Code single-click).
- * - `'pin'` — open or promote to a dedicated pinned tab (VS Code double-click /
+ * - `'preview'` — open in the reusable preview tab (single-click).
+ * - `'pin'` — open or promote to a dedicated pinned tab (double-click /
  *   middle-click / first-edit).
  * - `'activate-only'` — no tab change; just scroll-to-block on the current
  *   page (used by navigate-to-block when the target is already active).
@@ -103,7 +103,7 @@ export function mruOrder(tabs: TabEntry[]): TabEntry[] {
 /**
  * The core open-page state machine. Returns the next { tabs, activeId }.
  *
- * Rules (VS Code parity — see module docstring):
+ * Rules (industry-standard parity — see module docstring):
  * 1. If a PINNED tab for (notebook, section, page) exists → activate it,
  *    ignore `mode`.
  * 2. If a PREVIEW tab for the same page exists → activate it.
@@ -158,7 +158,7 @@ export function openPage(
   // promote it if the caller asked for a pin. This handles the
   // double-click-in-sidebar flow: the first click opens a preview (Rule 4),
   // the dblclick fires openPage('pin'), and this rule promotes the just-
-  // opened preview to pinned (VS Code parity).
+  // opened preview to pinned (industry-standard parity).
   const previewSamePage = state.tabs.find(
     (t) => t.preview && tabMatches(t, ref)
   )
@@ -189,7 +189,10 @@ export function openPage(
               section: ref.section,
               page: ref.page,
               blockTarget,
-              lastActivatedAt: now
+              lastActivatedAt: now,
+              // Reset save state — the new page starts clean (#167).
+              dirty: false,
+              saveError: null
             }
           : t
       )
@@ -260,7 +263,9 @@ function createTab(
     page: ref.page,
     preview,
     blockTarget,
-    lastActivatedAt: now
+    lastActivatedAt: now,
+    dirty: false,
+    saveError: null
   }
   tabs.push(newTab)
   return { tabs, activeId: newTab.id }
@@ -336,7 +341,7 @@ export function cycleTab(state: TabsState, dir: 1 | -1): TabsState {
  * Reorder a tab within the tabs array (visual position only). The tab
  * identified by `fromId` is moved to before or after the tab identified by
  * `toId`, depending on the `before` flag. MRU order (`lastActivatedAt`) is
- * NOT affected — reorder changes visual position only, matching VS Code
+ * NOT affected — reorder changes visual position only, matching the standard
  * behavior (#175). No-op if either id is missing or they are the same.
  * Returns a new state.
  */

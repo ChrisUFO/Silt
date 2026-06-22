@@ -520,6 +520,11 @@
       emitUpdate: false
     })
     suppressUpdate = false
+    // Reset save state — new content loaded, nothing is dirty (#167).
+    unsavedChanges = false
+    lastSaveError = null
+    lastEmittedSaveState = { dirty: false, error: null }
+    emitSaveState()
   })
 
   // --- Auto-save (debounced, config-driven, same contract as legacy) --------

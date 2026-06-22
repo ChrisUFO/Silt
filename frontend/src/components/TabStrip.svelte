@@ -96,7 +96,7 @@
   let tabRefs: HTMLButtonElement[] = $state([])
 
   function handleAuxClick(e: MouseEvent, tab: TabEntry): void {
-    // Middle-click (button 1) closes the tab — VS Code parity.
+    // Middle-click (button 1) closes the tab — industry-standard parity.
     if (e.button === 1) {
       e.preventDefault()
       onCloseTab(tab.id)
@@ -177,6 +177,7 @@
         id="silt-tab-{tab.id}"
         aria-selected={tab.id === activeTabId}
         aria-controls="silt-tabpanel"
+        aria-label={tabTooltip(tab)}
         tabindex={i === focusedIndex ? 0 : -1}
         title={tabTooltip(tab)}
         class="tab-button group"
@@ -337,7 +338,7 @@
     background: var(--color-hover, #1e2128);
   }
 
-  /* Preview tabs: hide the close button until hover (VS Code parity). */
+  /* Preview tabs: hide the close button until hover (industry-standard parity). */
   .preview-close {
     opacity: 0;
   }
@@ -365,7 +366,7 @@
     z-index: 1;
   }
 
-  .tab-button.tab-drop-after::before {
+  .tab-button.tab-drop-after::after {
     content: '';
     position: absolute;
     right: -1px;

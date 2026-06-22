@@ -261,7 +261,7 @@ func RemoveOldVault(oldPath string) error {
 // SourceModifiedAfter reports whether any regular, non-index file under root
 // has an mtime at or after cutoff. MoveVault snapshots the source vault the
 // instant its copy+verify completes and calls this before the post-cutover
-// removal of the old folder: ARCHITECTURE.md lets external editors (VS Code)
+// removal of the old folder: ARCHITECTURE.md lets external editors 
 // write vault files concurrently, and an edit landing in the
 // copy→cutover→removeOld window would be silently lost when the source is
 // deleted. A "modified since copy" result means the move MUST keep the old

@@ -67,9 +67,9 @@ type ParsingConfig struct {
 // aligning with #100's trust-scoping principle. A missing entry means "not
 // granted" (privileged bindings return a structured CapabilityDeniedError).
 type PluginsConfig struct {
-	Active         []string                  `yaml:"active" json:"active"`
-	Disabled       []string                  `yaml:"disabled" json:"disabled"`
-	PluginSettings map[string]any            `yaml:"plugin_settings" json:"plugin_settings"`
+	Active         []string                     `yaml:"active" json:"active"`
+	Disabled       []string                     `yaml:"disabled" json:"disabled"`
+	PluginSettings map[string]any               `yaml:"plugin_settings" json:"plugin_settings"`
 	Grants         map[string]map[string]string `yaml:"grants,omitempty" json:"grants,omitempty"`
 }
 
@@ -137,7 +137,7 @@ type FormattingConfig struct {
 // TabRef is a persisted reference to an open tab's page (#142). It is the
 // YAML-serializable form of a frontend TabEntry — only the locator triple is
 // persisted; preview flag, scroll/cursor state, and the like are ephemeral
-// (VS Code parity: preview tabs are not restored across restarts). The
+// (industry-standard parity: preview tabs are not restored across restarts). The
 // frontend filters to pinned tabs before calling SetOpenTabs.
 type TabRef struct {
 	Notebook string `yaml:"notebook" json:"notebook"`
@@ -213,9 +213,9 @@ func Defaults() SystemConfig {
 			TabIndentSpaces:         4,
 			AutoSaveDelayMs:         500,
 			FocusHighlightAncestors: true,
-			ShowWordCount: boolPtr(false),
-			FocusMode:     boolPtr(false),
-			DefaultViewMode: stringPtr("edit"),
+			ShowWordCount:           boolPtr(false),
+			FocusMode:               boolPtr(false),
+			DefaultViewMode:         stringPtr("edit"),
 		},
 		Parsing: ParsingConfig{
 			AutoInjectUUID:      true,
@@ -242,14 +242,14 @@ func Defaults() SystemConfig {
 			// the deep-merge. The editor's ProseMirror keymaps consume these
 			// inside the contenteditable; the global handler skips them when
 			// the editor is focused (Ctrl+B resolution).
-			"format_bold":       "Ctrl+B",
-			"format_italic":     "Ctrl+I",
-			"format_underline":  "Ctrl+U",
-			"format_strike":     "Ctrl+Shift+X",
-			"format_code":       "Ctrl+E",
-			"format_link":       "Ctrl+K",
-			"format_highlight":  "Ctrl+Shift+H",
-			"format_subscript":  "Ctrl+,",
+			"format_bold":        "Ctrl+B",
+			"format_italic":      "Ctrl+I",
+			"format_underline":   "Ctrl+U",
+			"format_strike":      "Ctrl+Shift+X",
+			"format_code":        "Ctrl+E",
+			"format_link":        "Ctrl+K",
+			"format_highlight":   "Ctrl+Shift+H",
+			"format_subscript":   "Ctrl+,",
 			"format_superscript": "Ctrl+.",
 			// Heading level hotkeys (#169). Standard Word/Google Docs bindings.
 			"set_h1":   "Ctrl+Alt+1",
@@ -283,7 +283,7 @@ func Defaults() SystemConfig {
 				Pages:    map[string][]string{},
 			},
 			OpenTabs: []TabRef{},
-			// EnablePreviewTabs defaults to true (VS Code parity). Stored as
+			// EnablePreviewTabs defaults to true (industry-standard parity). Stored as
 			// a *bool so "unset" is distinguishable from "explicitly false";
 			// the frontend treats nil as true.
 			EnablePreviewTabs: boolPtr(true),
@@ -296,12 +296,12 @@ func Defaults() SystemConfig {
 			// ShowFormatToolbar defaults to true (#168). Stored as *bool so
 			// "unset" is distinguishable from "explicitly false"; the frontend
 			// treats nil as true.
-		ShowFormatToolbar: boolPtr(true),
-		// ShowTabDirtyIndicators defaults to true (#167). Same *bool
-		// semantics as EnablePreviewTabs: "unset" stays distinguishable
-		// from "explicitly false" through the Load → normalize path.
-		ShowTabDirtyIndicators: boolPtr(true),
-		DismissedTips:     []string{},
+			ShowFormatToolbar: boolPtr(true),
+			// ShowTabDirtyIndicators defaults to true (#167). Same *bool
+			// semantics as EnablePreviewTabs: "unset" stays distinguishable
+			// from "explicitly false" through the Load → normalize path.
+			ShowTabDirtyIndicators: boolPtr(true),
+			DismissedTips:          []string{},
 			Formatting: FormattingConfig{
 				TypographyEnabled: boolPtr(true),
 				ColorEnabled:      boolPtr(true),
@@ -512,7 +512,7 @@ func normalize(cfg SystemConfig) SystemConfig {
 	if cfg.UI.MaxOpenTabs > 32 {
 		cfg.UI.MaxOpenTabs = 32
 	}
-	// EnablePreviewTabs: nil → true (VS Code parity). The field is a *bool
+	// EnablePreviewTabs: nil → true (industry-standard parity). The field is a *bool
 	// so "unset" stays distinguishable from "explicitly false" through the
 	// Load → normalize path; once normalized, the frontend reads nil as
 	// true.

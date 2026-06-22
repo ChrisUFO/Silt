@@ -123,6 +123,8 @@ Path resolution: the **notebook** is the top folder under the vault; the **page*
 
 Silt starts blank — no default notebook or section is created. The user creates or opens their first notebook from the sidebar's notebook selector.
 
+**Moving pages across sections (#177).** A page can be dragged from one section to another, or from a section into the notebook root (section-less), via sidebar drag-and-drop. The `MovePage` IPC renames the `.md` file on disk, rewrites its `section:` frontmatter, rebuilds the block index at the new path, and updates `nav_order` for both the source and target section keys. **Name collisions are rejected** (not auto-suffixed) — if a page with the same name already exists in the target section, the move fails with a user-visible error. This matches `RenamePage` semantics and prevents silent data loss.
+
 **Linked / external notebooks (#100).** A notebook root does not have to live
 inside the vault. The user can LINK an external folder (e.g. a synced
 SharePoint/OneDrive mount) as a notebook from the sidebar ("Link External

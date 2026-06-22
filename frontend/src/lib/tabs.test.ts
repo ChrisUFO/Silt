@@ -46,7 +46,7 @@ beforeEach(() => {
 
 // --- openPage rules ---------------------------------------------------
 
-describe('openPage — VS Code preview/pin state machine', () => {
+describe('openPage — preview/pin state machine', () => {
   describe('Rule 1: pinned tab exists → activate, ignore mode', () => {
     it('activates the existing pinned tab when mode=preview', () => {
       const tab = mkTab(PAGE_A, { preview: false, lastActivatedAt: 100 })
@@ -484,5 +484,40 @@ describe('reorderTab (#175)', () => {
     const s = state([t1, t2, t3], 't1')
     const next = reorderTab(s, 't3', 't1', true)
     expect(next.tabs.map((t) => t.id)).toEqual(['t3', 't1', 't2'])
+  })
+})
+
+describe('TabEntry dirty/saveError defaults (#167)', () => {
+  it('openPage creates a tab with dirty=false and saveError=null', () => {
+    const s = state([])
+    const next = openPage(s, PAGE_A, 'pin')
+    const tab = next.tabs.find((t) => t.page === PAGE_A.page)
+    expect(tab).toBeDefined()
+    expect(tab!.dirty).toBe(false)
+    expect(tab!.saveError).toBe(null)
+  })
+
+  it('openPage preview creates a tab with dirty=false and saveError=null', () => {
+    const s = state([])
+    const next = openPage(s, PAGE_A, 'preview')
+    const tab = next.tabs.find((t) => t.page === PAGE_A.page)
+    expect(tab).toBeDefined()
+    expect(tab!.dirty).toBe(false)
+    expect(tab!.saveError).toBe(null)
+  })
+
+  it('preview slot reuse resets dirty/saveError (#167)', () => {
+    // Open page A as preview, mark it dirty, then reuse the slot for page B.
+    const s1 = state([])
+    const s2 = openPage(s1, PAGE_A, 'preview')
+    // Simulate dirty state from editor callback.
+    s2.tabs[0].dirty = true
+    s2.tabs[0].saveError = 'disk full'
+    // Reuse the preview slot for a different page.
+    const s3 = openPage(s2, PAGE_B, 'preview')
+    const reused = s3.tabs[0]
+    expect(reused.page).toBe(PAGE_B.page)
+    expect(reused.dirty).toBe(false)
+    expect(reused.saveError).toBe(null)
   })
 })

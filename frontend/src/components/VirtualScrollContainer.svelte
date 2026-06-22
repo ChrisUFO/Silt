@@ -103,7 +103,7 @@
   })
 
   // Subscribe to block:changed events (#64). When an external mutation
-  // (embed edit, VS Code edit) changes a block on the current page, reload
+  // (embed edit, external edit) changes a block on the current page, reload
   // the block list so the editor sees the update. The editor's own $effect
   // handles applying the update when the user is not actively editing.
   $effect(() => {
@@ -156,7 +156,7 @@
   function handleBlocksUpdated(updatedBlocks: ParsedBlock[]) {
     blocks = updatedBlocks
     // Fire onFirstEdit on the first content change — used by the tab strip
-    // to promote a preview tab to pinned (VS Code edit-to-pin, #142).
+    // to promote a preview tab to pinned (edit-to-pin, #142).
     if (!hasFirstEdit) {
       hasFirstEdit = true
       onFirstEdit?.()

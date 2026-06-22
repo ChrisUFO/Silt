@@ -161,6 +161,16 @@
     toId: string,
     before: boolean
   ): void {
+    // industry-standard parity (#175 AC4): dragging a preview tab pins it on drop.
+    // The promotion happens before the reorder so the pinned tab is the
+    // one that gets spliced into the new position.
+    const draggedTab = openTabs.find((t) => t.id === fromId)
+    if (draggedTab?.preview) {
+      openTabs = promotePreviewState(
+        { tabs: openTabs, activeId: activeTabId },
+        fromId
+      ).tabs
+    }
     // Reorder within the displayed (per-notebook) tabs, then splice the
     // reordered subset back into the full openTabs array — non-displayed
     // (other-notebook) tabs keep their relative positions. The displayed
@@ -220,7 +230,7 @@
   }
 
   async function persistTabs(): Promise<void> {
-    // Only persist PINNED tabs + active (preview tabs are ephemeral — VS Code
+    // Only persist PINNED tabs + active (preview tabs are ephemeral —
     // parity). If the active tab is a preview, don't persist it as active.
     const pinned = openTabs.filter((t) => !t.preview)
     const activeTab = openTabs.find((t) => t.id === activeTabId)
@@ -620,7 +630,7 @@
     date: string,
     blockId: string
   ) {
-    // Route through openPage (VS Code preview-tab semantics, #142).
+    // Route through openPage (preview-tab semantics, #142).
     // Use activate-only when the target IS the active page so block
     // navigation does not re-bump the MRU timestamp (the state machine's
     // activate-only path is a true no-op on tab state, just sets the
@@ -826,7 +836,7 @@
         }}
         onSelectSection={(sec) => (activeSection = sec)}
         onSelectPage={(nb, sec, pg) => {
-          // Single-click opens in preview mode (VS Code parity, #142).
+          // Single-click opens in preview mode (industry-standard parity, #142).
           openPage({ notebook: nb, section: sec, page: pg }, 'preview')
         }}
         onPinPage={(nb, sec, pg) => {

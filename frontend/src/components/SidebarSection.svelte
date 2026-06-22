@@ -213,7 +213,7 @@
             onclick={() => onSelectPage(sectionKey, pg.name)}
             ondblclick={() => onPinPage(sectionKey, pg.name)}
             onauxclick={(e) => {
-              // Middle-click (button 1) pins the page — VS Code parity (#142).
+              // Middle-click (button 1) pins the page — industry-standard parity (#142).
               if (e.button === 1) {
                 e.preventDefault()
                 onPinPage(sectionKey, pg.name)
@@ -222,11 +222,11 @@
             oncontextmenu={(e) =>
               onContextMenu(e, 'page', activeNotebook, sectionKey, pg.name)}
             draggable="true"
-            ondragstart={(e) => onDragStart(e, 'page', pg.name, section.name)}
+            ondragstart={(e) => onDragStart(e, 'page', pg.name, sectionKey)}
             ondragover={(e) => onDragOver(e, 'page', pg.name)}
             ondragleave={onDragLeave}
             ondrop={(e) =>
-              onDrop(e, 'page', pg.name, activeNotebook, section.name)}
+              onDrop(e, 'page', pg.name, activeNotebook, sectionKey)}
             ondragend={onDragEnd}
             class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
             class:bg-hover={isActive}

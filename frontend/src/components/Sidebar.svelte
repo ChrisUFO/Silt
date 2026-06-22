@@ -301,7 +301,11 @@
       const names = sorted.map((s) => s.name)
       const fromIdx = names.indexOf(dragItem.name)
       const toIdx = names.indexOf(targetName)
-      if (fromIdx === -1 || toIdx === -1) return
+      if (fromIdx === -1 || toIdx === -1) {
+        dragItem = null
+        dropTarget = null
+        return
+      }
       names.splice(fromIdx, 1)
       const insertAt = dropTarget?.before
         ? names.indexOf(targetName)
@@ -315,7 +319,11 @@
       const names = sorted.map((p) => p.name)
       const fromIdx = names.indexOf(dragItem.name)
       const toIdx = names.indexOf(targetName)
-      if (fromIdx === -1 || toIdx === -1) return
+      if (fromIdx === -1 || toIdx === -1) {
+        dragItem = null
+        dropTarget = null
+        return
+      }
       names.splice(fromIdx, 1)
       const insertAt = dropTarget?.before
         ? names.indexOf(targetName)
@@ -714,6 +722,7 @@
     window.addEventListener('refresh-navigation', handleRefresh)
     return () => {
       window.removeEventListener('refresh-navigation', handleRefresh)
+      if (dndErrorTimer) clearTimeout(dndErrorTimer)
     }
   })
 </script>
@@ -917,13 +926,14 @@
             Select a notebook.
           {/if}
         </div>
-      {:else if activeNotebookObj.sections.length === 0}
-        <div
-          class="text-text-muted py-10 text-center font-body-md text-[13px] border border-dashed border-border-muted rounded-lg mx-1"
-        >
-          No sections yet.<br />Create a section to add pages.
-        </div>
       {:else}
+        {#if activeNotebookObj.sections.length === 0}
+          <div
+            class="text-text-muted py-6 text-center font-body-md text-[13px] border border-dashed border-border-muted rounded-lg mx-1"
+          >
+            No sections yet.<br />Create a section to add pages.
+          </div>
+        {/if}
         {#each sortedSections as sec (sec.name)}
           <SidebarSection
             section={sec}
@@ -992,7 +1002,9 @@
             dropTarget = null
           }}
           role="region"
-          aria-label="Drop here to move page to notebook root"
+          aria-label={dragItem?.level === 'page'
+            ? 'Drop here to move page to notebook root'
+            : undefined}
         >
           {#if dragItem?.level === 'page'}
             <div
