@@ -891,11 +891,15 @@ iframe. All network traffic routes through the postMessage bridge → `ctx.fetch
 bucket rate limiter (default 1 rps, burst 10; manifest `ratelimit` override).
 Buckets are evicted on uninstall.
 
-**Network audit log (#157).** `auditNetwork` appends to both the in-memory log
-(capped 500 entries) and the on-disk per-plugin `network.log`. On vault open,
-`seedNetworkAuditFromDisk` reads the on-disk logs to seed the in-memory log so
-entries survive restarts. No SQLite table (audit data is not reproducible from
-markdown; ARCHITECTURE §0 rule 4).
+**Network audit log (#157).** `auditNetwork` appends to the in-memory log
+(capped 500 entries) under `networkAuditMu`, then enqueues a disk-write op
+onto a buffered channel. A single background goroutine (`startNetworkAuditWriter`,
+started in `initializeVaultServices`, stopped first in `teardownVaultServices`)
+drains the channel and writes to the per-plugin `network.log` WITHOUT holding
+the lock, so concurrent `PluginFetch` calls don't serialize on file I/O
+(#235). On vault open, `seedNetworkAuditFromDisk` reads the on-disk logs to
+seed the in-memory log (before the writer starts). No SQLite table (audit data
+is not reproducible from markdown; ARCHITECTURE §0 rule 4).
 
 **Runtime integrity (#161).** `Install` computes `sha256(index.js)` and writes
 it into `plugin.json` as `contentSha256`. The frontend loader verifies the hash
@@ -912,7 +916,10 @@ via `crypto.subtle.digest` before Blob import. A tampered `index.js` is refused.
 - OS integration (#114): openInNativeHandler, openUrl (scheme-restricted),
   pickers, clipboard, notify — all capability-gated.
 - Network/fetch (#115): ctx.fetch via Go net/http proxy (timeout/size/
-  redirect caps); audit-logged.
+  redirect caps); SSRF defense at URL validation, redirect re-validation, AND
+  dial-time — the custom `DialContext` re-runs `isInternalIP` on every resolved
+  IP (DNS-rebinding guard) and fails closed on lookup error so the OS resolver
+  cannot bypass the check (#234); audit-logged.
 - Editor extension points (#110): slash-command registry; generic embedBlock
   node (round-trips through <!-- silt-embed: {json} --> markers).
 - Rendered UI surfaces (#117): sandboxed <iframe srcdoc> + postMessage bridge;
