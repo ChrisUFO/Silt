@@ -53,6 +53,21 @@ Silt targets **Windows** and **Linux** as first-class platforms — both are bui
 
 ---
 
+## Installation
+
+### Windows
+1. Download the latest installer (`silt-v<version>-windows-installer.exe`) or the portable ZIP (`silt-v<version>-windows-portable.zip`) from GitHub Releases.
+2. Run the installer or extract the portable ZIP.
+
+> [!NOTE]
+> **Windows Defender SmartScreen Bypass:** Since Silt is unsigned, Windows SmartScreen may show an "Unknown publisher" warning. To bypass this:
+> 1. Right-click the installer `.exe` (or the `.zip` file *before* extracting it).
+> 2. Select **Properties**.
+> 3. Under the **General** tab, check the **Unblock** checkbox in the Security section at the bottom.
+> 4. Click **Apply** or **OK**, then run/extract the file.
+
+---
+
 ## Getting Started
 
 ### Development Prerequisites
