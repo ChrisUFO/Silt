@@ -174,6 +174,48 @@ export const TaskBlock = Node.create({
 
   renderHTML({ HTMLAttributes }) {
     return ['div', mergeAttributes({ 'data-type': 'task' }, HTMLAttributes), 0]
+  },
+
+  addInputRules() {
+    return [
+      // Markdown-style checkbox shortcut: typing "[]", "[ ]", or "[x]"
+      // followed by a space converts the current block into a task (#262).
+      // Matches inside a noteBlock or headerBlock; the matched text is
+      // deleted and the node type is swapped via setNodeMarkup so inline
+      // content survives.
+      new InputRule({
+        find: /^\s*\[([ xX]?)]\s$/,
+        handler: ({ state, range, match }) => {
+          const $start = state.doc.resolve(range.from)
+          if ($start.parentOffset !== range.from - $start.start()) {
+            return null
+          }
+          const depth = $start.depth
+          const nodePos = $start.before(depth)
+          const node = $start.node(depth)
+          if (
+            node.type.name !== 'noteBlock' &&
+            node.type.name !== 'headerBlock'
+          ) {
+            return null
+          }
+          const taskType = state.schema.nodes.taskBlock
+          const isDone = match[1] === 'x' || match[1] === 'X'
+          const tr = state.tr.delete(range.from, range.to)
+          tr.setNodeMarkup(nodePos, taskType, {
+            id: node.attrs.id,
+            depth: node.attrs.depth || 0,
+            status: isDone ? 'DONE' : 'TODO',
+            owner: '',
+            start_date: '',
+            due_date: '',
+            priority: 3,
+            file_date: node.attrs.file_date || ''
+          })
+          return tr
+        }
+      })
+    ]
   }
 })
 
