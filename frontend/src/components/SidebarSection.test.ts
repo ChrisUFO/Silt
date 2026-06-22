@@ -30,6 +30,7 @@ function makeProps(
     expandedSections: overrides.expandedSections ?? new Set<string>(),
     navOrder: { pages: {} as Record<string, string[]> },
     dropTarget: null,
+    dragItem: null,
     onToggleSection: vi.fn(),
     onSelectPage: vi.fn(),
     onPinPage: vi.fn(),
@@ -214,5 +215,76 @@ describe('SidebarSection (#88 deep-nesting)', () => {
     const page = screen.getByText('Daily')
     page.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }))
     expect(onPinPage).toHaveBeenCalledWith('Journal', 'Daily')
+  })
+
+  it('applies drag-over-top/bottom on page when dropTarget targets it (#176)', () => {
+    const props = makeProps({
+      section: {
+        name: 'Journal',
+        path: 'Journal',
+        pages: [
+          { name: 'Daily', count: 5 },
+          { name: 'Weekly', count: 2 }
+        ]
+      },
+      expandedSections: new Set(['Journal'])
+    })
+    // Simulate: dragging "Daily" over "Weekly" — before indicator.
+    props.dropTarget = { level: 'page', name: 'Weekly', before: true }
+    render(SidebarSection, { props })
+    const weekly = screen.getByText('Weekly').closest('button')!
+    expect(weekly.classList.contains('drag-over-top')).toBe(true)
+    expect(weekly.classList.contains('drag-over-bottom')).toBe(false)
+  })
+
+  it('applies drag-over-bottom on page when dropTarget is after (#176)', () => {
+    const props = makeProps({
+      section: {
+        name: 'Journal',
+        path: 'Journal',
+        pages: [{ name: 'Daily', count: 5 }]
+      },
+      expandedSections: new Set(['Journal'])
+    })
+    props.dropTarget = { level: 'page', name: 'Daily', before: false }
+    render(SidebarSection, { props })
+    const daily = screen.getByText('Daily').closest('button')!
+    expect(daily.classList.contains('drag-over-bottom')).toBe(true)
+  })
+
+  it('applies drag-over-into on section header when a page is dragged over it (#177)', () => {
+    const props = makeProps({
+      section: {
+        name: 'Journal',
+        path: 'Journal',
+        pages: [{ name: 'Daily', count: 5 }]
+      }
+    })
+    // A page is being dragged over this section header.
+    props.dragItem = { level: 'page', name: 'SomePage', section: 'Other' }
+    props.dropTarget = { level: 'section', name: 'Journal', before: false }
+    render(SidebarSection, { props })
+    const header = screen.getByRole('treeitem', { name: /Journal/ })
+    expect(header.classList.contains('drag-over-into')).toBe(true)
+    // Section reorder indicators should NOT show (dragItem is a page, not a section).
+    expect(header.classList.contains('drag-over-top')).toBe(false)
+    expect(header.classList.contains('drag-over-bottom')).toBe(false)
+  })
+
+  it('shows section reorder indicator (not into) when a section is dragged (#176)', () => {
+    const props = makeProps({
+      section: {
+        name: 'Journal',
+        path: 'Journal',
+        pages: []
+      }
+    })
+    // A section is being dragged over this section header (reorder).
+    props.dragItem = { level: 'section', name: 'Other' }
+    props.dropTarget = { level: 'section', name: 'Journal', before: true }
+    render(SidebarSection, { props })
+    const header = screen.getByRole('treeitem', { name: /Journal/ })
+    expect(header.classList.contains('drag-over-top')).toBe(true)
+    expect(header.classList.contains('drag-over-into')).toBe(false)
   })
 })

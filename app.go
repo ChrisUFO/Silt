@@ -580,7 +580,7 @@ func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult,
 	}
 	dest := destPath
 	// Snapshot the instant the copy+verify completed. Used before removeOld
-	// to detect an external edit (e.g. VS Code) that landed in the source
+	// to detect an external edit (e.g. an external editor) that landed in the source
 	// during the cutover — deleting the source then would silently lose it.
 	copyDoneAt := time.Now()
 
@@ -3213,7 +3213,7 @@ func updateFrontmatterField(content, key, newVal string) string {
 		}
 	}
 	// If the frontmatter exists but the key was absent, insert it before
-	// the closing --- so externally-authored files (Obsidian/VS Code) that
+	// the closing --- so externally-authored files (external editors) that
 	// lack the key gain it on rename rather than silently no-oping.
 	if inFM && !found && closeIdx >= 0 {
 		newLine := fmt.Sprintf("%s: %s", key, strconv.Quote(newVal))
@@ -3301,6 +3301,170 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 	})
 
 	return runErr
+}
+
+// MovePage moves a page from one section to another (or to the notebook root
+// when toSection == "") within the same notebook (#177). The .md file is
+// renamed on disk, its `section:` frontmatter is rewritten, the block index
+// is rebuilt at the new path, and nav_order is adjusted for both the source
+// and target sectionKeys. Returns an error on name collision. Cross-notebook
+// moves are out of scope — the page stays within `notebook`. Block UUIDs are
+// preserved so references and embeds keep resolving.
+func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.db == nil {
+		return fmt.Errorf("vault database not loaded")
+	}
+	safeNotebook := sanitizePathSegment(notebook)
+	safeFrom := sanitizeSectionPath(fromSection)
+	safeTo := sanitizeSectionPath(toSection)
+	safePage := sanitizePathSegment(page)
+	if safeNotebook == "" || safePage == "" {
+		return fmt.Errorf("notebook and page names are required")
+	}
+	if safeFrom == safeTo {
+		return nil // already in the target section
+	}
+
+	source := a.resolveSourceByName(safeNotebook)
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
+	if err != nil {
+		return err
+	}
+	oldFile := filepath.Join(notebookDir, safeFrom, safePage+".md")
+	newFile := filepath.Join(notebookDir, safeTo, safePage+".md")
+	if !isPathWithinRoot(oldFile, notebookDir) || !isPathWithinRoot(newFile, notebookDir) {
+		return fmt.Errorf("path escapes notebook root")
+	}
+	if _, err := os.Stat(oldFile); os.IsNotExist(err) {
+		return fmt.Errorf("page %q not found in section %q", safePage, safeFrom)
+	}
+	if _, err := os.Stat(newFile); err == nil {
+		return fmt.Errorf("a page named %q already exists in that section", safePage)
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var runErr error
+	nbRoot := notebookDir
+	a.coordinator.LockFileWrite(nbRoot, func() {
+		// 1. Ensure the target section directory exists (handles nested
+		// sections like "Projects/Active" and the section-less root, which
+		// is the notebook dir itself).
+		targetDir := filepath.Dir(newFile)
+		if err := os.MkdirAll(targetDir, 0o755); err != nil {
+			runErr = fmt.Errorf("failed to create target section directory: %w", err)
+			return
+		}
+
+		// 2. Read the file content before moving.
+		contentBytes, err := os.ReadFile(oldFile)
+		if err != nil {
+			runErr = err
+			return
+		}
+
+		// 3. Rename old → new. If this fails, nothing was modified.
+		a.tracker.RegisterWrite(oldFile)
+		a.tracker.RegisterWrite(newFile)
+		if err := os.Rename(oldFile, newFile); err != nil {
+			runErr = err
+			return
+		}
+
+		// 4. Rewrite the section: frontmatter at the new path. An empty
+		// safeTo produces `section: ""` (section-less), matching the
+		// parser's section-less convention. If this fails, the file is at
+		// the new path with stale frontmatter — we log the error and
+		// continue through the index cleanup (step 5) so the index doesn't
+		// dangle at the old path. The scanner will reconcile on next pass.
+		content := updateFrontmatterField(string(contentBytes), "section", safeTo)
+		a.tracker.RegisterWrite(newFile)
+		if err := parser.WriteFileAtomic(newFile, []byte(content)); err != nil {
+			log.Printf("MovePage: WriteFileAtomic failed at %s (file already moved): %v", newFile, err)
+		}
+
+		// 5. Clear old index entries + re-index at the new path. These run
+		// unconditionally — even if the frontmatter write failed, the file
+		// has already moved and the old index entries must be cleaned up.
+		a.coordinator.WithDBWrite(func() {
+			_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeFrom, safePage)
+		})
+		a.coordinator.WithDBWrite(func() {
+			_ = a.db.ForgetFile(oldFile)
+		})
+		a.reindexFile(newFile, safeNotebook, safeTo, safePage)
+		// If frontmatter write failed, the file has already moved — do not
+		// surface the error to the user. The scanner reconciles stale
+		// frontmatter on the next pass (comment at line 3380).
+	})
+	if runErr != nil {
+		return runErr
+	}
+
+	// 6. Update nav_order: remove the page from the old section's ordering
+	// and append it to the new section's ordering. RenamePage omits this
+	// step — MovePage must keep nav_order consistent with the new on-disk
+	// layout so the sidebar doesn't fall back to alphabetical for a moved
+	// page (#177). Note: this runs outside the LockFileWrite lambda, so
+	// there is a microsecond window where a concurrent SetNavOrder could
+	// interleave — the consequence is stale ordering (not data loss).
+	// If the config save fails, the file move has already succeeded, so
+	// we log but don't return an error — the in-memory cfg is correct and
+	// the next config save (any UI action) will flush it.
+	if err := a.updateNavOrderForMove(safeNotebook, safeFrom, safeTo, safePage); err != nil {
+		log.Printf("MovePage: nav_order persist failed (file move succeeded): %v", err)
+	}
+	return nil
+}
+
+// updateNavOrderForMove adjusts NavOrder.Pages after a page moves between
+// sections. The page is removed from the old sectionKey's ordering and
+// appended to the new sectionKey's ordering (idempotent — skips if already
+// present). The sectionKey format mirrors the frontend: `${notebook}/${section}`
+// (empty section for root pages). Persisted atomically with self-write
+// suppression so the config watcher doesn't double-fire.
+func (a *App) updateNavOrderForMove(notebook, fromSection, toSection, page string) error {
+	oldKey := notebook + "/" + fromSection
+	newKey := notebook + "/" + toSection
+
+	a.configMu.Lock()
+	pages := a.cfg.UI.NavOrder.Pages
+	if pages == nil {
+		pages = map[string][]string{}
+	}
+	// Remove from old section.
+	if oldList, ok := pages[oldKey]; ok {
+		filtered := make([]string, 0, len(oldList))
+		for _, p := range oldList {
+			if p != page {
+				filtered = append(filtered, p)
+			}
+		}
+		pages[oldKey] = filtered
+	}
+	// Append to new section (idempotent).
+	newList := pages[newKey]
+	already := false
+	for _, p := range newList {
+		if p == page {
+			already = true
+			break
+		}
+	}
+	if !already {
+		pages[newKey] = append(newList, page)
+	}
+	a.cfg.UI.NavOrder.Pages = pages
+	cfg := a.cfg
+	a.configMu.Unlock()
+
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	return config.Save(a.vaultPath, cfg)
 }
 
 // RenameSection renames a section folder and updates the section: frontmatter
@@ -3805,7 +3969,7 @@ type OpenTabsResult struct {
 
 // GetOpenTabs returns the persisted open-tab set + active tab from
 // config.yaml. Only pinned tabs are persisted (preview tabs are ephemeral —
-// VS Code parity). Stale tabs — references to pages that no longer exist on
+// industry-standard parity). Stale tabs — references to pages that no longer exist on
 // disk (deleted/renamed since last launch) — are pruned silently against the
 // live ListNavigation tree before returning, so the frontend never mounts a
 // tab for a missing page. The on-disk tree is the source of truth, not the
@@ -4549,7 +4713,7 @@ func (a *App) seedFirstPartyGrants() {
 // UpdatePluginSetting atomically updates a single per-plugin setting key and
 // persists it — the targeted read-modify-write that replaces the frontend
 // read-mutate-saveConfig dance which could race an external config.yaml edit
-// (e.g. VS Code) landing between the read and the Go-side atomic write (#120).
+// (e.g. an external editor) landing between the read and the Go-side atomic write (#120).
 // Only plugins.plugin_settings[pluginID][key] is touched; every other config
 // field is preserved verbatim, so a concurrent external edit to an unrelated
 // section is not clobbered.

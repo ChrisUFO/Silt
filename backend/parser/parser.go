@@ -22,7 +22,7 @@ import (
 // makes the metadata order-independent and extensible (new metadata
 // type = new key in the switch, no regex change). The token format
 // follows the Dataview inline metadata standard ([key:: value]) so
-// files are interoperable with the Obsidian/Dataview ecosystem.
+// files are interoperable with the Dataview-compatible ecosystem.
 //
 // See ARCHITECTURE.md §0 "Storage-of-Truth Tiers" for the design
 // rationale: task metadata is file-resident user intent, and the
@@ -164,7 +164,7 @@ func parseLeadingIndent(line string, spacesPerTab int) int {
 // tokens from a task line's remainder (the text after the checkbox).
 // Returns the parsed fields, the description with known tokens stripped,
 // and any unrecognised tokens preserved verbatim for forward-compatible
-// round-tripping (Obsidian/Dataview interop — SPECS.md §4.1).
+// round-tripping (Dataview-compatible interop — SPECS.md §4.1).
 //
 // The function is the single source of truth for token → field mapping.
 // Adding a new metadata type is a one-line addition to the switch below.
@@ -636,7 +636,7 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 			tokens = append(tokens, fmt.Sprintf("[progress:: %d]", block.Progress))
 		}
 		// Append unknown Dataview tokens verbatim so they survive the
-		// round-trip (Obsidian/Dataview interop — SPECS.md §4.1).
+		// round-trip (Dataview-compatible interop — SPECS.md §4.1).
 		tokens = append(tokens, block.ExtraTokens...)
 
 		tokenStr := ""

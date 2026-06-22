@@ -355,7 +355,7 @@ func TestParseLine_PinAndProgress(t *testing.T) {
 // TestParseLine_UnknownTokens verifies that unrecognised [key:: value]
 // Dataview tokens (e.g. third-party fields like [project:: alpha]) survive
 // the parse → render round-trip so files stay interoperable with
-// Obsidian/Dataview (SPECS.md §4.1).
+// Dataview-compatible (SPECS.md §4.1).
 func TestParseLine_UnknownTokens(t *testing.T) {
 	t.Run("unknown token collected into ExtraTokens", func(t *testing.T) {
 		line := "- [ ] Build feature [due:: 2026-08-03] [project:: alpha] <!-- id: 77777777-7777-7777-7777-777777777777 -->"

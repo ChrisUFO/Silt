@@ -106,7 +106,7 @@ The Go runtime orchestrates system access, monitors local storage directories, p
 
 2.1 File System Monitor (fsnotify Pipeline)
 
-To allow interoperability with external plain-text editors (e.g., VS Code), the Go backend implements an active directory watcher using github.com/fsnotify/fsnotify.
+To allow interoperability with external plain-text editors (e.g. an external editor), the Go backend implements an active directory watcher using github.com/fsnotify/fsnotify.
 
 The Feedback Loop Prevention Strategy
 
@@ -510,6 +510,7 @@ func (a *App) OpenNotebook(folderPath string) (string, error)
 func (a *App) PickNotebookFolder() (string, error)
 func (a *App) CreateSection(notebook, section string) error
 func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error) // section may be ""
+func (a *App) MovePage(notebook, fromSection, toSection, page string) error     // #177 cross-section / root move
 
 // Vault relocation (#141). The active vault can be moved or duplicated to a
 // new folder from Settings → General. CopyVaultTree + verifyCopy (in
@@ -581,9 +582,18 @@ func (a *App) GetAppVersion() string
 // set + active tab, pruned against ListNavigation (stale tabs for deleted
 // pages are silently dropped). SetOpenTabs atomically persists the pinned set
 // + active via configMu + RegisterSelfWrite + config.Save. Only pinned tabs
-// are persisted (preview tabs are ephemeral — VS Code parity).
+// are persisted (preview tabs are ephemeral — industry-standard parity).
 func (a *App) GetOpenTabs() (OpenTabsResult, error)
 func (a *App) SetOpenTabs(openTabs []config.TabRef, activeTab *config.TabRef) error
+
+// Nav-order persistence (#68, #177). GetNavOrder returns the explicit
+// ordering for notebooks/sections/pages; SetNavOrder persists it atomically.
+// MovePage updates NavOrder.Pages for both the source and target
+// sectionKeys on a cross-section move (RenamePage omits this step).
+func (a *App) GetNavOrder() (config.NavOrder, error)
+func (a *App) SetNavOrder(order config.NavOrder) error
+func (a *App) GetSidebarWidth() (int, error)
+func (a *App) SetSidebarWidth(width int) error
 
 
 4.4 Theme Engine IPC & Pipeline
@@ -730,7 +740,7 @@ The frontend uses Svelte 5's fine-grained compiler. The editor surface is built 
 Each **open tab** renders a single TipTap editor instance
 (`TipTapEditor.svelte`) containing all of that page's blocks. The tab strip
 (`TabStrip.svelte`, directly above the editor in the content area) manages the
-VS Code-style preview-vs-pinned model: a single-click opens a transient
+standard preview-vs-pinned model: a single-click opens a transient
 **preview tab** (reusable slot); a double-click, middle-click, or first edit
 promotes it to a dedicated **pinned tab**. Multiple editors coexist (one per
 open tab, hidden via `display:none` to preserve per-tab scroll, cursor, and
@@ -752,6 +762,7 @@ The editor's transaction lifecycle is wired to the Go backend:
 - **Load:** `FetchPageBlocks(notebook, section, page)` returns a flat `[]ParsedBlock`; `blocksToDoc(blocks)` converts to ProseMirror doc JSON; `editor.commands.setContent(doc)` populates the editor.
 - **Save:** `editor.on('update')` (debounced via `editor.auto_save_delay_ms`) → `docToBlocks(editor.getJSON())` → `SaveFileBlocks(notebook, section, page, blocks)`. Go's `RenderFileContent` remains the single on-disk serializer.
 - **Focus lock (#38):** the editor's `onFocus`/`onBlur` events drive `Acquire/ReleaseFocusLock`; a 20s heartbeat (`RefreshFocusLock`) keeps the lease alive while focused.
+- **Per-tab save-state (#167):** `TipTapEditor` exposes `onSaveStateChange({ dirty, error })` on dirty/error/clean transitions. The callback threads through `VirtualScrollContainer` → `App.svelte`, which writes `TabEntry.dirty` / `TabEntry.saveError`. The tab strip renders a dirty glyph (`circle` icon in `--color-text-muted`) or error glyph (`error` icon in `--color-status-danger`) before the page name, visible from any tab — not just the active one. Controlled by `ui.show_tab_dirty_indicators` (default true). The in-editor footer indicator remains the authoritative surface; the tab glyph is a secondary always-visible hint.
 
 The ProseMirror schema defines three block node types (`taskBlock`, `noteBlock`, `headerBlock`) that map 1:1 to `parser.ParsedBlock`. Each carries a UUID `id` attr and a per-block `file_date`. A `UniqueBlockIds` extension (`appendTransaction`) mints fresh UUIDs for pasted/duplicated blocks to prevent `blocks`-table PK collisions.
 
@@ -808,7 +819,7 @@ func (ec *ExecutionCoordinator) LockFileWrite(filepath string, task func()) {
 
 6.2 Viewport Sync Conflict Mitigation
 
-If you edit a markdown file in VS Code while the Silt dashboard is open, the file-watcher triggers a rebuild of the SQLite cache. If Svelte is actively editing the same line, the changes could conflict.
+If you edit a markdown file in an external editor while the Silt dashboard is open, the file-watcher triggers a rebuild of the SQLite cache. If Svelte is actively editing the same line, the changes could conflict.
 
 Mitigation Plan:
 
@@ -930,7 +941,7 @@ Global settings — editor defaults, parsing rules, hotkeys, and the plugin regi
 
 8.1 Parser (backend/config)
 
-config.SystemConfig mirrors the SPECS §9.1 schema (notebooks / editor / parsing / hotkeys / plugins). Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
+config.SystemConfig mirrors the SPECS §9.1 schema (notebooks / editor / parsing / hotkeys / plugins / ui). The `ui.*` block holds per-vault UI preferences: `sidebar_width`, `nav_order` (explicit section/page ordering for drag-to-reorder, #68/#177), `open_tabs` / `active_tab` (pinned-tab persistence, #142 — preview tabs are ephemeral), `enable_preview_tabs`, `max_open_tabs`, `show_format_toolbar` (#168), `show_tab_dirty_indicators` (#167, default true), `dismissed_tips`, and `formatting.*` toggles. Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
 
 8.2 Hot-Reload (backend/config.ConfigWatcher)
 

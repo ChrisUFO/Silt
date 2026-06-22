@@ -8,10 +8,20 @@
     onSelectTab: (id: string) => void
     onCloseTab: (id: string) => void
     onPromoteTab: (id: string) => void
+    onReorderTab: (fromId: string, toId: string, before: boolean) => void
+    /** When true (default), show per-tab dirty/save-failed glyphs (#167). */
+    showDirtyIndicators?: boolean
   }
 
-  let { tabs, activeTabId, onSelectTab, onCloseTab, onPromoteTab }: Props =
-    $props()
+  let {
+    tabs,
+    activeTabId,
+    onSelectTab,
+    onCloseTab,
+    onPromoteTab,
+    onReorderTab,
+    showDirtyIndicators = true
+  }: Props = $props()
 
   // Roving tabindex: the active tab (or the first tab if none active) is the
   // only tab in the tab sequence. Arrow keys move focus between tabs without
@@ -32,7 +42,10 @@
     const parts = [tab.notebook]
     if (tab.section) parts.push(tab.section)
     parts.push(tab.page)
-    return parts.join(' › ')
+    let tip = parts.join(' › ')
+    if (tab.saveError) tip += ' — save failed'
+    else if (tab.dirty) tip += ' — unsaved edits'
+    return tip
   }
 
   function handleTablistKeydown(e: KeyboardEvent): void {
@@ -83,7 +96,7 @@
   let tabRefs: HTMLButtonElement[] = $state([])
 
   function handleAuxClick(e: MouseEvent, tab: TabEntry): void {
-    // Middle-click (button 1) closes the tab.
+    // Middle-click (button 1) closes the tab — industry-standard parity.
     if (e.button === 1) {
       e.preventDefault()
       onCloseTab(tab.id)
@@ -93,6 +106,58 @@
   function handleDblClick(tab: TabEntry): void {
     // Double-click promotes a PREVIEW tab only; pinned tabs are no-ops.
     if (tab.preview) onPromoteTab(tab.id)
+  }
+
+  // --- Tab drag-to-reorder (#175) ---
+  // dragTabId: the id of the tab being dragged. dropTabTarget: the tab
+  // currently under the cursor + whether the drop indicator should show on
+  // its left (before) or right (after) edge.
+  let dragTabId = $state<string | null>(null)
+  let dropTabTarget = $state<{ id: string; before: boolean } | null>(null)
+
+  function handleTabDragStart(e: DragEvent, tab: TabEntry): void {
+    // Don't start a drag if the user grabbed the close button — the close
+    // span is a mouse-only convenience; dragging from it would be confusing.
+    const target = e.target as HTMLElement
+    if (target.closest('.tab-close')) {
+      e.preventDefault()
+      return
+    }
+    dragTabId = tab.id
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', tab.id)
+    }
+  }
+
+  function handleTabDragOver(e: DragEvent, tab: TabEntry): void {
+    if (!dragTabId || dragTabId === tab.id) return
+    e.preventDefault()
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const before = e.clientX < rect.left + rect.width / 2
+    dropTabTarget = { id: tab.id, before }
+  }
+
+  function handleTabDragLeave(e: DragEvent): void {
+    const tabEl = e.currentTarget as HTMLElement
+    if (e.relatedTarget && tabEl.contains(e.relatedTarget as Node)) return
+    dropTabTarget = null
+  }
+
+  function handleTabDrop(e: DragEvent, tab: TabEntry): void {
+    e.preventDefault()
+    e.stopPropagation()
+    if (dragTabId && dragTabId !== tab.id && dropTabTarget) {
+      onReorderTab(dragTabId, tab.id, dropTabTarget.before)
+    }
+    dragTabId = null
+    dropTabTarget = null
+  }
+
+  function handleTabDragEnd(): void {
+    dragTabId = null
+    dropTabTarget = null
   }
 </script>
 
@@ -114,16 +179,39 @@
         id="silt-tab-{tab.id}"
         aria-selected={tab.id === activeTabId}
         aria-controls="silt-tabpanel"
+        aria-label={tabTooltip(tab)}
         tabindex={i === focusedIndex ? 0 : -1}
         title={tabTooltip(tab)}
         class="tab-button group"
         class:active={tab.id === activeTabId}
         class:preview={tab.preview}
+        class:tab-drop-before={dropTabTarget?.id === tab.id &&
+          dropTabTarget.before}
+        class:tab-drop-after={dropTabTarget?.id === tab.id &&
+          !dropTabTarget.before}
+        draggable="true"
+        ondragstart={(e) => handleTabDragStart(e, tab)}
+        ondragover={(e) => handleTabDragOver(e, tab)}
+        ondragleave={handleTabDragLeave}
+        ondrop={(e) => handleTabDrop(e, tab)}
+        ondragend={handleTabDragEnd}
         onclick={() => onSelectTab(tab.id)}
         onfocus={() => (focusedIndex = i)}
         onauxclick={(e) => handleAuxClick(e, tab)}
         ondblclick={() => handleDblClick(tab)}
       >
+        {#if showDirtyIndicators && (tab.dirty || tab.saveError)}
+          <span
+            class="tab-save-state"
+            class:error={!!tab.saveError}
+            class:dirty={!tab.saveError}
+            aria-hidden="true"
+          >
+            <span class="material-symbols-outlined text-[12px]">
+              {tab.saveError ? 'error' : 'circle'}
+            </span>
+          </span>
+        {/if}
         <span class="tab-label" class:italic={tab.preview}>{tab.page}</span>
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -252,7 +340,7 @@
     background: var(--color-hover, #1e2128);
   }
 
-  /* Preview tabs: hide the close button until hover. */
+  /* Preview tabs: hide the close button until hover (industry-standard parity). */
   .preview-close {
     opacity: 0;
   }
@@ -263,5 +351,64 @@
 
   .tab-button:hover .preview-close:hover {
     opacity: 1;
+  }
+
+  /* Tab drag-to-reorder drop indicators (#175). A vertical accent line at
+     the left/right edge of the hovered tab, matching the sidebar's
+     drag-over-top/bottom style for visual consistency. */
+  .tab-button.tab-drop-before::before {
+    content: '';
+    position: absolute;
+    left: -1px;
+    top: 4px;
+    bottom: 4px;
+    width: 2px;
+    background: var(--color-accent-primary-start, #2dd4bf);
+    border-radius: 1px;
+    z-index: 1;
+  }
+
+  .tab-button.tab-drop-after::after {
+    content: '';
+    position: absolute;
+    right: -1px;
+    top: 4px;
+    bottom: 4px;
+    width: 2px;
+    background: var(--color-accent-primary-start, #2dd4bf);
+    border-radius: 1px;
+    z-index: 1;
+  }
+
+  /* Per-tab dirty/save-state indicators (#167). The dirty dot uses
+     --text-muted; the error glyph uses --status-danger. Both are icons
+     (not color alone) + the tab's title/tooltip carries the state text
+     for AT users. */
+  .tab-save-state {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+
+  .tab-save-state.dirty {
+    color: var(--color-text-muted, #8b8b94);
+    animation: dirty-pulse 2s ease-in-out infinite;
+  }
+
+  .tab-save-state.error {
+    color: var(--color-status-danger, #f43f5e);
+  }
+
+  @keyframes dirty-pulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tab-save-state.dirty {
+      animation: none;
+      opacity: 0.8;
+    }
   }
 </style>

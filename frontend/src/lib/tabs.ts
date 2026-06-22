@@ -1,5 +1,4 @@
-// Pure state machine for the preview/pin tab model (#142). Mirrors the
-// common single-click-preview / double-click-pin editor convention.
+// Pure state machine for the standard preview/pin tab model (#142).
 //
 // Every function here is PURE: it takes the current tab list + active id and
 // returns the next state without mutation. The Svelte layer (App.svelte)
@@ -7,7 +6,7 @@
 // `$state` runes. Keeping the logic pure makes it exhaustively unit-testable
 // (tabs.test.ts) and decouples the tab model from Svelte's reactivity.
 //
-// Contract:
+// industry-standard parity (the contract this module implements):
 // - Single-click in the Explorer opens a page in a transient PREVIEW tab
 //   (rendered italic). The same preview slot is reused: clicking another
 //   page replaces its content.
@@ -51,6 +50,11 @@ export interface TabEntry extends PageRef {
   blockTarget?: { fileDate?: string; blockId?: string }
   /** Monotonic timestamp for MRU ordering (higher = more recent). */
   lastActivatedAt: number
+  /** True when the tab's editor has unsaved edits pending (#167). Runtime
+   *  only — not persisted (auto-save means dirty state is sub-second). */
+  dirty?: boolean
+  /** Non-null when the tab's last save failed (#167). Runtime only. */
+  saveError?: string | null
 }
 
 /**
@@ -99,7 +103,7 @@ export function mruOrder(tabs: TabEntry[]): TabEntry[] {
 /**
  * The core open-page state machine. Returns the next { tabs, activeId }.
  *
- * Rules (see module docstring):
+ * Rules (industry-standard parity — see module docstring):
  * 1. If a PINNED tab for (notebook, section, page) exists → activate it,
  *    ignore `mode`.
  * 2. If a PREVIEW tab for the same page exists → activate it.
@@ -154,7 +158,7 @@ export function openPage(
   // promote it if the caller asked for a pin. This handles the
   // double-click-in-sidebar flow: the first click opens a preview (Rule 4),
   // the dblclick fires openPage('pin'), and this rule promotes the just-
-  // opened preview to pinned.
+  // opened preview to pinned (industry-standard parity).
   const previewSamePage = state.tabs.find(
     (t) => t.preview && tabMatches(t, ref)
   )
@@ -185,7 +189,10 @@ export function openPage(
               section: ref.section,
               page: ref.page,
               blockTarget,
-              lastActivatedAt: now
+              lastActivatedAt: now,
+              // Reset save state — the new page starts clean (#167).
+              dirty: false,
+              saveError: null
             }
           : t
       )
@@ -256,7 +263,9 @@ function createTab(
     page: ref.page,
     preview,
     blockTarget,
-    lastActivatedAt: now
+    lastActivatedAt: now,
+    dirty: false,
+    saveError: null
   }
   tabs.push(newTab)
   return { tabs, activeId: newTab.id }
@@ -326,4 +335,58 @@ export function cycleTab(state: TabsState, dir: 1 | -1): TabsState {
   if (currentIdx === -1) return state
   const nextIdx = (currentIdx + dir + ordered.length) % ordered.length
   return activateTab(state, ordered[nextIdx].id)
+}
+
+/**
+ * Reorder a tab within the tabs array (visual position only). The tab
+ * identified by `fromId` is moved to before or after the tab identified by
+ * `toId`, depending on the `before` flag. MRU order (`lastActivatedAt`) is
+ * NOT affected — reorder changes visual position only, matching the standard
+ * behavior (#175). No-op if either id is missing or they are the same.
+ * Returns a new state.
+ */
+export function reorderTab(
+  state: TabsState,
+  fromId: string,
+  toId: string,
+  before: boolean
+): TabsState {
+  if (fromId === toId) return state
+  const fromIdx = state.tabs.findIndex((t) => t.id === fromId)
+  const toIdx = state.tabs.findIndex((t) => t.id === toId)
+  if (fromIdx === -1 || toIdx === -1) return state
+  const next = state.tabs.slice()
+  const [moved] = next.splice(fromIdx, 1)
+  // Recompute the target index after removal (it may have shifted if
+  // fromIdx was before toIdx).
+  const adjustedToIdx = next.findIndex((t) => t.id === toId)
+  const insertIdx = before ? adjustedToIdx : adjustedToIdx + 1
+  next.splice(insertIdx, 0, moved)
+  return { tabs: next, activeId: state.activeId }
+}
+
+/**
+ * Merge a reordered subset of displayed tabs (one notebook's tabs) back into
+ * the full openTabs array, preserving the relative positions of other-notebook
+ * tabs. Used by handleReorderTab in App.svelte (#175). Pure and testable so
+ * the merge logic doesn't require an App-level component test.
+ *
+ * @param fullTabs The full openTabs array (all notebooks, interleaved)
+ * @param reorderedDisplayed The reordered subset for the active notebook
+ * @param notebook The active notebook name (filters which tabs to replace)
+ * @returns A new array with the reordered subset spliced in
+ */
+export function mergeReorderedTabs(
+  fullTabs: TabEntry[],
+  reorderedDisplayed: TabEntry[],
+  notebook: string
+): TabEntry[] {
+  const notebookCount = fullTabs.filter(
+    (t) => t.notebook === notebook
+  ).length
+  if (reorderedDisplayed.length !== notebookCount) return fullTabs.slice()
+  let displayIdx = 0
+  return fullTabs.map((t) =>
+    t.notebook === notebook ? reorderedDisplayed[displayIdx++] : t
+  )
 }

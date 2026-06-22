@@ -67,9 +67,9 @@ type ParsingConfig struct {
 // aligning with #100's trust-scoping principle. A missing entry means "not
 // granted" (privileged bindings return a structured CapabilityDeniedError).
 type PluginsConfig struct {
-	Active         []string                  `yaml:"active" json:"active"`
-	Disabled       []string                  `yaml:"disabled" json:"disabled"`
-	PluginSettings map[string]any            `yaml:"plugin_settings" json:"plugin_settings"`
+	Active         []string                     `yaml:"active" json:"active"`
+	Disabled       []string                     `yaml:"disabled" json:"disabled"`
+	PluginSettings map[string]any               `yaml:"plugin_settings" json:"plugin_settings"`
 	Grants         map[string]map[string]string `yaml:"grants,omitempty" json:"grants,omitempty"`
 }
 
@@ -108,6 +108,12 @@ type UIConfig struct {
 	// it from Settings. The bubble, slash commands, hotkeys, and hover menu
 	// remain functional when hidden.
 	ShowFormatToolbar *bool `yaml:"show_format_toolbar,omitempty" json:"show_format_toolbar,omitempty"`
+	// ShowTabDirtyIndicators controls the per-tab dirty/save-failed glyph on
+	// the tab header (#167). Default true; users who find the visual churn
+	// noisy (Silt auto-saves on a 500ms debounce, so most dirty state is
+	// sub-second) can hide the tab glyph. The in-editor save-state indicator
+	// is unaffected — it remains the authoritative surface.
+	ShowTabDirtyIndicators *bool `yaml:"show_tab_dirty_indicators,omitempty" json:"show_tab_dirty_indicators,omitempty"`
 	// DismissedTips tracks one-time UI tips the user has dismissed (per-vault).
 	// Used by the formatting first-run tip (#168). Same persistence tier as
 	// sidebar_width.
@@ -131,8 +137,8 @@ type FormattingConfig struct {
 // TabRef is a persisted reference to an open tab's page (#142). It is the
 // YAML-serializable form of a frontend TabEntry — only the locator triple is
 // persisted; preview flag, scroll/cursor state, and the like are ephemeral
-// (preview tabs are not restored across restarts). The frontend filters to
-// pinned tabs before calling SetOpenTabs.
+// (industry-standard parity: preview tabs are not restored across restarts). The
+// frontend filters to pinned tabs before calling SetOpenTabs.
 type TabRef struct {
 	Notebook string `yaml:"notebook" json:"notebook"`
 	Section  string `yaml:"section" json:"section"`
@@ -207,9 +213,9 @@ func Defaults() SystemConfig {
 			TabIndentSpaces:         4,
 			AutoSaveDelayMs:         500,
 			FocusHighlightAncestors: true,
-			ShowWordCount: boolPtr(false),
-			FocusMode:     boolPtr(false),
-			DefaultViewMode: stringPtr("edit"),
+			ShowWordCount:           boolPtr(false),
+			FocusMode:               boolPtr(false),
+			DefaultViewMode:         stringPtr("edit"),
 		},
 		Parsing: ParsingConfig{
 			AutoInjectUUID:      true,
@@ -236,22 +242,22 @@ func Defaults() SystemConfig {
 			// the deep-merge. The editor's ProseMirror keymaps consume these
 			// inside the contenteditable; the global handler skips them when
 			// the editor is focused (Ctrl+B resolution).
-			"format_bold":       "Ctrl+B",
-			"format_italic":     "Ctrl+I",
-			"format_underline":  "Ctrl+U",
-			"format_strike":     "Ctrl+Shift+X",
-			"format_code":       "Ctrl+E",
-			"format_link":       "Ctrl+K",
-			"format_highlight":  "Ctrl+Shift+H",
-			"format_subscript":  "Ctrl+,",
+			"format_bold":        "Ctrl+B",
+			"format_italic":      "Ctrl+I",
+			"format_underline":   "Ctrl+U",
+			"format_strike":      "Ctrl+Shift+X",
+			"format_code":        "Ctrl+E",
+			"format_link":        "Ctrl+K",
+			"format_highlight":   "Ctrl+Shift+H",
+			"format_subscript":   "Ctrl+,",
 			"format_superscript": "Ctrl+.",
-			// Heading level hotkeys (#169). Standard heading-level shortcuts.
+			// Heading level hotkeys (#169). Standard Word/Google Docs bindings.
 			"set_h1":   "Ctrl+Alt+1",
 			"set_h2":   "Ctrl+Alt+2",
 			"set_h3":   "Ctrl+Alt+3",
 			"set_note": "Ctrl+Alt+0",
 			"set_task": "Ctrl+Alt+4",
-			// Text alignment hotkeys (#173). Standard alignment shortcuts.
+			// Text alignment hotkeys (#173). Standard Word/Google Docs bindings.
 			"align_left":    "Ctrl+Shift+L",
 			"align_center":  "Ctrl+Shift+E",
 			"align_right":   "Ctrl+Shift+R",
@@ -277,9 +283,9 @@ func Defaults() SystemConfig {
 				Pages:    map[string][]string{},
 			},
 			OpenTabs: []TabRef{},
-			// EnablePreviewTabs defaults to true. Stored as a *bool so
-			// "unset" is distinguishable from "explicitly false"; the
-			// frontend treats nil as true.
+			// EnablePreviewTabs defaults to true (industry-standard parity). Stored as
+			// a *bool so "unset" is distinguishable from "explicitly false";
+			// the frontend treats nil as true.
 			EnablePreviewTabs: boolPtr(true),
 			// MaxOpenTabs caps the simultaneously-mounted editor count
 			// (#142 §3). 8 is the documented default; on overflow the
@@ -291,7 +297,11 @@ func Defaults() SystemConfig {
 			// "unset" is distinguishable from "explicitly false"; the frontend
 			// treats nil as true.
 			ShowFormatToolbar: boolPtr(true),
-			DismissedTips:     []string{},
+			// ShowTabDirtyIndicators defaults to true (#167). Same *bool
+			// semantics as EnablePreviewTabs: "unset" stays distinguishable
+			// from "explicitly false" through the Load → normalize path.
+			ShowTabDirtyIndicators: boolPtr(true),
+			DismissedTips:          []string{},
 			Formatting: FormattingConfig{
 				TypographyEnabled: boolPtr(true),
 				ColorEnabled:      boolPtr(true),
@@ -502,9 +512,10 @@ func normalize(cfg SystemConfig) SystemConfig {
 	if cfg.UI.MaxOpenTabs > 32 {
 		cfg.UI.MaxOpenTabs = 32
 	}
-	// EnablePreviewTabs: nil → true. The field is a *bool so "unset" stays
-	// distinguishable from "explicitly false" through the Load → normalize
-	// path; once normalized, the frontend reads nil as true.
+	// EnablePreviewTabs: nil → true (industry-standard parity). The field is a *bool
+	// so "unset" stays distinguishable from "explicitly false" through the
+	// Load → normalize path; once normalized, the frontend reads nil as
+	// true.
 	if cfg.UI.EnablePreviewTabs == nil {
 		cfg.UI.EnablePreviewTabs = boolPtr(true)
 	}
@@ -512,6 +523,10 @@ func normalize(cfg SystemConfig) SystemConfig {
 	// EnablePreviewTabs.
 	if cfg.UI.ShowFormatToolbar == nil {
 		cfg.UI.ShowFormatToolbar = boolPtr(true)
+	}
+	// ShowTabDirtyIndicators: nil → true (#167). Same *bool semantics.
+	if cfg.UI.ShowTabDirtyIndicators == nil {
+		cfg.UI.ShowTabDirtyIndicators = boolPtr(true)
 	}
 	if cfg.UI.DismissedTips == nil {
 		cfg.UI.DismissedTips = []string{}

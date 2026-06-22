@@ -5,7 +5,13 @@ import type { TabEntry } from '../lib/tabs'
 
 function mkTab(
   ref: { notebook: string; section: string; page: string },
-  opts: { preview?: boolean; lastActivatedAt?: number; id?: string } = {}
+  opts: {
+    preview?: boolean
+    lastActivatedAt?: number
+    id?: string
+    dirty?: boolean
+    saveError?: string | null
+  } = {}
 ): TabEntry {
   return {
     id: opts.id ?? `tab-${ref.page}`,
@@ -13,7 +19,9 @@ function mkTab(
     section: ref.section,
     page: ref.page,
     preview: opts.preview ?? false,
-    lastActivatedAt: opts.lastActivatedAt ?? Date.now()
+    lastActivatedAt: opts.lastActivatedAt ?? Date.now(),
+    dirty: opts.dirty,
+    saveError: opts.saveError
   }
 }
 
@@ -28,7 +36,9 @@ function defaultProps(
     activeTabId: overrides.activeTabId ?? '',
     onSelectTab: vi.fn(),
     onCloseTab: vi.fn(),
-    onPromoteTab: vi.fn()
+    onPromoteTab: vi.fn(),
+    onReorderTab: vi.fn(),
+    showDirtyIndicators: true
   }
 }
 
@@ -239,5 +249,175 @@ describe('TabStrip (#142)', () => {
     expect(tab1.id).toBeTruthy()
     expect(tab2.id).toBeTruthy()
     expect(tab1.id).not.toBe(tab2.id)
+  })
+
+  it('tab buttons are draggable (#175)', () => {
+    const tabs = [mkTab({ notebook: 'W', section: '', page: 'A' })]
+    render(TabStrip, {
+      props: defaultProps({ tabs, activeTabId: 'tab-A' })
+    })
+    const tab = screen.getAllByRole('tab')[0]
+    expect(tab.getAttribute('draggable')).toBe('true')
+  })
+
+  it('drop on another tab calls onReorderTab (#175)', async () => {
+    const tabs = [
+      mkTab({ notebook: 'W', section: '', page: 'A' }, { id: 'tab-A' }),
+      mkTab({ notebook: 'W', section: '', page: 'B' }, { id: 'tab-B' })
+    ]
+    const props = defaultProps({ tabs, activeTabId: 'tab-A' })
+    render(TabStrip, { props })
+    const [tabA, tabB] = screen.getAllByRole('tab')
+
+    // Mock getBoundingClientRect so before/after is deterministic: tab B
+    // occupies [0,100], clientX=10 → before=true. jsdom lacks DragEvent, so
+    // we use a MouseEvent with the dragover type.
+    vi.spyOn(tabB, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 30,
+      right: 100,
+      bottom: 30,
+      x: 0,
+      y: 0,
+      toJSON: () => ({})
+    } as DOMRect)
+
+    await fireEvent.dragStart(tabA)
+    tabB.dispatchEvent(
+      new MouseEvent('dragover', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 10
+      })
+    )
+    await fireEvent.drop(tabB)
+
+    expect(props.onReorderTab).toHaveBeenCalledTimes(1)
+    // The before/after depends on mouse position (clientX=10 < width/2=50).
+    expect(props.onReorderTab).toHaveBeenCalledWith('tab-A', 'tab-B', true)
+  })
+
+  it('dragging from the close button does not start a tab drag (#175)', async () => {
+    const tabs = [
+      mkTab({ notebook: 'W', section: '', page: 'A' }),
+      mkTab({ notebook: 'W', section: '', page: 'B' })
+    ]
+    const props = defaultProps({ tabs, activeTabId: 'tab-A' })
+    render(TabStrip, { props })
+    // Two tabs → two close buttons; grab the first one.
+    const closeSpans = screen.getAllByLabelText('Close tab')
+    const tabB = screen.getAllByRole('tab')[1]
+
+    // dragstart from the close span should be cancelled (preventDefault).
+    // After that, a dragOver+drop on tab B should NOT trigger onReorderTab
+    // because dragTabId was never set.
+    await fireEvent.dragStart(closeSpans[0])
+    await fireEvent.dragOver(tabB)
+    await fireEvent.drop(tabB)
+
+    expect(props.onReorderTab).not.toHaveBeenCalled()
+  })
+
+  it('keyboard navigation works after a reorder interaction (regression #175)', async () => {
+    const tabs = [
+      mkTab({ notebook: 'W', section: '', page: 'A' }),
+      mkTab({ notebook: 'W', section: '', page: 'B' }),
+      mkTab({ notebook: 'W', section: '', page: 'C' })
+    ]
+    const props = defaultProps({ tabs, activeTabId: 'tab-A' })
+    render(TabStrip, { props })
+    const tablist = screen.getByRole('tablist')
+    const tabButtons = screen.getAllByRole('tab')
+
+    // Focus tab A, ArrowRight to B, ArrowRight to C — keyboard nav is
+    // unbroken by the DnD handlers.
+    tabButtons[0].focus()
+    await fireEvent.keyDown(tablist, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(tabButtons[1])
+    await fireEvent.keyDown(tablist, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(tabButtons[2])
+
+    // Home and Delete still work.
+    await fireEvent.keyDown(tablist, { key: 'Home' })
+    expect(document.activeElement).toBe(tabButtons[0])
+    await fireEvent.keyDown(tablist, { key: 'Delete' })
+    expect(props.onCloseTab).toHaveBeenCalledWith('tab-A')
+  })
+
+  it('dirty tab shows the dirty glyph (#167)', () => {
+    const tabs = [
+      mkTab({ notebook: 'W', section: '', page: 'A' }, { dirty: true })
+    ]
+    render(TabStrip, {
+      props: defaultProps({ tabs, activeTabId: 'tab-A' })
+    })
+    const glyph = screen.getByText('circle')
+    expect(glyph).toBeInTheDocument()
+    expect(glyph.closest('.tab-save-state')?.classList.contains('dirty')).toBe(
+      true
+    )
+  })
+
+  it('save-failed tab shows the error glyph (#167)', () => {
+    const tabs = [
+      mkTab(
+        { notebook: 'W', section: '', page: 'A' },
+        { saveError: 'disk full' }
+      )
+    ]
+    render(TabStrip, {
+      props: defaultProps({ tabs, activeTabId: 'tab-A' })
+    })
+    const glyph = screen.getByText('error')
+    expect(glyph).toBeInTheDocument()
+    expect(glyph.closest('.tab-save-state')?.classList.contains('error')).toBe(
+      true
+    )
+  })
+
+  it('clean tab shows no save-state glyph (#167)', () => {
+    const tabs = [mkTab({ notebook: 'W', section: '', page: 'A' })]
+    render(TabStrip, {
+      props: defaultProps({ tabs, activeTabId: 'tab-A' })
+    })
+    expect(screen.queryByText('circle')).toBeNull()
+    expect(screen.queryByText('error')).toBeNull()
+  })
+
+  it('dirty glyph hidden when showDirtyIndicators is false (#167)', () => {
+    const tabs = [
+      mkTab({ notebook: 'W', section: '', page: 'A' }, { dirty: true })
+    ]
+    const props = defaultProps({ tabs, activeTabId: 'tab-A' })
+    props.showDirtyIndicators = false
+    render(TabStrip, { props })
+    expect(screen.queryByText('circle')).toBeNull()
+  })
+
+  it('dirty tab tooltip includes unsaved edits hint (#167)', () => {
+    const tabs = [
+      mkTab({ notebook: 'W', section: '', page: 'A' }, { dirty: true })
+    ]
+    render(TabStrip, {
+      props: defaultProps({ tabs, activeTabId: 'tab-A' })
+    })
+    const tab = screen.getAllByRole('tab')[0]
+    expect(tab.getAttribute('title')).toContain('unsaved edits')
+  })
+
+  it('error tab tooltip includes save failed hint (#167)', () => {
+    const tabs = [
+      mkTab(
+        { notebook: 'W', section: '', page: 'A' },
+        { saveError: 'disk full' }
+      )
+    ]
+    render(TabStrip, {
+      props: defaultProps({ tabs, activeTabId: 'tab-A' })
+    })
+    const tab = screen.getAllByRole('tab')[0]
+    expect(tab.getAttribute('title')).toContain('save failed')
   })
 })

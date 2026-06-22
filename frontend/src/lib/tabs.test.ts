@@ -4,6 +4,8 @@ import {
   closeTab,
   promotePreview,
   cycleTab,
+  reorderTab,
+  mergeReorderedTabs,
   mruOrder,
   pickEvictionVictim,
   findTab,
@@ -45,7 +47,7 @@ beforeEach(() => {
 
 // --- openPage rules ---------------------------------------------------
 
-describe('openPage — VS Code preview/pin state machine', () => {
+describe('openPage — preview/pin state machine', () => {
   describe('Rule 1: pinned tab exists → activate, ignore mode', () => {
     it('activates the existing pinned tab when mode=preview', () => {
       const tab = mkTab(PAGE_A, { preview: false, lastActivatedAt: 100 })
@@ -412,5 +414,201 @@ describe('generateTabId', () => {
       ids.add(generateTabId())
     }
     expect(ids.size).toBe(100)
+  })
+})
+
+describe('reorderTab (#175)', () => {
+  it('moves a tab before the target', () => {
+    const t1 = mkTab(PAGE_A, { id: 't1' })
+    const t2 = mkTab(PAGE_B, { id: 't2' })
+    const t3 = mkTab(PAGE_C, { id: 't3' })
+    const s = state([t1, t2, t3], 't1')
+    const next = reorderTab(s, 't3', 't1', true)
+    expect(next.tabs.map((t) => t.id)).toEqual(['t3', 't1', 't2'])
+  })
+
+  it('moves a tab after the target', () => {
+    const t1 = mkTab(PAGE_A, { id: 't1' })
+    const t2 = mkTab(PAGE_B, { id: 't2' })
+    const t3 = mkTab(PAGE_C, { id: 't3' })
+    const s = state([t1, t2, t3], 't1')
+    const next = reorderTab(s, 't1', 't3', false)
+    expect(next.tabs.map((t) => t.id)).toEqual(['t2', 't3', 't1'])
+  })
+
+  it('is a no-op when fromId === toId', () => {
+    const t1 = mkTab(PAGE_A, { id: 't1' })
+    const s = state([t1], 't1')
+    const next = reorderTab(s, 't1', 't1', true)
+    expect(next).toBe(s)
+  })
+
+  it('is a no-op when an id is missing', () => {
+    const t1 = mkTab(PAGE_A, { id: 't1' })
+    const t2 = mkTab(PAGE_B, { id: 't2' })
+    const s = state([t1, t2], 't1')
+    expect(reorderTab(s, 't1', 'nonexistent', true)).toBe(s)
+    expect(reorderTab(s, 'nonexistent', 't2', true)).toBe(s)
+  })
+
+  it('preserves lastActivatedAt (MRU unaffected by visual reorder)', () => {
+    const t1 = mkTab(PAGE_A, { id: 't1', lastActivatedAt: 100 })
+    const t2 = mkTab(PAGE_B, { id: 't2', lastActivatedAt: 200 })
+    const t3 = mkTab(PAGE_C, { id: 't3', lastActivatedAt: 300 })
+    const s = state([t1, t2, t3], 't1')
+    const next = reorderTab(s, 't1', 't3', false)
+    // Visual order changed, but MRU order is unchanged (t3 > t2 > t1).
+    expect(mruOrder(next.tabs).map((t) => t.id)).toEqual(['t3', 't2', 't1'])
+  })
+
+  it('preserves activeId', () => {
+    const t1 = mkTab(PAGE_A, { id: 't1' })
+    const t2 = mkTab(PAGE_B, { id: 't2' })
+    const s = state([t1, t2], 't2')
+    const next = reorderTab(s, 't2', 't1', true)
+    expect(next.activeId).toBe('t2')
+  })
+
+  it('handles moving the first tab to the last position', () => {
+    const t1 = mkTab(PAGE_A, { id: 't1' })
+    const t2 = mkTab(PAGE_B, { id: 't2' })
+    const t3 = mkTab(PAGE_C, { id: 't3' })
+    const s = state([t1, t2, t3], 't2')
+    const next = reorderTab(s, 't1', 't3', false)
+    expect(next.tabs.map((t) => t.id)).toEqual(['t2', 't3', 't1'])
+  })
+
+  it('handles moving the last tab to the first position', () => {
+    const t1 = mkTab(PAGE_A, { id: 't1' })
+    const t2 = mkTab(PAGE_B, { id: 't2' })
+    const t3 = mkTab(PAGE_C, { id: 't3' })
+    const s = state([t1, t2, t3], 't1')
+    const next = reorderTab(s, 't3', 't1', true)
+    expect(next.tabs.map((t) => t.id)).toEqual(['t3', 't1', 't2'])
+  })
+})
+
+describe('TabEntry dirty/saveError defaults (#167)', () => {
+  it('openPage creates a tab with dirty=false and saveError=null', () => {
+    const s = state([])
+    const next = openPage(s, PAGE_A, 'pin')
+    const tab = next.tabs.find((t) => t.page === PAGE_A.page)
+    expect(tab).toBeDefined()
+    expect(tab!.dirty).toBe(false)
+    expect(tab!.saveError).toBe(null)
+  })
+
+  it('openPage preview creates a tab with dirty=false and saveError=null', () => {
+    const s = state([])
+    const next = openPage(s, PAGE_A, 'preview')
+    const tab = next.tabs.find((t) => t.page === PAGE_A.page)
+    expect(tab).toBeDefined()
+    expect(tab!.dirty).toBe(false)
+    expect(tab!.saveError).toBe(null)
+  })
+
+  it('preview slot reuse resets dirty/saveError (#167)', () => {
+    // Open page A as preview, mark it dirty, then reuse the slot for page B.
+    const s1 = state([])
+    const s2 = openPage(s1, PAGE_A, 'preview')
+    // Simulate dirty state from editor callback.
+    s2.tabs[0].dirty = true
+    s2.tabs[0].saveError = 'disk full'
+    // Reuse the preview slot for a different page.
+    const s3 = openPage(s2, PAGE_B, 'preview')
+    const reused = s3.tabs[0]
+    expect(reused.page).toBe(PAGE_B.page)
+    expect(reused.dirty).toBe(false)
+    expect(reused.saveError).toBe(null)
+  })
+})
+
+describe('mergeReorderedTabs (#175)', () => {
+  const WA = { notebook: 'Work', section: '', page: 'A' }
+  const WB = { notebook: 'Work', section: '', page: 'B' }
+  const WC = { notebook: 'Work', section: '', page: 'C' }
+  const PA = { notebook: 'Personal', section: '', page: 'D' }
+  const PB = { notebook: 'Personal', section: '', page: 'E' }
+
+  it('replaces displayed tabs in-order, preserving other-notebook positions', () => {
+    // Full: [WA, PA, WB, PB, WC] — Work and Personal interleaved.
+    // Reordered Work subset: [WC, WB, WA] (reversed).
+    // Expected: [WC, PA, WB, PB, WA].
+    const full = [
+      mkTab(WA, { id: 'wa' }),
+      mkTab(PA, { id: 'pa' }),
+      mkTab(WB, { id: 'wb' }),
+      mkTab(PB, { id: 'pb' }),
+      mkTab(WC, { id: 'wc' })
+    ]
+    const reordered = [
+      mkTab(WC, { id: 'wc' }),
+      mkTab(WB, { id: 'wb' }),
+      mkTab(WA, { id: 'wa' })
+    ]
+    const merged = mergeReorderedTabs(full, reordered, 'Work')
+    expect(merged.map((t) => t.id)).toEqual([
+      'wc',
+      'pa',
+      'wb',
+      'pb',
+      'wa'
+    ])
+  })
+
+  it('preserves all non-displayed tabs exactly', () => {
+    const full = [
+      mkTab(WA, { id: 'wa' }),
+      mkTab(PA, { id: 'pa' }),
+      mkTab(WB, { id: 'wb' })
+    ]
+    const reordered = [mkTab(WB, { id: 'wb' }), mkTab(WA, { id: 'wa' })]
+    const merged = mergeReorderedTabs(full, reordered, 'Work')
+    // Personal tab at index 1 is untouched.
+    expect(merged[1].id).toBe('pa')
+    expect(merged[1].notebook).toBe('Personal')
+  })
+
+  it('handles a notebook with zero tabs in the full array', () => {
+    const full = [mkTab(PA, { id: 'pa' }), mkTab(PB, { id: 'pb' })]
+    const reordered: TabEntry[] = []
+    const merged = mergeReorderedTabs(full, reordered, 'Work')
+    expect(merged.map((t) => t.id)).toEqual(['pa', 'pb'])
+  })
+
+  it('preserves the full array length', () => {
+    const full = [
+      mkTab(WA, { id: 'wa' }),
+      mkTab(PA, { id: 'pa' }),
+      mkTab(WB, { id: 'wb' })
+    ]
+    const reordered = [mkTab(WB, { id: 'wb' }), mkTab(WA, { id: 'wa' })]
+    const merged = mergeReorderedTabs(full, reordered, 'Work')
+    expect(merged.length).toBe(full.length)
+  })
+
+  it('does not mutate the input array', () => {
+    const full = [
+      mkTab(WA, { id: 'wa' }),
+      mkTab(PA, { id: 'pa' }),
+      mkTab(WB, { id: 'wb' })
+    ]
+    const reordered = [mkTab(WB, { id: 'wb' }), mkTab(WA, { id: 'wa' })]
+    const originalIds = full.map((t) => t.id)
+    mergeReorderedTabs(full, reordered, 'Work')
+    expect(full.map((t) => t.id)).toEqual(originalIds)
+  })
+
+  it('returns a safe no-op copy when lengths mismatch', () => {
+    const full = [
+      mkTab(WA, { id: 'wa' }),
+      mkTab(PA, { id: 'pa' }),
+      mkTab(WB, { id: 'wb' }),
+      mkTab(WC, { id: 'wc' })
+    ]
+    const reordered = [mkTab(WB, { id: 'wb' })]
+    const merged = mergeReorderedTabs(full, reordered, 'Work')
+    expect(merged.map((t) => t.id)).toEqual(['wa', 'pa', 'wb', 'wc'])
+    expect(merged).not.toBe(full)
   })
 })

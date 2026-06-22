@@ -75,7 +75,7 @@ Per Phase 6 of `PLAN.md`:
    - Verify the file on disk has the updated checkbox state.
 
 3. **Watcher self-loop prevention**
-   - Edit a `.md` file externally (e.g., in VS Code) while `wails dev` is running.
+   - Edit a `.md` file externally (e.g., in an external editor) while `wails dev` is running.
    - Confirm the change is indexed (DB query visible in logs) and no infinite write-loop occurs.
 
 ## Known Gaps (deferred to future sprints)
@@ -588,7 +588,7 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 2. **#123 (pin tri-state):** type `[pin:: false]` → round-trips; pin on→off→on via the Kanban card → never silently reverts.
 3. **#118 (local dates):** near local midnight, the Kanban Today/Overdue chips match the local day (not UTC).
 4. **#124 (scope):** open Kanban, navigate to a page → scope narrows to page; pick Vault → sticks; click Follow → tracks nav again.
-5. **#120 (atomic setting):** edit Kanban columns while externally editing `config.yaml` in VS Code → no clobber.
+5. **#120 (atomic setting):** edit Kanban columns while externally editing `config.yaml` in an external editor → no clobber.
 6. **#100 (linked notebooks):** "Link External Folder…" → a synced folder appears as a notebook (badge + root tooltip); edit/create/rename/delete pages in place (vault untouched); delete a linked notebook → UNLINKS (files untouched); take the linked root offline → badge flips to cloud_off, last-sync rows still show.
 
 ## Known Gaps (deferred)
@@ -609,7 +609,7 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 
 | File | Tests | What is covered |
 |---|---|---|
-| `frontend/src/lib/tabs.test.ts` (new, 35) | openPage all 7 rules (pinned-exists→activate, preview-same-page→activate-or-PROMOTE-on-pin, pin→new, activate-only, enable_preview_tabs=false, LRU eviction preview-first/pinned), closeTab MRU neighbor, promotePreview, cycleTab MRU, mruOrder, pickEvictionVictim, tabMatches/findTab, generateTabId | #142 pure state machine — every VS Code transition + edge case, incl. dblclick-pin promotion fix |
+| `frontend/src/lib/tabs.test.ts` (new, 35) | openPage all 7 rules (pinned-exists→activate, preview-same-page→activate-or-PROMOTE-on-pin, pin→new, activate-only, enable_preview_tabs=false, LRU eviction preview-first/pinned), closeTab MRU neighbor, promotePreview, cycleTab MRU, mruOrder, pickEvictionVictim, tabMatches/findTab, generateTabId | #142 pure state machine — every transition + edge case, incl. dblclick-pin promotion fix |
 | `frontend/src/components/TabStrip.test.ts` (new, 16) | role=tablist/tab/tabpanel ARIA, aria-selected, aria-controls, roving tabindex, Arrow/Home/End/Enter/Space/Delete keyboard nav, click→onSelectTab, × →onCloseTab, dblclick→onPromoteTab, middle-click→onCloseTab, preview-italic class, pinned/preview distinction | #142 TabStrip component — full ARIA + keyboard contract |
 | `frontend/src/components/SidebarSection.test.ts` (+2) | dblclick→onPinPage, middle-click→onPinPage | #142 sidebar click modes (preview vs pin) |
 | `frontend/src/lib/editor/nodeview-test-harness.test.ts` (new, 5) | boots editor with NodeViews in jsdom, NoteBlock data-node-view-wrapper, embedNode NodeView, blockReferenceNode NodeView, mkBlock defaults | #127 reusable NodeView test harness + Smart Graph rendering smoke gate |

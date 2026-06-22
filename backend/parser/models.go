@@ -38,7 +38,7 @@ type ParsedBlock struct {
 	// ExtraTokens preserves unknown [key:: value] Dataview tokens that the
 	// parser doesn't recognise (e.g. `[project:: alpha]`, `[estimate:: 3h]`).
 	// These round-trip through parse → render so files stay interoperable
-	// with Obsidian/Dataview (SPECS.md §4.1). Each entry is the full
+	// with Dataview-compatible (SPECS.md §4.1). Each entry is the full
 	// `[key:: value]` string as it appeared in the source.
 	ExtraTokens []string `json:"extra_tokens,omitempty"`
 	LineNumber  int      `json:"line_number"`

@@ -20,6 +20,11 @@
     onPageRenamed?: (newName: string) => void
     onFirstEdit?: () => void
     isActive?: boolean
+    /** Forwarded to TipTapEditor; surfaces save-state changes (#167). */
+    onSaveStateChange?: (state: {
+      dirty: boolean
+      error: string | null
+    }) => void
   }
 
   let {
@@ -33,7 +38,8 @@
     activeFocusedBlockAncestors = [],
     onPageRenamed,
     onFirstEdit,
-    isActive = true
+    isActive = true,
+    onSaveStateChange
   }: Props = $props()
 
   // Editor bindings
@@ -85,9 +91,9 @@
   })
 
   // Subscribe to block:changed events (#64). When an external mutation
-  // (embed edit, external editor) changes a block on the current page,
-  // reload the block list so the editor sees the update. The editor's own
-  // $effect handles applying the update when the user is not actively editing.
+  // (embed edit, external edit) changes a block on the current page, reload
+  // the block list so the editor sees the update. The editor's own $effect
+  // handles applying the update when the user is not actively editing.
   $effect(() => {
     // Read props at the top of the effect so it re-subscribes when the user
     // navigates to a different page (#64). Without this, the EventsOn closure
@@ -306,6 +312,7 @@
           bind:editorInstance
           bind:activeMarks
           {viewMode}
+          {onSaveStateChange}
         />
       {/if}
 

@@ -43,6 +43,8 @@
     closeTab as closeTabState,
     promotePreview as promotePreviewState,
     cycleTab as cycleTabState,
+    reorderTab as reorderTabState,
+    mergeReorderedTabs,
     generateTabId,
     type TabEntry,
     type PageRef,
@@ -155,6 +157,34 @@
     schedulePersistTabs()
   }
 
+  function handleReorderTab(
+    fromId: string,
+    toId: string,
+    before: boolean
+  ): void {
+    // industry-standard parity (#175 AC4): dragging a preview tab pins it on drop.
+    // The promotion happens before the reorder so the pinned tab is the
+    // one that gets spliced into the new position.
+    const draggedTab = openTabs.find((t) => t.id === fromId)
+    if (draggedTab?.preview) {
+      openTabs = promotePreviewState(
+        { tabs: openTabs, activeId: activeTabId },
+        fromId
+      ).tabs
+    }
+    // Reorder within the displayed (per-notebook) tabs, then splice the
+    // reordered subset back into the full openTabs array — non-displayed
+    // (other-notebook) tabs keep their relative positions.
+    const result = reorderTabState(
+      { tabs: displayedTabs, activeId: activeTabId },
+      fromId,
+      toId,
+      before
+    )
+    openTabs = mergeReorderedTabs(openTabs, result.tabs, activeNotebook)
+    schedulePersistTabs()
+  }
+
   function handleCycleTab(dir: 1 | -1): void {
     // Cycle within the displayed (per-notebook) tabs only — Ctrl+Tab must
     // not jump to a hidden tab in another notebook (#142 review: cycling
@@ -194,9 +224,8 @@
   }
 
   async function persistTabs(): Promise<void> {
-    // Only persist PINNED tabs + active (preview tabs are ephemeral — see
-    // tabs.ts for the full preview/pin contract). If the active tab is a
-    // preview, don't persist it as active.
+    // Only persist PINNED tabs + active (preview tabs are ephemeral —
+    // parity). If the active tab is a preview, don't persist it as active.
     const pinned = openTabs.filter((t) => !t.preview)
     const activeTab = openTabs.find((t) => t.id === activeTabId)
     const activePersist = activeTab && !activeTab.preview ? activeTab : null
@@ -595,7 +624,7 @@
     date: string,
     blockId: string
   ) {
-    // Route through openPage (preview/pin semantics, #142).
+    // Route through openPage (preview-tab semantics, #142).
     // Use activate-only when the target IS the active page so block
     // navigation does not re-bump the MRU timestamp (the state machine's
     // activate-only path is a true no-op on tab state, just sets the
@@ -801,7 +830,7 @@
         }}
         onSelectSection={(sec) => (activeSection = sec)}
         onSelectPage={(nb, sec, pg) => {
-          // Single-click opens in preview mode (preview/pin contract, #142).
+          // Single-click opens in preview mode (industry-standard parity, #142).
           openPage({ notebook: nb, section: sec, page: pg }, 'preview')
         }}
         onPinPage={(nb, sec, pg) => {
@@ -810,6 +839,22 @@
         }}
         onSelectView={(v) => (activeView = v)}
         onCloseVault={handleChangeVault}
+        onPageMoved={(nb, fromSection, toSection, page) => {
+          // A page was dragged across sections in the sidebar (#177). Update
+          // the open tab for this specific page+section so its section field
+          // points to the new location. Matching on fromSection is critical —
+          // without it, a same-named sibling in another section would also be
+          // repointed, causing its next save to write to the wrong path.
+          openTabs = openTabs.map((t) =>
+            t.notebook === nb && t.section === fromSection && t.page === page
+              ? { ...t, section: toSection }
+              : t
+          )
+          if (activeNotebook === nb && activePage === page && activeSection === fromSection) {
+            activeSection = toSection
+          }
+          schedulePersistTabs()
+        }}
       />
 
       {#if !sidebarCollapsed}
@@ -830,6 +875,8 @@
             onSelectTab={handleSelectTab}
             onCloseTab={handleCloseTab}
             onPromoteTab={handlePromoteTab}
+            onReorderTab={handleReorderTab}
+            showDirtyIndicators={settings.config?.ui?.show_tab_dirty_indicators !== false}
           />
           {#if notesReady}
             <div
@@ -871,6 +918,15 @@
                     onFirstEdit={tab.preview
                       ? () => handlePromoteTab(tab.id)
                       : undefined}
+                    onSaveStateChange={(s) => {
+                      // Surface the editor's save state on the tab header
+                      // so it's visible from any tab (#167).
+                      openTabs = openTabs.map((t) =>
+                        t.id === tab.id
+                          ? { ...t, dirty: s.dirty, saveError: s.error }
+                          : t
+                      )
+                    }}
                   />
                 </div>
               {/each}
