@@ -246,6 +246,7 @@
       window.dispatchEvent(new CustomEvent('refresh-navigation'))
     } catch (e) {
       console.error('RenamePage failed:', e)
+      displayTitle = page
       if (titleEl) titleEl.textContent = page
       lastRenamedFrom = ''
     }
@@ -282,7 +283,7 @@
         <span>{section}</span>
       {/if}
       <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-      <span class="text-accent-primary-start">{page}</span>
+      <span class="text-accent-primary-start">{displayTitle}</span>
     </nav>
 
     <header class="mb-8">

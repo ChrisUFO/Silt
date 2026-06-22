@@ -119,4 +119,45 @@ describe('VirtualScrollContainer — inline title editing (#259)', () => {
 
     expect(h1.textContent).toBe('Renamed Externally')
   })
+
+  it('restores title and displayTitle on rename error (doRename catch)', async () => {
+    // Mock RenamePage to reject — simulates a disk error or name collision.
+    mocks.renamePage.mockRejectedValue(new Error('disk full'))
+
+    const props = makeProps()
+    render(VirtualScrollContainer, { props })
+
+    await waitFor(() => {
+      expect(mocks.fetchPageBlocks).toHaveBeenCalled()
+    })
+
+    const h1 = document.querySelector(
+      'h1[contenteditable]'
+    ) as HTMLHeadingElement
+
+    // Focus the title and type a new name.
+    h1.focus()
+    await tick()
+    h1.textContent = 'Rejected Name'
+
+    // Fire the input handler to start the 500ms rename debounce.
+    h1.dispatchEvent(new Event('input', { bubbles: true }))
+
+    // Wait for the debounce (500ms) + the rejected promise to settle.
+    await waitFor(() => {
+      expect(mocks.renamePage).toHaveBeenCalledWith(
+        'Work',
+        'Projects',
+        'Untitled',
+        'Rejected Name'
+      )
+    })
+    // Allow the catch block to run after the rejection.
+    await tick()
+    await tick()
+
+    // After the rename fails, the DOM should revert to the original page
+    // name — no stale "Rejected Name" lingering in the title.
+    expect(h1.textContent).toBe('Untitled')
+  })
 })

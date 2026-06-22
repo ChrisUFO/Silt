@@ -18,9 +18,19 @@ describe('texture scope guard (#261)', () => {
     const css = readFile('index.css')
 
     // The texture must not be a fixed full-viewport body::before overlay.
-    // We check for the combination of body::before and position: fixed in
-    // the texture-related section.
     expect(css).not.toMatch(/body::before[^}]*position:\s*fixed/s)
+  })
+
+  it('index.css texture overlay uses sticky positioning (not absolute)', () => {
+    const css = readFile('index.css')
+
+    // The .silt-texture-surface::before must use position: sticky so the
+    // texture stays pinned within the scroll viewport on long pages.
+    // position: absolute would scroll out of view below the fold.
+    expect(css).toMatch(/silt-texture-surface::before[^}]*position:\s*sticky/s)
+    expect(css).not.toMatch(
+      /silt-texture-surface::before[^}]*position:\s*absolute/s
+    )
   })
 
   it('VirtualScrollContainer applies a texture surface class', () => {

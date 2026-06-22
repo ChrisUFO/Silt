@@ -231,6 +231,47 @@ describe('TipTap engine smoke', () => {
     editor.destroy()
   })
 
+  it('converts a noteBlock to DONE task on uppercase "[X]" + space (#262)', () => {
+    const editor = new Editor({
+      extensions: [
+        StarterKit.configure({
+          paragraph: false,
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false
+        }),
+        ...SiltBlockExtensions
+      ],
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'noteBlock',
+            attrs: { id: 'test-id', depth: 0, bullet: '' }
+          }
+        ]
+      }
+    })
+
+    editor.commands.focus()
+    editor.commands.insertContent('[X]')
+    editor.view.someProp('handleTextInput', (f) =>
+      (f as any)(editor.view, 4, 4, ' ')
+    )
+
+    const node = editor.state.doc.child(0)
+    expect(node.type.name).toBe('taskBlock')
+    expect(node.attrs.status).toBe('DONE')
+    expect(editor.getText()).toBe('')
+
+    editor.destroy()
+  })
+
   it('supports native cross-block selection across multiple paragraphs', () => {
     const editor = new Editor({
       extensions: [StarterKit],

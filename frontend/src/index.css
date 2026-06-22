@@ -141,18 +141,24 @@ body {
    instantiate the layer at all — only a theme that declares a texture flips
    it to block. The overlay is scoped to the page writing surface (the scroll
    container in VirtualScrollContainer) so it textures the "paper" the user
-   writes on, not the titlebar/sidebar/toolbars (#261). It is purely
-   decorative: absolute-positioned inside the scroll container, ignores
-   pointer events, and blends with the page so the canvas reads as textured
-   paper without harming text legibility. */
+   writes on, not the titlebar/sidebar/toolbars (#261).
+
+   The ::before uses position: sticky so the texture stays pinned within the
+   scroll container's visible viewport at all scroll positions — an
+   absolutely positioned element inside an overflow-y-auto container would
+   scroll out of view on long pages, leaving the lower portion untextured. */
 .silt-texture-surface {
   position: relative;
 }
 .silt-texture-surface::before {
   content: '';
   display: var(--silt-texture-display, none);
-  position: absolute;
-  inset: 0;
+  position: sticky;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  margin-bottom: -100%;
   z-index: 0;
   pointer-events: none;
   background-image: var(--silt-texture-image, none);
