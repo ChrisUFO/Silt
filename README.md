@@ -49,7 +49,7 @@ Each concern has a single source of truth. Refer to the file that owns the topic
 
 ## Platform Support
 
-Silt targets **Windows** and **Linux** as first-class platforms — both are built, tested, and shipped. **macOS** is not excluded (Wails and Go are cross-platform), but it is not specifically built or tested against. The release pipeline ([`build.sh`](build.sh)) currently produces Windows NSIS installers and portable zips; Linux AppImage/Flatpak packaging is planned for a future sprint.
+Silt targets **Windows** and **Linux** as first-class platforms — both are built, tested, and shipped. **macOS** is not excluded (Wails and Go are cross-platform), but it is not specifically built or tested against. The release pipeline produces Windows NSIS installers and portable zips ([`build.sh`](build.sh)), as well as Linux AppImages and Debian packages ([`build-linux.sh`](build-linux.sh)).
 
 ---
 
@@ -65,6 +65,21 @@ Silt targets **Windows** and **Linux** as first-class platforms — both are bui
 > 2. Select **Properties**.
 > 3. Under the **General** tab, check the **Unblock** checkbox in the Security section at the bottom.
 > 4. Click **Apply** or **OK**, then run/extract the file.
+
+### Linux
+1. Download the latest AppImage (`Silt-*.AppImage`) or Debian package (`silt_*_debian_amd64.deb`) from GitHub Releases.
+2. Choose one of the following run/installation paths:
+   - **AppImage (Universal Run-in-Place):**
+     Make the file executable and run it:
+     ```bash
+     chmod +x Silt-*.AppImage
+     ./Silt-*.AppImage
+     ```
+   - **Debian / Ubuntu Package:**
+     Install via `apt` (which will also resolve required webview dependencies like WebKit2GTK):
+     ```bash
+     sudo apt install ./silt_*_debian_amd64.deb
+     ```
 
 ---
 
