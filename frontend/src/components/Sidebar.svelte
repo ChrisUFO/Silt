@@ -181,7 +181,7 @@
     e: DragEvent,
     level: string,
     name: string,
-    section?: string
+    section: string = ''
   ) {
     dnd.handleDragStart(e, level, name, section)
   }
@@ -195,8 +195,8 @@
     e: DragEvent,
     level: string,
     targetName: string,
-    notebook?: string,
-    section?: string
+    notebook: string = '',
+    section: string = ''
   ) {
     await dnd.handleDrop(e, level, targetName, notebook, section)
   }
@@ -468,8 +468,8 @@
     e: MouseEvent,
     level: 'notebook' | 'section' | 'page',
     notebook: string,
-    section?: string,
-    page?: string
+    section: string = '',
+    page: string = ''
   ) {
     e.preventDefault()
     contextMenu = { x: e.clientX, y: e.clientY, level, notebook, section, page }

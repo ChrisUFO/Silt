@@ -109,7 +109,7 @@
   function openPage(
     ref: PageRef,
     mode: OpenPageMode,
-    blockTarget?: { fileDate?: string; blockId?: string }
+    blockTarget: { fileDate?: string; blockId?: string } = undefined
   ): void {
     const enablePreviewTabs = settings.config?.ui?.enable_preview_tabs !== false
     const maxOpenTabs = settings.config?.ui?.max_open_tabs ?? 8
@@ -760,7 +760,7 @@
       displayedTabs.length > 0
   )
 
-  function openSettings(tab?: string) {
+  function openSettings(tab: string = '') {
     settingsTab = tab || 'general'
     showSettings = true
   }
