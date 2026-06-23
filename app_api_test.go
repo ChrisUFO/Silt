@@ -2808,3 +2808,65 @@ func TestFingerprint_CrossPlatform(t *testing.T) {
 		t.Errorf("fingerprint not stable: first %q, second %q", fp1, fp2)
 	}
 }
+
+// TestApplyConfigLocked_QuarantinesNewLinkFromExternalEdit verifies the P1
+// fix: a config.yaml reload that injects a brand-new linked notebook (one the
+// host has never seen) is quarantined, not silently adopted. Without this
+// check, the M2 (synced-vault) adversary can inject a link to an attacker-
+// chosen folder and bypass the entire F3 fingerprint gate.
+func TestApplyConfigLocked_QuarantinesNewLinkFromExternalEdit(t *testing.T) {
+	app := newTestApp(t)
+
+	// Build a config that adds a brand-new link the host has never seen.
+	app.configMu.RLock()
+	tamperedCfg := app.cfg
+	attackDir := t.TempDir()
+	tamperedCfg.LinkedNotebooks = append(tamperedCfg.LinkedNotebooks, config.LinkedNotebook{
+		ID:          "linked-evilinject123",
+		RootPath:    attackDir,
+		DisplayName: "Evil",
+		// No RootFingerprint — a synced-edit injection wouldn't have one.
+	})
+	app.configMu.RUnlock()
+
+	app.applyConfigLocked(tamperedCfg)
+
+	// The injected link must be quarantined.
+	app.configMu.RLock()
+	_, quarantined := app.quarantinedLinks["linked-evilinject123"]
+	app.configMu.RUnlock()
+	if !quarantined {
+		t.Fatal("applyConfigLocked must quarantine a new link from an external edit")
+	}
+
+	// resolveNotebookDir must deny the quarantined link.
+	if _, err := app.resolveNotebookDir("Evil", "linked:linked-evilinject123"); err == nil {
+		t.Fatal("resolveNotebookDir must deny a quarantined injected link")
+	}
+}
+
+// TestApplyConfigLocked_PrunesStaleQuarantineEntries verifies the P2 prune:
+// after a config reload removes a quarantined link, its ID is cleaned from
+// the quarantine set so the map doesn't grow unbounded.
+func TestApplyConfigLocked_PrunesStaleQuarantineEntries(t *testing.T) {
+	app := newTestApp(t)
+
+	// Stage: manually quarantine a stale ID that no longer exists in config.
+	app.configMu.Lock()
+	if app.quarantinedLinks == nil {
+		app.quarantinedLinks = make(map[string]struct{})
+	}
+	app.quarantinedLinks["linked-gone"] = struct{}{}
+	// Config has no links at all (fresh test app).
+	app.configMu.Unlock()
+
+	// Reload the same config (no linked-gone entry).
+	app.applyConfigLocked(app.cfg)
+
+	app.configMu.RLock()
+	_, stillQuarantined := app.quarantinedLinks["linked-gone"]
+	app.configMu.RUnlock()
+	if stillQuarantined {
+		t.Fatal("applyConfigLocked must prune quarantine entries for removed links")
+	}
+}

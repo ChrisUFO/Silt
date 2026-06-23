@@ -92,7 +92,7 @@ func writeSettingsFingerprint(s *AppSettings) error {
 		return err
 	}
 	fp := computeSettingsFingerprint(s)
-	if err := os.MkdirAll(filepath.Dir(fpPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(fpPath), 0o700); err != nil {
 		return err
 	}
 	return parser.WriteFileAtomic(fpPath, []byte(fp))

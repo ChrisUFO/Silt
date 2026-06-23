@@ -86,7 +86,7 @@ func SaveGrants(store GrantsStore) error {
 	if err != nil {
 		return fmt.Errorf("marshal grants: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	return parser.WriteFileAtomic(path, data)

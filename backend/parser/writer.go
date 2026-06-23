@@ -13,7 +13,7 @@ import (
 // visible swap atomic at the filesystem level.
 func WriteFileAtomic(path string, content []byte) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 

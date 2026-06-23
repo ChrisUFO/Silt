@@ -241,6 +241,29 @@ func (a *App) ConfirmGrantsMigration(legacyGrants map[string]map[string]string) 
 	return nil
 }
 
+// DeclineGrantsMigration is the F4 user-decline binding. When the user
+// dismisses the grants-migration dialog, this strips the legacy grants:
+// block from config.yaml so the dialog does NOT re-fire on the next launch.
+// The host store keeps its first-party seeds only; every third-party plugin
+// re-prompts on first use (the safe default). The user's third-party grants
+// are lost — they chose not to migrate.
+func (a *App) DeclineGrantsMigration() error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	// config.Save drops the grants field (it's gone from the struct), so
+	// the on-disk file no longer carries the legacy block.
+	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+		return fmt.Errorf("strip legacy grants from config.yaml: %w", err)
+	}
+	return nil
+}
+
 func (a *App) shutdown(ctx context.Context) {
 	// Emit vault:closing so the frontend plugin loader runs every plugin's
 	// onVaultClose/onShutdown hook (#106) before IPC tears down. Best-effort:

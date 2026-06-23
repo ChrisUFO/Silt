@@ -376,8 +376,7 @@ func TestGrants_0600Perms(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses permission bits")
 	}
-	runtimeGOOS := runtime.GOOS
-	if runtimeGOOS == "windows" {
+	if runtime.GOOS == "windows" {
 		t.Skip("POSIX permission bits are not enforced on Windows")
 	}
 	app := newTestApp(t)

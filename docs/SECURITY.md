@@ -69,10 +69,12 @@ as `settings.json.fingerprint`. On every launch, the fingerprint is
 recomputed and compared. On mismatch, Silt surfaces a confirmation dialog
 rather than silently loading the new values. The fingerprint is a tripwire,
 not a hard boundary — an attacker who can write `settings.json` can also
-write the fingerprint. The hard boundary is filesystem permissions (the
-`0o600` atomic write enforces owner-only access on POSIX). Unknown top-level
-keys in `settings.json` are rejected (defense in depth against future
-field-injection).
+write the fingerprint. The hard boundary is filesystem permissions on the
+home dir. The host-scoped config directory is created with `0o700` perms
+(owner-only on POSIX; no-op on Windows which ignores group/other bits), and
+the files within it are written `0o600` (owner-only read/write). Unknown
+top-level keys in `settings.json` are rejected (defense in depth against
+future field-injection).
 
 ## 4. Plugin trust boundary
 

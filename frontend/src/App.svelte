@@ -10,6 +10,7 @@
     SetOpenTabs,
     ConfirmSettingsChange,
     ConfirmGrantsMigration,
+    DeclineGrantsMigration,
     ResolveQuarantinedLinks,
     PickLinkedNotebook,
     UnlinkNotebook
@@ -1054,6 +1055,10 @@
       aria-modal="true"
       aria-labelledby="settings-mismatch-title"
       aria-describedby="settings-mismatch-desc"
+      tabindex="-1"
+      onkeydown={(e) => {
+        if (e.key === 'Escape') showSettingsMismatch = false
+      }}
       transition:fade={{ duration: 150 }}
     >
       <div class="settings-mismatch-modal">
@@ -1073,10 +1078,13 @@
             onclick={async () => {
               try {
                 await ConfirmSettingsChange()
+                showSettingsMismatch = false
               } catch (e) {
-                console.error('ConfirmSettingsChange failed:', e)
+                pushNotification({
+                  kind: 'error',
+                  message: `Failed to confirm settings change: ${e}`
+                })
               }
-              showSettingsMismatch = false
             }}>Confirm change</button
           >
         </div>
@@ -1091,6 +1099,17 @@
       aria-modal="true"
       aria-labelledby="grants-migration-title"
       aria-describedby="grants-migration-desc"
+      tabindex="-1"
+      onkeydown={(e) => {
+        if (e.key === 'Escape') {
+          try {
+            void DeclineGrantsMigration()
+          } catch (e) {
+            console.error('DeclineGrantsMigration failed:', e)
+          }
+          showGrantsMigration = false
+        }
+      }}
       transition:fade={{ duration: 150 }}
     >
       <div class="settings-mismatch-modal">
@@ -1105,17 +1124,27 @@
         <div class="settings-mismatch-actions">
           <button
             class="secondary"
-            onclick={() => (showGrantsMigration = false)}>Dismiss</button
+            onclick={async () => {
+              try {
+                await DeclineGrantsMigration()
+              } catch (e) {
+                console.error('DeclineGrantsMigration failed:', e)
+              }
+              showGrantsMigration = false
+            }}>Dismiss</button
           >
           <button
             class="primary"
             onclick={async () => {
               try {
                 await ConfirmGrantsMigration(pendingLegacyGrants)
+                showGrantsMigration = false
               } catch (e) {
-                console.error('ConfirmGrantsMigration failed:', e)
+                pushNotification({
+                  kind: 'error',
+                  message: `Failed to move plugin permissions: ${e}`
+                })
               }
-              showGrantsMigration = false
             }}>Move permissions</button
           >
         </div>
@@ -1130,6 +1159,10 @@
       aria-modal="true"
       aria-labelledby="quarantine-title"
       aria-describedby="quarantine-desc"
+      tabindex="-1"
+      onkeydown={(e) => {
+        if (e.key === 'Escape') quarantinedLinks = []
+      }}
       transition:fade={{ duration: 150 }}
     >
       <div class="settings-mismatch-modal">
@@ -1138,8 +1171,6 @@
           {#each quarantinedLinks as q (q.id)}
             <strong>{q.display_name}</strong> has moved or been tampered with. Re-link
             it or unlink it.
-          {:else}
-            No quarantined notebooks.
           {/each}
         </p>
         <div class="settings-mismatch-actions">
@@ -1153,7 +1184,10 @@
                     (l) => l.id !== q.id
                   )
                 } catch (e) {
-                  console.error('UnlinkNotebook failed:', e)
+                  pushNotification({
+                    kind: 'error',
+                    message: `Failed to unlink ${q.display_name}: ${e}`
+                  })
                 }
               }}>Unlink {q.display_name}</button
             >
@@ -1161,13 +1195,16 @@
               class="primary"
               onclick={async () => {
                 try {
-                  await PickLinkedNotebook()
                   await UnlinkNotebook(q.id)
+                  await PickLinkedNotebook()
                   quarantinedLinks = quarantinedLinks.filter(
                     (l) => l.id !== q.id
                   )
                 } catch (e) {
-                  console.error('re-link failed:', e)
+                  pushNotification({
+                    kind: 'error',
+                    message: `Failed to re-link ${q.display_name}: ${e}`
+                  })
                 }
               }}>Re-link {q.display_name}</button
             >
