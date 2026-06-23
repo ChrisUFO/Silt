@@ -398,6 +398,13 @@ To request a higher limit, declare it in the manifest:
 this range are rejected at install time. The response body cap is 2 MB per
 request.
 
+**Redirect header hygiene (#160, #247).** On a cross-host redirect, custom
+auth headers (`X-Api-Key`, etc.) are stripped and `User-Agent` is reset to
+`Go-http-client/1.1` — do NOT embed credentials in the `User-Agent` header
+(anti-pattern; will leak across cross-host redirects). Same-host redirects
+preserve both custom headers and the plugin-supplied `User-Agent` (legitimate
+use case: API versioning via UA).
+
 ### 8.7 Editor extension points (#110)
 
 Register slash commands:

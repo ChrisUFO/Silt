@@ -1163,9 +1163,13 @@ func TestResolvePluginRatelimit_ClampsOutOfRange(t *testing.T) {
 }
 
 // =========================================================================
-// Redirect header hygiene (#160)
+// Redirect header hygiene (#160, #247)
 // =========================================================================
 
+// TestStripHeadersForRedirect_RemovesCustomAuth verifies the allowlist
+// behavior: safe headers survive, custom auth is stripped, and User-Agent is
+// RESET to Go's default (not preserved) so a plugin that embedded credentials
+// in the UA cannot leak them across a cross-host redirect (#247, F13).
 func TestStripHeadersForRedirect_RemovesCustomAuth(t *testing.T) {
 	req := &http.Request{
 		Header: http.Header{
@@ -1179,8 +1183,8 @@ func TestStripHeadersForRedirect_RemovesCustomAuth(t *testing.T) {
 	if req.Header.Get("Accept") != "text/html" {
 		t.Error("Accept should survive the redirect allowlist")
 	}
-	if req.Header.Get("User-Agent") != "Silt/1.0" {
-		t.Error("User-Agent should survive the redirect allowlist")
+	if req.Header.Get("User-Agent") != "Go-http-client/1.1" {
+		t.Errorf("User-Agent should be reset to Go default on cross-host redirect, got %q", req.Header.Get("User-Agent"))
 	}
 	if req.Header.Get("X-Api-Key") != "" {
 		t.Error("X-Api-Key should be stripped on redirect")
@@ -1210,17 +1214,23 @@ func newRedirectRequest(rawurl string, headers http.Header) *http.Request {
 // the redirect crosses to a different host (the actual leak risk). Hosts are
 // public TEST-NET IP literals so isSafeFetchUrl resolves them locally without
 // network access and does not flag them as internal.
+//
+// Extended for #247 (F13): a plugin-supplied User-Agent survives a same-host
+// redirect (legitimate use case: API versioning via UA) but is RESET to Go's
+// default on a cross-host redirect so a plugin that embedded credentials in
+// the UA cannot leak them.
 func TestCheckRedirect_StripsCustomAuthOnlyCrossHost(t *testing.T) {
 	client := newSafeFetchClient(defaultPluginFetchTimeout)
 
 	authHeaders := func() http.Header {
 		return http.Header{
-			"Accept":    {"application/json"},
-			"X-Api-Key": {"secret-key"},
+			"Accept":     {"application/json"},
+			"X-Api-Key":  {"secret-key"},
+			"User-Agent": {"my-plugin/1.0"},
 		}
 	}
 
-	// Same-host redirect: X-Api-Key must survive.
+	// Same-host redirect: X-Api-Key AND User-Agent must survive.
 	via := []*http.Request{newRedirectRequest("https://203.0.113.1/v1/widgets", authHeaders())}
 	sameHost := newRedirectRequest("https://203.0.113.1/v2/widgets", authHeaders())
 	if err := client.CheckRedirect(sameHost, via); err != nil {
@@ -1229,8 +1239,11 @@ func TestCheckRedirect_StripsCustomAuthOnlyCrossHost(t *testing.T) {
 	if sameHost.Header.Get("X-Api-Key") != "secret-key" {
 		t.Error("X-Api-Key should survive a same-host redirect")
 	}
+	if sameHost.Header.Get("User-Agent") != "my-plugin/1.0" {
+		t.Errorf("User-Agent should survive a same-host redirect, got %q", sameHost.Header.Get("User-Agent"))
+	}
 
-	// Cross-host redirect: X-Api-Key must be stripped, Accept kept.
+	// Cross-host redirect: X-Api-Key stripped, Accept kept, User-Agent RESET.
 	crossHost := newRedirectRequest("https://198.51.100.5/capture", authHeaders())
 	if err := client.CheckRedirect(crossHost, via); err != nil {
 		t.Fatalf("cross-host CheckRedirect: %v", err)
@@ -1240,6 +1253,9 @@ func TestCheckRedirect_StripsCustomAuthOnlyCrossHost(t *testing.T) {
 	}
 	if crossHost.Header.Get("Accept") != "application/json" {
 		t.Error("Accept should survive the cross-host allowlist")
+	}
+	if crossHost.Header.Get("User-Agent") != "Go-http-client/1.1" {
+		t.Errorf("User-Agent must be reset to Go default on a cross-host redirect (F13), got %q", crossHost.Header.Get("User-Agent"))
 	}
 }
 
