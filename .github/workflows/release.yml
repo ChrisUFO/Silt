@@ -283,12 +283,15 @@ jobs:
             "${NOTES_ARGS[@]}" \
             release-assets/*
 
-      - name: Reset unreleased.md for next release
+      - name: Checkout main for notes reset
         if: success()
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
+
+      - name: Reset unreleased.md for next release
+        if: success()
         run: |
           set -euo pipefail
           # After posting, reset the file back to the stub so the next PR starts
