@@ -1,6 +1,10 @@
-// Vitest setup: registers @testing-library/jest-dom matchers
-// (toBeInTheDocument, toHaveAttribute, …) on the vitest `expect`. The
-// `/vitest` entry point imports expect from vitest itself, so this works
-// with globals: false (unlike the plain `@testing-library/jest-dom`
-// import, which expects a global expect).
+import { vi } from 'vitest'
 import '@testing-library/jest-dom/vitest'
+
+// jsdom omits or stubs layout-dependent DOM APIs that TipTap v3's Placeholder
+// viewport tracker touches during editor construction. Force-override them
+// (not conditionally) because some jsdom versions define elementFromPoint as
+// a non-functional stub that still throws.
+if (typeof document !== 'undefined') {
+  document.elementFromPoint = vi.fn(() => document.body)
+}

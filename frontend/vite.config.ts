@@ -1,11 +1,11 @@
-/// <reference types="vitest" />
 import {defineConfig} from 'vite'
 import {svelte} from '@sveltejs/vite-plugin-svelte'
 import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
-// The `test` block configures Vitest (v4) which reuses this vite config, so
-// the Svelte plugin transforms `.svelte` files under test too.
+// Vitest config lives in vitest.config.ts (which takes precedence over a
+// test key here). See vitest.config.ts for the test environment, setup
+// files, and the svelteTesting plugin.
 export default defineConfig({
   plugins: [
     tailwindcss(),
@@ -13,11 +13,5 @@ export default defineConfig({
   ],
   resolve: {
     preserveSymlinks: true
-  },
-  test: {
-    environment: 'jsdom',
-    globals: true,
-    include: ['src/**/*.test.ts'],
-    setupFiles: ['src/lib/editor/test-setup.ts']
   }
 })
