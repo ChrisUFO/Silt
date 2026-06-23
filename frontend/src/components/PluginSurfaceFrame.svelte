@@ -39,6 +39,11 @@
         }
       });
       // PluginContext proxy: every method becomes a postMessage request.
+      // targetOrigin '*' here is intentional: the sandboxed iframe cannot read
+      // parent's origin (cross-origin), so it cannot pin the targetOrigin.
+      // The parent's inbound gate (ev.source === iframeEl.contentWindow +
+      // ev.origin === 'null') provides the security check; the response
+      // direction uses 'null' (see handleRequest below, #248).
       const ctx = new Proxy({}, {
         get(_, method) {
           return (...args) => new Promise((resolve, reject) => {
@@ -133,6 +138,16 @@
     if (!iframeEl || ev.source !== iframeEl.contentWindow) return
     if (ev.origin !== 'null' && ev.origin !== window.location.origin) return
 
+    // targetOrigin 'null' is the literal origin string a sandboxed iframe
+    // (allow-scripts WITHOUT allow-same-origin) reports. The actual security
+    // gate is the `ev.source === iframeEl.contentWindow` check at the top of
+    // handleRequest — the response is targeted at a specific contentWindow
+    // reference, never broadcast. Pinning targetOrigin to 'null' (instead of
+    // '*') is defense in depth: a careless future refactor that swapped the
+    // contentWindow ref for a window lookup could not leak the response to an
+    // unrelated frame. If surfaces ever move to a real src URL with
+    // allow-same-origin, targetOrigin MUST be updated to the iframe's actual
+    // origin — this comment makes that requirement explicit (#248).
     if (
       !allowedMethods.has(msg.method) ||
       typeof ctxProxy[msg.method] !== 'function'
@@ -144,7 +159,7 @@
           ok: false,
           error: `Blocked or unknown method: ${msg.method}`
         },
-        '*'
+        'null'
       )
       return
     }
@@ -154,7 +169,7 @@
       .then((result) => {
         iframeEl?.contentWindow?.postMessage(
           { __siltSurface: 'response', seq: msg.seq, ok: true, result },
-          '*'
+          'null'
         )
       })
       .catch((err) => {
@@ -165,7 +180,7 @@
             ok: false,
             error: err instanceof Error ? err.message : String(err)
           },
-          '*'
+          'null'
         )
       })
   }
