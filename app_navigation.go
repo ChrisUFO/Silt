@@ -27,14 +27,45 @@ func (a *App) resolveNotebookDir(notebookName, source string) (string, error) {
 	}
 	if strings.HasPrefix(source, "linked:") {
 		id := strings.TrimPrefix(source, "linked:")
+		// F3: check quarantine + fingerprint under RLock; the fingerprint
+		// comparison is fast (a stat + struct comparison). A mismatch
+		// quarantines the link so every downstream op fails closed until the
+		// user re-links.
 		a.configMu.RLock()
-		defer a.configMu.RUnlock()
-		for _, ln := range a.cfg.LinkedNotebooks {
-			if ln.ID == id {
-				return ln.RootPath, nil
+		if a.quarantinedLinks != nil {
+			if _, q := a.quarantinedLinks[id]; q {
+				a.configMu.RUnlock()
+				return "", fmt.Errorf("linked notebook %q is quarantined (root moved or tampered); re-link it via Settings → Linked notebooks", id)
 			}
 		}
-		return "", fmt.Errorf("linked notebook %q is not registered", id)
+		var ln config.LinkedNotebook
+		found := false
+		for _, entry := range a.cfg.LinkedNotebooks {
+			if entry.ID == id {
+				ln = entry
+				found = true
+				break
+			}
+		}
+		a.configMu.RUnlock()
+		if !found {
+			return "", fmt.Errorf("linked notebook %q is not registered", id)
+		}
+		// F3: re-verify the root fingerprint. A synced edit to config.yaml's
+		// root_path redirects the link to an attacker-chosen folder; the
+		// fingerprint comparison catches this on the next access and
+		// quarantines the link.
+		if ln.RootFingerprint != "" {
+			currentFP, fpErr := config.ComputeRootFingerprint(ln.RootPath)
+			if fpErr != nil {
+				return "", fmt.Errorf("linked notebook %q root is inaccessible: %w", id, fpErr)
+			}
+			if currentFP != ln.RootFingerprint {
+				a.quarantineLink(id, "fingerprint_mismatch")
+				return "", fmt.Errorf("linked notebook %q root fingerprint mismatch (root moved or tampered); re-link it via Settings → Linked notebooks", id)
+			}
+		}
+		return ln.RootPath, nil
 	}
 	return "", fmt.Errorf("unknown notebook source %q", source)
 }

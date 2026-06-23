@@ -9,7 +9,10 @@
     GetOpenTabs,
     SetOpenTabs,
     ConfirmSettingsChange,
-    ConfirmGrantsMigration
+    ConfirmGrantsMigration,
+    ResolveQuarantinedLinks,
+    PickLinkedNotebook,
+    UnlinkNotebook
   } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
   import { fade } from 'svelte/transition'
@@ -324,6 +327,11 @@
   // confirm moving grants to per-host storage.
   let showGrantsMigration = $state(false)
   let pendingLegacyGrants = $state<Record<string, Record<string, string>>>({})
+  // F3: quarantined linked notebooks (root_path moved or tampered). The modal
+  // offers re-link (PickLinkedNotebook) or unlink (UnlinkNotebook).
+  let quarantinedLinks = $state<
+    { id: string; display_name: string; root_path: string }[]
+  >([])
 
   // Focused block ancestry path highlighting
   let activeFocusedBlockAncestors = $state<string[]>([])
@@ -584,6 +592,18 @@
         showGrantsMigration = true
       }
     )
+    // F3: linked-notebook quarantined — the root was moved or tampered with.
+    // Refresh the quarantine list so the modal shows the latest set.
+    const offLinkedQuarantined = EventsOn(
+      'linked-notebook:quarantined',
+      async () => {
+        try {
+          quarantinedLinks = await ResolveQuarantinedLinks()
+        } catch (e) {
+          console.error('ResolveQuarantinedLinks failed:', e)
+        }
+      }
+    )
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
       window.removeEventListener('navigate-to-block', handleNavigateToBlock)
@@ -600,6 +620,7 @@
       offConfigChangedReload()
       offSettingsMismatch()
       offGrantsMigration()
+      offLinkedQuarantined()
       disposeEditorTokens()
       disposeThemes()
       disposeTemplates()
@@ -1097,6 +1118,60 @@
               showGrantsMigration = false
             }}>Move permissions</button
           >
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if quarantinedLinks.length > 0}
+    <div
+      class="settings-mismatch-overlay"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="quarantine-title"
+      aria-describedby="quarantine-desc"
+      transition:fade={{ duration: 150 }}
+    >
+      <div class="settings-mismatch-modal">
+        <h2 id="quarantine-title">Linked notebook moved or tampered</h2>
+        <p id="quarantine-desc">
+          {#each quarantinedLinks as q (q.id)}
+            <strong>{q.display_name}</strong> has moved or been tampered with. Re-link
+            it or unlink it.
+          {:else}
+            No quarantined notebooks.
+          {/each}
+        </p>
+        <div class="settings-mismatch-actions">
+          {#each quarantinedLinks as q (q.id)}
+            <button
+              class="secondary"
+              onclick={async () => {
+                try {
+                  await UnlinkNotebook(q.id)
+                  quarantinedLinks = quarantinedLinks.filter(
+                    (l) => l.id !== q.id
+                  )
+                } catch (e) {
+                  console.error('UnlinkNotebook failed:', e)
+                }
+              }}>Unlink {q.display_name}</button
+            >
+            <button
+              class="primary"
+              onclick={async () => {
+                try {
+                  await PickLinkedNotebook()
+                  await UnlinkNotebook(q.id)
+                  quarantinedLinks = quarantinedLinks.filter(
+                    (l) => l.id !== q.id
+                  )
+                } catch (e) {
+                  console.error('re-link failed:', e)
+                }
+              }}>Re-link {q.display_name}</button
+            >
+          {/each}
         </div>
       </div>
     </div>

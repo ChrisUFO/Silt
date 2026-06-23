@@ -60,6 +60,13 @@ type App struct {
 	// though they persist to a different file than config.yaml). Loaded in
 	// initializeVaultServices, torn down in teardownVaultServices.
 	grants vault.GrantsStore
+	// quarantinedLinks holds the IDs of linked notebooks whose on-disk root
+	// no longer matches the stored RootFingerprint (F3). Presence in this set
+	// means the link is quarantined: excluded from indexing, reads, and
+	// writes; the user sees a re-link prompt. Guarded by configMu. Populated
+	// at vault open (fingerprint mismatch) and on fsnotify reload (root_path
+	// changed); cleared by UnlinkNotebook (re-link = unlink + link).
+	quarantinedLinks map[string]struct{}
 
 	// templateWatcher hot-reloads <vault>/.system/templates/ so the picker
 	// stays live when a user adds/edits/deletes a custom template externally.
@@ -309,6 +316,7 @@ func (a *App) teardownVaultServices() {
 	// is untouched — it persists across vault sessions.
 	a.configMu.Lock()
 	a.grants = nil
+	a.quarantinedLinks = nil
 	a.configMu.Unlock()
 	templates.ResetPluginRegistry()
 }
@@ -400,6 +408,15 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 			runtime.EventsEmit(a.ctx, "grants:migration-required", legacy)
 		}
 	}
+
+	// F3: verify linked-notebook fingerprints before the vault scan. Legacy
+	// links (pre-F3, no fingerprint) get one assigned silently; mismatched
+	// links are quarantined (excluded from indexing/reads/writes) and emit
+	// linked-notebook:quarantined so the frontend shows a re-link prompt.
+	a.configMu.Lock()
+	a.quarantinedLinks = make(map[string]struct{})
+	a.configMu.Unlock()
+	a.verifyLinkedNotebookFingerprints()
 
 	// Persistent on-disk WAL index at <vault>/.system/index.sqlite. Survives
 	// restarts so a warm launch re-indexes only changed files (#29). Markdown

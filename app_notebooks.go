@@ -143,7 +143,20 @@ func (a *App) LinkNotebook(folderPath string) (config.LinkedNotebook, error) {
 		return config.LinkedNotebook{}, fmt.Errorf("invalid folder name")
 	}
 	id := "linked-" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12]
-	ln := config.LinkedNotebook{ID: id, RootPath: filepath.Clean(absPath), DisplayName: displayName}
+	// F3: capture a host-verified fingerprint at link time so a subsequent
+	// synced edit to config.yaml's root_path cannot redirect the link to an
+	// attacker-chosen folder. resolveNotebookDir recomputes and compares on
+	// every access; mismatch → quarantine + re-link prompt.
+	fp, fpErr := config.ComputeRootFingerprint(absPath)
+	if fpErr != nil {
+		return config.LinkedNotebook{}, fmt.Errorf("failed to fingerprint linked root: %w", fpErr)
+	}
+	ln := config.LinkedNotebook{
+		ID:              id,
+		RootPath:        filepath.Clean(absPath),
+		DisplayName:     displayName,
+		RootFingerprint: fp,
+	}
 
 	// Reject display-name collisions: a vault notebook or an existing link with
 	// the same name would be ambiguous in the sidebar and in (notebook, ...)
@@ -415,6 +428,111 @@ func (a *App) onLinkedConfigChange(source string) {
 	a.invalidateLinkedConfig(source)
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "linked-config:changed", source)
+	}
+}
+
+// quarantineLink adds a linked notebook ID to the quarantine set and emits
+// linked-notebook:quarantined so the frontend shows a re-link prompt. A
+// quarantined link is excluded from resolveNotebookDir, indexing, and
+// ListNavigation until the user re-links (UnlinkNotebook + LinkNotebook,
+// which captures a fresh fingerprint). Guarded by configMu (write).
+func (a *App) quarantineLink(id, reason string) {
+	a.configMu.Lock()
+	if a.quarantinedLinks == nil {
+		a.quarantinedLinks = make(map[string]struct{})
+	}
+	a.quarantinedLinks[id] = struct{}{}
+	displayName := ""
+	for _, ln := range a.cfg.LinkedNotebooks {
+		if ln.ID == id {
+			displayName = ln.DisplayName
+			break
+		}
+	}
+	a.configMu.Unlock()
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "linked-notebook:quarantined", map[string]string{
+			"id":           id,
+			"display_name": displayName,
+			"reason":       reason,
+		})
+	}
+	log.Printf("quarantineLink: %s (%s) quarantined: %s", id, displayName, reason)
+}
+
+// ResolveQuarantinedLinks returns the list of currently-quarantined linked
+// notebooks so the frontend can render re-link prompts.
+func (a *App) ResolveQuarantinedLinks() ([]QuarantinedLinkInfo, error) {
+	if a.vaultPath == "" {
+		return nil, fmt.Errorf("vault not loaded")
+	}
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	out := make([]QuarantinedLinkInfo, 0, len(a.quarantinedLinks))
+	for _, ln := range a.cfg.LinkedNotebooks {
+		if _, q := a.quarantinedLinks[ln.ID]; q {
+			out = append(out, QuarantinedLinkInfo{
+				ID:          ln.ID,
+				DisplayName: ln.DisplayName,
+				RootPath:    ln.RootPath,
+			})
+		}
+	}
+	return out, nil
+}
+
+// QuarantinedLinkInfo describes a quarantined linked notebook for the frontend.
+type QuarantinedLinkInfo struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	RootPath    string `json:"root_path"`
+}
+
+// verifyLinkedNotebookFingerprints walks cfg.LinkedNotebooks at vault-open time
+// and either silently assigns a fingerprint to legacy links (pre-F3 vaults) or
+// quarantines links whose stored fingerprint no longer matches the on-disk
+// root. Called from initializeVaultServices after config.Load, before the
+// linked-tree index pass. Must be called WITHOUT holding configMu (it
+// acquires it internally via quarantineLink).
+func (a *App) verifyLinkedNotebookFingerprints() {
+	a.configMu.RLock()
+	links := append([]config.LinkedNotebook(nil), a.cfg.LinkedNotebooks...)
+	a.configMu.RUnlock()
+
+	for _, ln := range links {
+		if ln.RootFingerprint == "" {
+			// F3 migration: pre-F3 vault has a link with no fingerprint.
+			// Assign one silently (the user linked this on THIS host).
+			fp, err := config.ComputeRootFingerprint(ln.RootPath)
+			if err != nil {
+				log.Printf("verifyLinkedNotebookFingerprints: skip legacy %s (inaccessible): %v", ln.DisplayName, err)
+				continue
+			}
+			a.configMu.Lock()
+			for i := range a.cfg.LinkedNotebooks {
+				if a.cfg.LinkedNotebooks[i].ID == ln.ID {
+					a.cfg.LinkedNotebooks[i].RootFingerprint = fp
+					break
+				}
+			}
+			if a.configWatcher != nil {
+				a.configWatcher.RegisterSelfWrite()
+			}
+			saveErr := config.Save(a.vaultPath, a.cfg)
+			a.configMu.Unlock()
+			if saveErr != nil {
+				log.Printf("verifyLinkedNotebookFingerprints: persist FP for %s: %v", ln.DisplayName, saveErr)
+			}
+			continue
+		}
+		currentFP, err := config.ComputeRootFingerprint(ln.RootPath)
+		if err != nil {
+			log.Printf("verifyLinkedNotebookFingerprints: skip %s (inaccessible): %v", ln.DisplayName, err)
+			continue
+		}
+		if currentFP != ln.RootFingerprint {
+			a.quarantineLink(ln.ID, "fingerprint_mismatch")
+		}
 	}
 }
 

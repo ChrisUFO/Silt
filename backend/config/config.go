@@ -82,9 +82,10 @@ type PluginsConfig struct {
 // plugin list; the markdown content (and any co-located <root>/.system/) stays
 // with the notebook root and is the product.
 type LinkedNotebook struct {
-	ID          string `yaml:"id" json:"id"`                     // stable id, e.g. "linked-<short>"; source column = "linked:"+ID
-	RootPath    string `yaml:"root_path" json:"root_path"`       // absolute path to the external notebook root
-	DisplayName string `yaml:"display_name" json:"display_name"` // sidebar label (the notebook "name")
+	ID              string `yaml:"id" json:"id"`                               // stable id, e.g. "linked-<short>"; source column = "linked:"+ID
+	RootPath        string `yaml:"root_path" json:"root_path"`                 // absolute path to the external notebook root
+	DisplayName     string `yaml:"display_name" json:"display_name"`           // sidebar label (the notebook "name")
+	RootFingerprint string `yaml:"root_fingerprint,omitempty" json:"root_fingerprint,omitempty"` // F3: host-verified trust anchor; see fingerprint.go
 }
 
 // Source returns the `blocks.source` discriminator value for this linked

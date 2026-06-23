@@ -454,23 +454,65 @@ func (a *App) SaveSystemConfig(cfg config.SystemConfig) error {
 // Go-side knobs (tab indent width), then emits config:changed so the frontend
 // refreshes editor settings, hotkeys, and per-plugin settings.
 func (a *App) applyConfig(cfg config.SystemConfig) {
-	a.applyConfigLocked(cfg)
+	quarantined := a.applyConfigLocked(cfg)
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "config:changed", cfg)
+		// F3: emit linked-notebook:quarantined for any links whose root_path
+		// changed in the external edit (synced-vault attack vector).
+		for _, q := range quarantined {
+			runtime.EventsEmit(a.ctx, "linked-notebook:quarantined", q)
+		}
 	}
 }
 
 // applyConfigLocked updates a.cfg + live knobs under the write lock. Split out
 // so initializeVaultServices can set the config (and spacesPerTab) before the
 // first scan without emitting an event for a vault the frontend hasn't seen yet.
-func (a *App) applyConfigLocked(cfg config.SystemConfig) {
+// Returns a slice of newly-quarantined linked-notebook event payloads (for
+// applyConfig to emit after unlock — the lock is held here so quarantineLink
+// cannot be called).
+func (a *App) applyConfigLocked(cfg config.SystemConfig) []map[string]string {
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
+	// F3: when a config reloads from disk (fsnotify), preserve the in-memory
+	// RootFingerprint for each linked notebook. A synced edit that changes
+	// root_path without also capturing a valid fingerprint is the attack
+	// vector — detect the mismatch, quarantine the link, and do NOT adopt the
+	// new root_path (preserve the trusted in-memory one).
+	var quarantined []map[string]string
+	if a.quarantinedLinks == nil {
+		a.quarantinedLinks = make(map[string]struct{})
+	}
+	for i, reloaded := range cfg.LinkedNotebooks {
+		for _, existing := range a.cfg.LinkedNotebooks {
+			if reloaded.ID != existing.ID {
+				continue
+			}
+			if reloaded.RootPath != existing.RootPath {
+				// root_path changed via external edit — quarantine and
+				// preserve the trusted in-memory root + fingerprint.
+				a.quarantinedLinks[reloaded.ID] = struct{}{}
+				cfg.LinkedNotebooks[i].RootPath = existing.RootPath
+				cfg.LinkedNotebooks[i].RootFingerprint = existing.RootFingerprint
+				quarantined = append(quarantined, map[string]string{
+					"id":           reloaded.ID,
+					"display_name": reloaded.DisplayName,
+					"reason":       "root_path_changed",
+				})
+				log.Printf("applyConfigLocked: quarantined %s (root_path changed in external edit)", reloaded.DisplayName)
+			} else {
+				// RootPath unchanged — preserve the fingerprint captured at link time.
+				cfg.LinkedNotebooks[i].RootFingerprint = existing.RootFingerprint
+			}
+			break
+		}
+	}
 	a.cfg = cfg
 	if cfg.Editor.TabIndentSpaces > 0 {
 		a.spacesPerTab = cfg.Editor.TabIndentSpaces
 	}
 	a.seedFirstPartyGrants()
+	return quarantined
 }
 
 // seedFirstPartyGrants populates the per-host grants store with every
