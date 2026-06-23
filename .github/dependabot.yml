@@ -1,0 +1,26 @@
+# Dependabot keeps GitHub Actions versions and npm dependencies current so a
+# new transitive advisory is caught by the F8 security gate (via npm audit)
+# rather than landing unnoticed. Weekly cadence balances freshness against PR
+# noise; the open-pull-requests-limit caps flooding.
+#
+# govulncheck does not need a dependabot ecosystem — it runs against the live
+# Go vuln DB on every CI run, so a new Go advisory fails the gate the day it
+# is published, not the day a PR opens.
+
+version: 2
+updates:
+  # GitHub Actions versions (actions/checkout, setup-go, setup-node,
+  # gitleaks-action). New action releases often patch supply-chain concerns.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # Frontend npm dependencies (Vite, Svelte, TipTap, fonts). The lockfile
+  # lives in frontend/ so directory must point there.
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

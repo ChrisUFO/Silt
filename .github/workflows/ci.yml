@@ -84,3 +84,56 @@ jobs:
 
       - name: Test with race detector
         run: go test -race -count=1 ./...
+
+  # F8 (#242): dependency + secret scanning. Runs parallel to build-and-test
+  # so a vulnerable transitive dep or a leaked secret fails the PR fast.
+  #
+  # IMPORTANT: this job MUST be added to the "required status checks" list in
+  # GitHub branch protection (Settings → Branches → main → Require status
+  # checks) before the PR merging — the gate only enforces what branch
+  # protection requires. The job name below is what to look for in the picker.
+  #
+  # npm audit uses --omit=dev so dev-only advisories (e.g. undici pulled by
+  # Vite's own tooling) don't redden the gate; --audit-level=high means only
+  # high+critical in the prod tree blocks merge. govulncheck reports only
+  # reachable vulns (uncalled advisories are printed but don't fail). gitleaks
+  # scans full history (fetch-depth: 0) so a secret introduced and removed in
+  # any prior commit is still caught.
+  security:
+    name: Dependency + secret scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks needs full history
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: govulncheck (reachable vulnerabilities)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          $(go env GOPATH)/bin/govulncheck ./...
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm audit (prod tree, high+critical)
+        working-directory: frontend
+        # npm install (not ci) for the same platform-specific optional-dep
+        # reason as build-and-test. --omit=dev scopes to the prod tree so
+        # dev-only advisories don't redden the gate; --audit-level=high means
+        # only high/critical blocks merge.
+        run: |
+          npm install
+          npm audit --omit=dev --audit-level=high
+
+      - name: gitleaks (secrets in full history)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
