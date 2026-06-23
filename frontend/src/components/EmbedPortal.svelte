@@ -2,7 +2,7 @@
   import { onMount, onDestroy, getContext, setContext } from 'svelte'
   import {
     ResolveBlockReference,
-    PluginMutateBlock
+    MutateBlock
   } from '../../wailsjs/go/main/App.js'
   import { EventsOn } from '../../wailsjs/runtime/runtime.js'
   import RichText from './RichText.svelte'
@@ -29,8 +29,13 @@
     hostFileDate?: string
   }
 
-  let { uuid, hostNotebook = '', hostSection = '', hostPage = '', hostFileDate = '' }: Props =
-    $props()
+  let {
+    uuid,
+    hostNotebook = '',
+    hostSection = '',
+    hostPage = '',
+    hostFileDate = ''
+  }: Props = $props()
 
   // Recursion guard: an embed is recursive only when it appears in its
   // own ancestor chain. Sibling embeds of the same block are not.
@@ -57,7 +62,7 @@
 
   async function persist(text: string, attempt = 0) {
     try {
-      await PluginMutateBlock(uuid, text)
+      await MutateBlock(uuid, text)
       persistError = ''
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)

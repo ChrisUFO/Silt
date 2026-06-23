@@ -23,7 +23,11 @@ type pluginFileResult struct {
 // PluginResolveNotebookRoot returns the absolute root directory of a notebook
 // (in-vault or linked/external per #100), so a plugin can reason about paths.
 // Gated by read-files (a root leak is a minor info disclosure).
-func (a *App) PluginResolveNotebookRoot(pluginID, notebook string) (string, error) {
+// Session-token verified (#236).
+func (a *App) PluginResolveNotebookRoot(pluginID, sessionToken, notebook string) (string, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return "", err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapReadFiles); err != nil {
 		return "", err
 	}
@@ -45,7 +49,11 @@ func (a *App) PluginResolveNotebookRoot(pluginID, notebook string) (string, erro
 // a plugin with read-files already has file-listing access, so the tree is
 // the same info in structured form, not an escalation). A plugin without
 // the grant gets a CapabilityDeniedError.
-func (a *App) PluginListNavigation(pluginID string) (parser.NavigationTree, error) {
+// Session-token verified (#236).
+func (a *App) PluginListNavigation(pluginID, sessionToken string) (parser.NavigationTree, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return parser.NavigationTree{}, err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapReadFiles); err != nil {
 		return parser.NavigationTree{}, err
 	}
@@ -53,8 +61,11 @@ func (a *App) PluginListNavigation(pluginID string) (parser.NavigationTree, erro
 }
 
 // PluginReadFile reads a file within a notebook (relative path, traversal-
-// guarded). Gated by read-files.
-func (a *App) PluginReadFile(pluginID, notebook, relPath string) (pluginFileResult, error) {
+// guarded). Gated by read-files. Session-token verified (#236).
+func (a *App) PluginReadFile(pluginID, sessionToken, notebook, relPath string) (pluginFileResult, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return pluginFileResult{}, err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapReadFiles); err != nil {
 		return pluginFileResult{}, err
 	}
@@ -270,8 +281,11 @@ func (a *App) PluginDeleteFile(pluginID, sessionToken, notebook, relPath string)
 }
 
 // PluginListDir lists the immediate children of a directory within a notebook.
-// Gated by read-files.
-func (a *App) PluginListDir(pluginID, notebook, relPath string) ([]string, error) {
+// Gated by read-files. Session-token verified (#236).
+func (a *App) PluginListDir(pluginID, sessionToken, notebook, relPath string) ([]string, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return nil, err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapReadFiles); err != nil {
 		return nil, err
 	}
@@ -298,8 +312,11 @@ func (a *App) PluginListDir(pluginID, notebook, relPath string) ([]string, error
 // PluginScratchDir returns (and lazily creates) a plugin's per-notebook scratch
 // directory: `<notebook>/.system/plugins/<pluginID>/data/` (travels with the
 // notebook per #100). Gated by write-files (the plugin must be able to write
-// its own scratch).
-func (a *App) PluginScratchDir(pluginID, notebook string) (string, error) {
+// its own scratch). Session-token verified (#236).
+func (a *App) PluginScratchDir(pluginID, sessionToken, notebook string) (string, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return "", err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapWriteFiles); err != nil {
 		return "", err
 	}
@@ -322,8 +339,11 @@ func (a *App) PluginScratchDir(pluginID, notebook string) (string, error) {
 // PluginVaultScratchDir returns (and lazily creates) a plugin's vault-scoped
 // scratch directory: `<vault>/.system/plugins/<pluginID>/data/` (stays in the
 // vault, for caches that should NOT travel with a notebook). Gated by
-// write-files (#108).
-func (a *App) PluginVaultScratchDir(pluginID string) (string, error) {
+// write-files (#108). Session-token verified (#236).
+func (a *App) PluginVaultScratchDir(pluginID, sessionToken string) (string, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return "", err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapWriteFiles); err != nil {
 		return "", err
 	}
@@ -339,7 +359,11 @@ func (a *App) PluginVaultScratchDir(pluginID string) (string, error) {
 
 // PluginResolveAsset resolves a relative attachment path against a notebook's
 // root and returns the absolute path (#108 path helper). Gated by read-files.
-func (a *App) PluginResolveAsset(pluginID, notebook, relPath string) (string, error) {
+// Session-token verified (#236).
+func (a *App) PluginResolveAsset(pluginID, sessionToken, notebook, relPath string) (string, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return "", err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapReadFiles); err != nil {
 		return "", err
 	}

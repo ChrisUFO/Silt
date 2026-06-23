@@ -21,13 +21,13 @@ import EmbedPortal from './EmbedPortal.svelte'
 // --- IPC mocks (canonical vi.hoisted + vi.mock pattern) ---
 const mocks = vi.hoisted(() => ({
   resolveBlockReference: vi.fn(),
-  pluginMutateBlock: vi.fn(),
+  mutateBlock: vi.fn(),
   eventsOn: vi.fn(() => () => {})
 }))
 
 vi.mock('../../wailsjs/go/main/App.js', () => ({
   ResolveBlockReference: mocks.resolveBlockReference,
-  PluginMutateBlock: mocks.pluginMutateBlock
+  MutateBlock: mocks.mutateBlock
 }))
 
 vi.mock('../../wailsjs/runtime/runtime.js', () => ({
@@ -112,7 +112,7 @@ describe('EmbedPortal (#127)', () => {
     )
   })
 
-  it('persists edits via PluginMutateBlock (debounced)', async () => {
+  it('persists edits via MutateBlock (debounced)', async () => {
     vi.useFakeTimers()
     mocks.resolveBlockReference.mockResolvedValue({
       exists: true,
@@ -123,7 +123,7 @@ describe('EmbedPortal (#127)', () => {
       file_date: '2026-06-15',
       clean_text: 'editable content'
     })
-    mocks.pluginMutateBlock.mockResolvedValue(undefined)
+    mocks.mutateBlock.mockResolvedValue(undefined)
     render(EmbedPortal, { props: { uuid: FIXTURE_UUID } })
     await tick()
     // Find the contenteditable and simulate input.
@@ -134,7 +134,7 @@ describe('EmbedPortal (#127)', () => {
       // Advance past the 500ms debounce.
       vi.advanceTimersByTime(600)
       await vi.waitFor(() => {
-        expect(mocks.pluginMutateBlock).toHaveBeenCalledWith(
+        expect(mocks.mutateBlock).toHaveBeenCalledWith(
           FIXTURE_UUID,
           expect.stringContaining('edited')
         )

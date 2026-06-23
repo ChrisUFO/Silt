@@ -35,6 +35,9 @@ vi.mock('./location.svelte', () => ({
 import { makePluginContext } from './context'
 
 describe('makePluginContext — updateTaskMeta sentinel translation', () => {
+  // F1 (#236): the SDK now threads pluginID + sessionToken through every
+  // privileged binding. makePluginContext(pluginID, sessionToken?) captures
+  // them; the assertions verify the full call signature.
   beforeEach(() => {
     mocks.pluginUpdateTaskMeta.mockClear()
   })
@@ -42,37 +45,85 @@ describe('makePluginContext — updateTaskMeta sentinel translation', () => {
   it('maps pin true → 1', async () => {
     const ctx = makePluginContext('test-plugin')
     await ctx.updateTaskMeta('b1', { pinned: true })
-    expect(mocks.pluginUpdateTaskMeta).toHaveBeenCalledWith('b1', 1, -1)
+    expect(mocks.pluginUpdateTaskMeta).toHaveBeenCalledWith(
+      'test-plugin',
+      '',
+      'b1',
+      1,
+      -1
+    )
   })
 
   it('maps pin false → 0 (explicit [pin:: false], #123)', async () => {
     const ctx = makePluginContext('test-plugin')
     await ctx.updateTaskMeta('b1', { pinned: false })
-    expect(mocks.pluginUpdateTaskMeta).toHaveBeenCalledWith('b1', 0, -1)
+    expect(mocks.pluginUpdateTaskMeta).toHaveBeenCalledWith(
+      'test-plugin',
+      '',
+      'b1',
+      0,
+      -1
+    )
   })
 
   it('maps pin null → -2 (clear the token, #123)', async () => {
     const ctx = makePluginContext('test-plugin')
     await ctx.updateTaskMeta('b1', { pinned: null })
-    expect(mocks.pluginUpdateTaskMeta).toHaveBeenCalledWith('b1', -2, -1)
+    expect(mocks.pluginUpdateTaskMeta).toHaveBeenCalledWith(
+      'test-plugin',
+      '',
+      'b1',
+      -2,
+      -1
+    )
   })
 
   it('maps omitted pin → -1 (no change)', async () => {
     const ctx = makePluginContext('test-plugin')
     await ctx.updateTaskMeta('b1', { progress: 50 })
-    expect(mocks.pluginUpdateTaskMeta).toHaveBeenCalledWith('b1', -1, 50)
+    expect(mocks.pluginUpdateTaskMeta).toHaveBeenCalledWith(
+      'test-plugin',
+      '',
+      'b1',
+      -1,
+      50
+    )
   })
 
   it('maps progress undefined → -1, number → itself', async () => {
     const ctx = makePluginContext('test-plugin')
     await ctx.updateTaskMeta('b1', { progress: 75 })
-    expect(mocks.pluginUpdateTaskMeta).toHaveBeenCalledWith('b1', -1, 75)
+    expect(mocks.pluginUpdateTaskMeta).toHaveBeenCalledWith(
+      'test-plugin',
+      '',
+      'b1',
+      -1,
+      75
+    )
   })
 
   it('maps both fields together', async () => {
     const ctx = makePluginContext('test-plugin')
     await ctx.updateTaskMeta('b1', { pinned: true, progress: 100 })
-    expect(mocks.pluginUpdateTaskMeta).toHaveBeenCalledWith('b1', 1, 100)
+    expect(mocks.pluginUpdateTaskMeta).toHaveBeenCalledWith(
+      'test-plugin',
+      '',
+      'b1',
+      1,
+      100
+    )
+  })
+
+  it('threads a captured session token through (#236)', async () => {
+    const ctx = makePluginContext('test-plugin', 'tok-abc')
+    await ctx.updateTaskMeta('b1', { pinned: true })
+    expect(mocks.pluginUpdateTaskMeta).toHaveBeenCalledWith(
+      'test-plugin',
+      'tok-abc',
+      'b1',
+      1,
+      -1
+    )
   })
 })
 

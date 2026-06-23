@@ -84,6 +84,20 @@ export function makePluginContext(
   sessionToken?: string
 ): PluginContext {
   const loc = getActiveLocation()
+  // ctxSqliteQuery is the per-instance closure used by the query helpers
+  // (queryByTag, fullTextSearch, etc.). It threads pluginID + sessionToken
+  // through PluginRawQuery so the Go side can verify the caller's identity
+  // (#236).
+  const ctxSqliteQuery = (
+    sql: string,
+    params: unknown[]
+  ): Promise<SqliteQueryResult> =>
+    PluginRawQuery(pluginID, sessionToken ?? '', sql, params ?? []).then(
+      (res) => ({
+        rows: (res?.rows as Record<string, unknown>[]) ?? [],
+        truncated: !!res?.truncated
+      })
+    )
   return {
     get activeNotebook() {
       return loc.notebook
@@ -107,16 +121,19 @@ export function makePluginContext(
     // convenience (Wails sometimes hands back undefined for an empty
     // top-level struct, especially before the vault is open).
     sqliteQuery: (sql, params) =>
-      PluginRawQuery(sql, params ?? []).then((res) => {
-        const out: SqliteQueryResult = {
-          rows: (res?.rows as Record<string, unknown>[]) ?? [],
-          truncated: !!res?.truncated
+      PluginRawQuery(pluginID, sessionToken ?? '', sql, params ?? []).then(
+        (res) => {
+          const out: SqliteQueryResult = {
+            rows: (res?.rows as Record<string, unknown>[]) ?? [],
+            truncated: !!res?.truncated
+          }
+          return out
         }
-        return out
-      }),
-    mutateBlock: (id, text) => PluginMutateBlock(id, text),
+      ),
+    mutateBlock: (id, text) =>
+      PluginMutateBlock(pluginID, sessionToken ?? '', id, text),
     updateBlockState: (id, status: TaskStatus) =>
-      PluginUpdateBlockState(id, status),
+      PluginUpdateBlockState(pluginID, sessionToken ?? '', id, status),
     // Pin/progress are file-resident user intent (ARCHITECTURE §0). The
     // Go side uses int sentinels for the tri-state pin (#123):
     //   -2 = clear the [pin::] token, -1 = no change,
@@ -125,6 +142,8 @@ export function makePluginContext(
     // boolean|null / number API to those sentinels.
     updateTaskMeta: (id, meta) =>
       PluginUpdateTaskMeta(
+        pluginID,
+        sessionToken ?? '',
         id,
         meta.pinned === undefined
           ? -1
@@ -236,23 +255,50 @@ export function makePluginContext(
       ).then(() => true),
 
     // --- Page / section / notebook CRUD (#104) ------------------------------
+    // Session-token verified (#236).
     createPage: (notebook, section, page, date) =>
-      PluginCreatePage(notebook, section, page, date ?? ''),
+      PluginCreatePage(
+        pluginID,
+        sessionToken ?? '',
+        notebook,
+        section,
+        page,
+        date ?? ''
+      ),
     createSection: (notebook, section) =>
-      PluginCreateSection(notebook, section).then(() => true),
-    createNotebook: (name) => PluginCreateNotebook(name).then(() => true),
+      PluginCreateSection(pluginID, sessionToken ?? '', notebook, section).then(
+        () => true
+      ),
+    createNotebook: (name) =>
+      PluginCreateNotebook(pluginID, sessionToken ?? '', name).then(() => true),
     deletePage: (notebook, section, page) =>
-      PluginDeletePage(notebook, section, page).then(() => true),
+      PluginDeletePage(
+        pluginID,
+        sessionToken ?? '',
+        notebook,
+        section,
+        page
+      ).then(() => true),
     renamePage: (notebook, section, oldName, newName) =>
-      PluginRenamePage(notebook, section, oldName, newName).then(() => true),
+      PluginRenamePage(
+        pluginID,
+        sessionToken ?? '',
+        notebook,
+        section,
+        oldName,
+        newName
+      ).then(() => true),
 
     // --- Plugin file I/O (#108) — capability-gated --------------------------
+    // Session-token verified (#236).
     readFile: (notebook, relPath) =>
-      PluginReadFile(pluginID, notebook, relPath).then((res) => {
-        // Wails encodes []byte as a base64 string over the IPC boundary.
-        const b64 = (res?.bytes as unknown as string) ?? ''
-        return base64ToUint8(b64)
-      }),
+      PluginReadFile(pluginID, sessionToken ?? '', notebook, relPath).then(
+        (res) => {
+          // Wails encodes []byte as a base64 string over the IPC boundary.
+          const b64 = (res?.bytes as unknown as string) ?? ''
+          return base64ToUint8(b64)
+        }
+      ),
     writeFile: (notebook, relPath, data) =>
       PluginWriteFile(
         pluginID,
@@ -266,27 +312,46 @@ export function makePluginContext(
         () => true
       ),
     listDir: (notebook, relPath) =>
-      PluginListDir(pluginID, notebook, relPath).then((r) => r ?? []),
-    notebookRoot: (notebook) => PluginResolveNotebookRoot(pluginID, notebook),
-    scratchDir: (notebook) => PluginScratchDir(pluginID, notebook),
-    vaultScratchDir: () => PluginVaultScratchDir(pluginID),
+      PluginListDir(pluginID, sessionToken ?? '', notebook, relPath).then(
+        (r) => r ?? []
+      ),
+    notebookRoot: (notebook) =>
+      PluginResolveNotebookRoot(pluginID, sessionToken ?? '', notebook),
+    scratchDir: (notebook) =>
+      PluginScratchDir(pluginID, sessionToken ?? '', notebook),
+    vaultScratchDir: () => PluginVaultScratchDir(pluginID, sessionToken ?? ''),
     resolveAsset: (notebook, relPath) =>
-      PluginResolveAsset(pluginID, notebook, relPath),
-    readPluginAsset: (relPath) => PluginReadPluginAsset(pluginID, relPath),
+      PluginResolveAsset(pluginID, sessionToken ?? '', notebook, relPath),
+    readPluginAsset: (relPath) =>
+      PluginReadPluginAsset(pluginID, sessionToken ?? '', relPath),
     getNavigationTree: () =>
-      PluginListNavigation(pluginID).then((tree) => tree ?? { notebooks: [] }),
+      PluginListNavigation(pluginID, sessionToken ?? '').then(
+        (tree) => tree ?? { notebooks: [] }
+      ),
     // --- OS integration (#114) — capability-gated ---------------------------
+    // Session-token verified (#236).
     openInNativeHandler: (notebook, relPath) =>
-      PluginOpenInNativeHandler(pluginID, notebook, relPath).then(() => true),
-    openUrl: (url) => PluginOpenUrl(pluginID, url).then(() => true),
-    pickOpenFile: (filterPattern) => PluginPickOpenFile(filterPattern ?? '*'),
+      PluginOpenInNativeHandler(
+        pluginID,
+        sessionToken ?? '',
+        notebook,
+        relPath
+      ).then(() => true),
+    openUrl: (url) =>
+      PluginOpenUrl(pluginID, sessionToken ?? '', url).then(() => true),
+    pickOpenFile: (filterPattern) =>
+      PluginPickOpenFile(pluginID, sessionToken ?? '', filterPattern ?? '*'),
     pickSaveFile: (defaultFilename) =>
-      PluginPickSaveFile(defaultFilename ?? ''),
-    clipboardRead: () => PluginClipboardReadText(pluginID),
+      PluginPickSaveFile(pluginID, sessionToken ?? '', defaultFilename ?? ''),
+    clipboardRead: () => PluginClipboardReadText(pluginID, sessionToken ?? ''),
     clipboardWrite: (text) =>
-      PluginClipboardWriteText(pluginID, text).then(() => true),
+      PluginClipboardWriteText(pluginID, sessionToken ?? '', text).then(
+        () => true
+      ),
     notify: (opts) =>
-      PluginNotify(pluginID, opts.title, opts.body).then(() => true),
+      PluginNotify(pluginID, sessionToken ?? '', opts.title, opts.body).then(
+        () => true
+      ),
 
     // --- Network / fetch (#115) — capability-gated --------------------------
     fetch: (url, opts) =>
@@ -335,7 +400,13 @@ export function makePluginContext(
       // defense in depth.
       const id = `${pluginID}:${surface.id}`
       let cleanup: (() => void) | null = null
-      PluginRegisterSurface(pluginID, surface.id, surface.kind, surface.label)
+      PluginRegisterSurface(
+        pluginID,
+        sessionToken ?? '',
+        surface.id,
+        surface.kind,
+        surface.label
+      )
         .then(() => {
           cleanup = registerSurface({
             id,
@@ -369,16 +440,11 @@ export function makePluginContext(
   }
 }
 
-// ctxSqliteQuery is the shared sqliteQuery closure used by the query helpers.
-function ctxSqliteQuery(
-  sql: string,
-  params: unknown[]
-): Promise<SqliteQueryResult> {
-  return PluginRawQuery(sql, params ?? []).then((res) => ({
-    rows: (res?.rows as Record<string, unknown>[]) ?? [],
-    truncated: !!res?.truncated
-  }))
-}
+// ctxSqliteQuery is no longer a module-level helper: each makePluginContext
+// call constructs its own closure (above, inside the returned object) that
+// captures pluginID + sessionToken so the Go side can verify the caller's
+// identity (#236). The query helpers (queryByTag, fullTextSearch, etc.) use
+// that per-instance closure.
 
 // base64ToUint8 decodes a base64 string into a Uint8Array (Wails transports
 // []byte as base64 over the IPC boundary).

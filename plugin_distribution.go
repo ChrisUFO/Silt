@@ -117,8 +117,12 @@ func (a *App) RemoveTrustedPublisher(publisher string) error {
 // (`.system/plugins/<pluginID>/<relPath>`), enabling plugin-bundled assets
 // like icons, templates, or static HTML for surfaces (#108/#117). The path is
 // traversal-guarded (no `..` escapes) and sanitized. NOT capability-gated
-// (reading your own bundle is safe).
-func (a *App) PluginReadPluginAsset(pluginID, relPath string) (string, error) {
+// (reading your own bundle is safe). Session-token verified (#236) — a plugin
+// cannot read another plugin's bundle by spoofing the pluginID.
+func (a *App) PluginReadPluginAsset(pluginID, sessionToken, relPath string) (string, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return "", err
+	}
 	if a.vaultPath == "" {
 		return "", fmt.Errorf("vault not loaded")
 	}

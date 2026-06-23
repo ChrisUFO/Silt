@@ -1,13 +1,30 @@
-// PluginSurfaceFrame CSP tests (#149).
+// PluginSurfaceFrame CSP + postMessage tests (#149, #248).
 //
 // The iframe srcdoc must carry a restrictive CSP meta tag so a plugin surface
 // cannot bypass the host's SSRF-defended ctx.fetch proxy with a direct
 // fetch() / XHR / WebSocket from inside the sandboxed iframe.
 //
+// The parent → iframe response postMessage calls must pin targetOrigin to
+// 'null' (the literal origin a sandboxed-without-allow-same-origin iframe
+// reports) instead of '*'. The actual gate is the source-window check in
+// handleRequest; the tight targetOrigin is defense in depth against a future
+// refactor that swaps the contentWindow ref for a window lookup (#248).
+//
 // The CSP value is imported from the same shared module the component uses,
 // so the test catches drift between the test and the production code.
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { SURFACE_CSP, SURFACE_CSP_META } from './plugin-surface-csp'
+
+const componentSource = readFileSync(
+  resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    './PluginSurfaceFrame.svelte'
+  ),
+  'utf8'
+)
 
 describe('PluginSurfaceFrame CSP (#149)', () => {
   it('the CSP blocks connect-src (no direct fetch from iframe)', () => {
@@ -39,7 +56,6 @@ describe('PluginSurfaceFrame CSP (#149)', () => {
   it('the bridge fetch method is in the allowedMethods set (proxies through host)', () => {
     // Verify that 'fetch' is in the allowedMethods set used by the bridge.
     // This is the sanctioned network path; the CSP blocks the unsanctioned one.
-    // Read the allowedMethods from the component source to avoid drift.
     const allowedMethods = new Set([
       'sqliteQuery',
       'mutateBlock',
@@ -84,5 +100,61 @@ describe('PluginSurfaceFrame CSP (#149)', () => {
       'readPluginAsset'
     ])
     expect(allowedMethods.has('fetch')).toBe(true)
+  })
+})
+
+describe('PluginSurfaceFrame postMessage targetOrigin (#248)', () => {
+  // The parent sends three response flavors back to the iframe (blocked-method
+  // error, success result, catch error). All three MUST pin targetOrigin to
+  // 'null' (the literal origin a sandboxed-without-allow-same-origin iframe
+  // reports). The bridge-script request postMessage is a separate direction
+  // (iframe → parent) and intentionally keeps '*' — the sandboxed iframe
+  // cannot read the parent's origin.
+  //
+  // Rather than parsing nested-paren argument lists with a regex (which
+  // breaks on `String(method)` inside the bridge and on `String(err)` inside
+  // the catch response), the test counts the structural end-of-call pattern:
+  // each response ends with the literal `'null'` targetOrigin on its own line
+  // followed by the closing paren. That pattern uniquely identifies a
+  // parent → iframe response and is immune to nested parens inside the
+  // message payload.
+
+  it('parent → iframe response calls pin targetOrigin to "null" (exactly 3, no "*")', () => {
+    // Strip the bridge script template literal before counting so only the
+    // parent-side response paths are inspected.
+    const declStart = componentSource.indexOf('const bridgeScript =')
+    const openingBacktick = componentSource.indexOf('`', declStart)
+    const closingBacktick = componentSource.indexOf('`', openingBacktick + 1)
+    expect(openingBacktick).toBeGreaterThan(-1)
+    expect(closingBacktick).toBeGreaterThan(openingBacktick)
+    const withoutBridge =
+      componentSource.slice(0, declStart) +
+      componentSource.slice(closingBacktick + 1)
+
+    // Three response calls (blocked, success, catch), each ending with the
+    // 'null' targetOrigin on its own line followed by the closing paren.
+    // \r? tolerates CRLF line endings on Windows.
+    const nullTargets = withoutBridge.match(/'null'\r?\n\s+\)/g) ?? []
+    expect(nullTargets.length).toBe(3)
+
+    // And zero response calls may use '*' as the targetOrigin.
+    const starTargets = withoutBridge.match(/'\*'\r?\n\s+\)/g) ?? []
+    expect(starTargets.length).toBe(0)
+  })
+
+  it('bridge-script request postMessage keeps "*" (sandboxed iframe cannot read parent origin)', () => {
+    // The bridge script runs INSIDE the iframe (srcdoc context). It cannot
+    // read the parent's origin (cross-origin sandbox), so its request
+    // postMessage MUST keep '*'. Changing this to 'null' would silently
+    // drop every request and break the plugin surface entirely (#248).
+    const declStart = componentSource.indexOf('const bridgeScript =')
+    const openingBacktick = componentSource.indexOf('`', declStart)
+    const closingBacktick = componentSource.indexOf('`', openingBacktick + 1)
+    const bridge = componentSource.slice(openingBacktick + 1, closingBacktick)
+    // Substring check (a regex with [^)]* breaks on `String(method)` inside
+    // the bridge). The bridge emits a single-line call:
+    //   parent.postMessage({ ... }, '*');
+    expect(bridge).toContain('parent.postMessage(')
+    expect(bridge).toContain("}, '*');")
   })
 })

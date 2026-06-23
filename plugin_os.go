@@ -16,7 +16,11 @@ import (
 
 // PluginOpenInNativeHandler opens a file within a notebook in the OS default
 // handler for its type. Traversal-guarded. Gated by os-open.
-func (a *App) PluginOpenInNativeHandler(pluginID, notebook, relPath string) error {
+// Session-token verified (#236).
+func (a *App) PluginOpenInNativeHandler(pluginID, sessionToken, notebook, relPath string) error {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapOSOpen); err != nil {
 		return err
 	}
@@ -32,7 +36,11 @@ func (a *App) PluginOpenInNativeHandler(pluginID, notebook, relPath string) erro
 
 // PluginOpenUrl opens a URL in the system browser. Scheme-restricted to http,
 // https, mailto (file/javascript/custom schemes blocked). Gated by os-open.
-func (a *App) PluginOpenUrl(pluginID, url string) error {
+// Session-token verified (#236).
+func (a *App) PluginOpenUrl(pluginID, sessionToken, url string) error {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapOSOpen); err != nil {
 		return err
 	}
@@ -49,7 +57,13 @@ func (a *App) PluginOpenUrl(pluginID, url string) error {
 // PluginPickOpenFile opens a native file picker and returns the chosen path
 // (empty on cancel). Not capability-gated (a picker is user-driven; the chosen
 // path only becomes useful through a gated binding like AddAttachment).
-func (a *App) PluginPickOpenFile(filterPattern string) (string, error) {
+// Session-token verified (#236) — verifies the caller's identity so a
+// malicious main-webview plugin cannot drive the OS file picker by spoofing
+// a first-party pluginID.
+func (a *App) PluginPickOpenFile(pluginID, sessionToken, filterPattern string) (string, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return "", err
+	}
 	if a.ctx == nil {
 		return "", fmt.Errorf("application context not ready")
 	}
@@ -62,8 +76,11 @@ func (a *App) PluginPickOpenFile(filterPattern string) (string, error) {
 }
 
 // PluginPickSaveFile opens a native save-file picker and returns the chosen
-// path (empty on cancel).
-func (a *App) PluginPickSaveFile(defaultFilename string) (string, error) {
+// path (empty on cancel). Session-token verified (#236).
+func (a *App) PluginPickSaveFile(pluginID, sessionToken, defaultFilename string) (string, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return "", err
+	}
 	if a.ctx == nil {
 		return "", fmt.Errorf("application context not ready")
 	}
@@ -74,7 +91,11 @@ func (a *App) PluginPickSaveFile(defaultFilename string) (string, error) {
 }
 
 // PluginClipboardReadText reads the system clipboard. Gated by os-clipboard.
-func (a *App) PluginClipboardReadText(pluginID string) (string, error) {
+// Session-token verified (#236).
+func (a *App) PluginClipboardReadText(pluginID, sessionToken string) (string, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return "", err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapOSClipboard); err != nil {
 		return "", err
 	}
@@ -85,8 +106,11 @@ func (a *App) PluginClipboardReadText(pluginID string) (string, error) {
 }
 
 // PluginClipboardWriteText writes text to the system clipboard. Gated by
-// os-clipboard.
-func (a *App) PluginClipboardWriteText(pluginID, text string) error {
+// os-clipboard. Session-token verified (#236).
+func (a *App) PluginClipboardWriteText(pluginID, sessionToken, text string) error {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapOSClipboard); err != nil {
 		return err
 	}
@@ -102,7 +126,11 @@ func (a *App) PluginClipboardWriteText(pluginID, text string) error {
 // (osascript on macOS, notify-send on Linux, msg/PowerShell on Windows). Gated
 // by os-notify. A failure to spawn the notifier is non-fatal (logged) — a
 // notification is best-effort UX, not a correctness path.
-func (a *App) PluginNotify(pluginID, title, body string) error {
+// Session-token verified (#236).
+func (a *App) PluginNotify(pluginID, sessionToken, title, body string) error {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapOSNotify); err != nil {
 		return err
 	}

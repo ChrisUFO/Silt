@@ -224,12 +224,22 @@ methods provided through `ctx.*`. Importing `wailsjs/go/main/App.js` directly
 and calling the raw Wails bindings is a **violation of the trust model** and
 will break when per-plugin isolated webviews land (#152 long-term).
 
-**Session tokens (#151).** When a plugin loads, the host calls
+**Session tokens (#151, #236).** When a plugin loads, the host calls
 `RegisterPluginSession(pluginID)` to mint a session token. Every privileged SDK
 closure captures this token and passes it to the Go binding alongside the
 `pluginID`. The Go side validates `token ↔ pluginID` before checking grants, so
 a plugin cannot impersonate another by passing a different `pluginID` to a raw
 binding — it doesn't have the target plugin's token.
+
+**Enforced on every `Plugin*` binding (#236).** The session-token check is the
+first gate on every privileged `Plugin*` binding — file I/O, OS integration,
+network/fetch, page/section/notebook CRUD, block CRUD, raw query, file pickers,
+clipboard, notifications, and surface registration. A malicious plugin that
+bypasses the SDK (imports `wailsjs/go/main/App.js` directly) and calls any
+binding with a different `pluginID` is rejected at the session boundary before
+`requireGrant` runs. Spoofing a first-party pluginID (which is implicitly
+granted every capability) does not help the attacker: it does not have that
+plugin's session token.
 
 This is a **stepping stone**, not a full isolation boundary. Because plugin JS
 runs in the main webview, a determined attacker could read another plugin's
@@ -397,6 +407,13 @@ To request a higher limit, declare it in the manifest:
 `rps` must be > 0 and <= 10; `burst` must be > 0 and <= 100. Values outside
 this range are rejected at install time. The response body cap is 2 MB per
 request.
+
+**Redirect header hygiene (#160, #247).** On a cross-host redirect, custom
+auth headers (`X-Api-Key`, etc.) are stripped and `User-Agent` is reset to
+`Go-http-client/1.1` — do NOT embed credentials in the `User-Agent` header
+(anti-pattern; will leak across cross-host redirects). Same-host redirects
+preserve both custom headers and the plugin-supplied `User-Agent` (legitimate
+use case: API versioning via UA).
 
 ### 8.7 Editor extension points (#110)
 

@@ -274,7 +274,11 @@ func TestPluginApplyBlocks_DeniedWithoutContentMutateGrant(t *testing.T) {
 // PluginRegisterSurface is denied without ui-surface.
 func TestPluginRegisterSurface_DeniedWithoutUISurfaceGrant(t *testing.T) {
 	app := newTestApp(t)
-	err := app.PluginRegisterSurface("third-party", "panel1", "sidebar-panel", "My Panel")
+	tok, err := app.RegisterPluginSession("third-party")
+	if err != nil {
+		t.Fatalf("register session: %v", err)
+	}
+	err = app.PluginRegisterSurface("third-party", tok, "panel1", "sidebar-panel", "My Panel")
 	if err == nil {
 		t.Fatal("expected capability denial without ui-surface grant")
 	}
@@ -283,10 +287,14 @@ func TestPluginRegisterSurface_DeniedWithoutUISurfaceGrant(t *testing.T) {
 // PluginRegisterSurface succeeds with ui-surface.
 func TestPluginRegisterSurface_SucceedsWithUISurfaceGrant(t *testing.T) {
 	app := newTestApp(t)
+	tok, err := app.RegisterPluginSession("third-party")
+	if err != nil {
+		t.Fatalf("register session: %v", err)
+	}
 	if err := app.RequestCapability("third-party", string(plugins.CapUISurface), ""); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	if err := app.PluginRegisterSurface("third-party", "panel1", "sidebar-panel", "My Panel"); err != nil {
+	if err := app.PluginRegisterSurface("third-party", tok, "panel1", "sidebar-panel", "My Panel"); err != nil {
 		t.Fatalf("PluginRegisterSurface with grant: %v", err)
 	}
 }
@@ -358,14 +366,14 @@ func TestPluginReadFile_AndListDir(t *testing.T) {
 	_ = app.PluginWriteFile("p", token, "Work", "attachments/a.txt", []byte("A"))
 	_ = app.PluginWriteFile("p", token, "Work", "attachments/b.txt", []byte("B"))
 
-	res, err := app.PluginReadFile("p", "Work", "attachments/a.txt")
+	res, err := app.PluginReadFile("p", token, "Work", "attachments/a.txt")
 	if err != nil {
 		t.Fatalf("PluginReadFile: %v", err)
 	}
 	if string(res.Bytes) != "A" {
 		t.Errorf("read content = %q, want A", res.Bytes)
 	}
-	entries, err := app.PluginListDir("p", "Work", "attachments")
+	entries, err := app.PluginListDir("p", token, "Work", "attachments")
 	if err != nil {
 		t.Fatalf("PluginListDir: %v", err)
 	}
@@ -377,8 +385,9 @@ func TestPluginReadFile_AndListDir(t *testing.T) {
 // PluginScratchDir creates and returns the per-notebook plugin data dir.
 func TestPluginScratchDir(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapWriteFiles), "")
-	dir, err := app.PluginScratchDir("p", "Work")
+	dir, err := app.PluginScratchDir("p", token, "Work")
 	if err != nil {
 		t.Fatalf("PluginScratchDir: %v", err)
 	}
@@ -900,7 +909,8 @@ func TestPluginMoveBlock_ConcurrentCrossPageNoClobber(t *testing.T) {
 // PluginListNavigation is denied without a read-files grant.
 func TestPluginListNavigation_DeniedWithoutGrant(t *testing.T) {
 	app := newTestApp(t)
-	_, err := app.PluginListNavigation("third-party")
+	tok := registerTestSession(t, app, "third-party")
+	_, err := app.PluginListNavigation("third-party", tok)
 	if err == nil {
 		t.Fatal("expected capability denial without read-files grant")
 	}
@@ -914,10 +924,11 @@ func TestPluginListNavigation_GrantThenList(t *testing.T) {
 	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n- [ ] task <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n"
 	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
 
+	tok := registerTestSession(t, app, "third-party")
 	if err := app.RequestCapability("third-party", string(plugins.CapReadFiles), ""); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	tree, err := app.PluginListNavigation("third-party")
+	tree, err := app.PluginListNavigation("third-party", tok)
 	if err != nil {
 		t.Fatalf("PluginListNavigation: %v", err)
 	}
@@ -1163,9 +1174,13 @@ func TestResolvePluginRatelimit_ClampsOutOfRange(t *testing.T) {
 }
 
 // =========================================================================
-// Redirect header hygiene (#160)
+// Redirect header hygiene (#160, #247)
 // =========================================================================
 
+// TestStripHeadersForRedirect_RemovesCustomAuth verifies the allowlist
+// behavior: safe headers survive, custom auth is stripped, and User-Agent is
+// RESET to Go's default (not preserved) so a plugin that embedded credentials
+// in the UA cannot leak them across a cross-host redirect (#247, F13).
 func TestStripHeadersForRedirect_RemovesCustomAuth(t *testing.T) {
 	req := &http.Request{
 		Header: http.Header{
@@ -1179,8 +1194,8 @@ func TestStripHeadersForRedirect_RemovesCustomAuth(t *testing.T) {
 	if req.Header.Get("Accept") != "text/html" {
 		t.Error("Accept should survive the redirect allowlist")
 	}
-	if req.Header.Get("User-Agent") != "Silt/1.0" {
-		t.Error("User-Agent should survive the redirect allowlist")
+	if req.Header.Get("User-Agent") != "Go-http-client/1.1" {
+		t.Errorf("User-Agent should be reset to Go default on cross-host redirect, got %q", req.Header.Get("User-Agent"))
 	}
 	if req.Header.Get("X-Api-Key") != "" {
 		t.Error("X-Api-Key should be stripped on redirect")
@@ -1210,17 +1225,23 @@ func newRedirectRequest(rawurl string, headers http.Header) *http.Request {
 // the redirect crosses to a different host (the actual leak risk). Hosts are
 // public TEST-NET IP literals so isSafeFetchUrl resolves them locally without
 // network access and does not flag them as internal.
+//
+// Extended for #247 (F13): a plugin-supplied User-Agent survives a same-host
+// redirect (legitimate use case: API versioning via UA) but is RESET to Go's
+// default on a cross-host redirect so a plugin that embedded credentials in
+// the UA cannot leak them.
 func TestCheckRedirect_StripsCustomAuthOnlyCrossHost(t *testing.T) {
 	client := newSafeFetchClient(defaultPluginFetchTimeout)
 
 	authHeaders := func() http.Header {
 		return http.Header{
-			"Accept":    {"application/json"},
-			"X-Api-Key": {"secret-key"},
+			"Accept":     {"application/json"},
+			"X-Api-Key":  {"secret-key"},
+			"User-Agent": {"my-plugin/1.0"},
 		}
 	}
 
-	// Same-host redirect: X-Api-Key must survive.
+	// Same-host redirect: X-Api-Key AND User-Agent must survive.
 	via := []*http.Request{newRedirectRequest("https://203.0.113.1/v1/widgets", authHeaders())}
 	sameHost := newRedirectRequest("https://203.0.113.1/v2/widgets", authHeaders())
 	if err := client.CheckRedirect(sameHost, via); err != nil {
@@ -1229,8 +1250,11 @@ func TestCheckRedirect_StripsCustomAuthOnlyCrossHost(t *testing.T) {
 	if sameHost.Header.Get("X-Api-Key") != "secret-key" {
 		t.Error("X-Api-Key should survive a same-host redirect")
 	}
+	if sameHost.Header.Get("User-Agent") != "my-plugin/1.0" {
+		t.Errorf("User-Agent should survive a same-host redirect, got %q", sameHost.Header.Get("User-Agent"))
+	}
 
-	// Cross-host redirect: X-Api-Key must be stripped, Accept kept.
+	// Cross-host redirect: X-Api-Key stripped, Accept kept, User-Agent RESET.
 	crossHost := newRedirectRequest("https://198.51.100.5/capture", authHeaders())
 	if err := client.CheckRedirect(crossHost, via); err != nil {
 		t.Fatalf("cross-host CheckRedirect: %v", err)
@@ -1240,6 +1264,9 @@ func TestCheckRedirect_StripsCustomAuthOnlyCrossHost(t *testing.T) {
 	}
 	if crossHost.Header.Get("Accept") != "application/json" {
 		t.Error("Accept should survive the cross-host allowlist")
+	}
+	if crossHost.Header.Get("User-Agent") != "Go-http-client/1.1" {
+		t.Errorf("User-Agent must be reset to Go default on a cross-host redirect (F13), got %q", crossHost.Header.Get("User-Agent"))
 	}
 }
 
@@ -1750,5 +1777,199 @@ func TestPluginCreateBlock_RejectsMissingSessionToken(t *testing.T) {
 	_, err := app.PluginCreateBlock("silt-kanban", "", "", "Work", "", "Daily", "TASK", "text")
 	if err == nil {
 		t.Fatal("expected rejection: missing session token")
+	}
+}
+
+// =========================================================================
+// F1 (#236): spoofed-identity regression
+//
+// A malicious plugin running in the main webview could bypass the SDK and
+// call App.Plugin* bindings directly with a different pluginID to try to
+// inherit that plugin's grants. Every privileged binding MUST reject a
+// request whose (pluginID, sessionToken) pair does not match.
+//
+// This test exercises every binding that gained session-token verification
+// in the F1 sprint (every Plugin* binding other than the 7 that already
+// enforced it). For each one:
+//   - register a session for "legit-plugin"
+//   - call the binding with pluginID="silt-attachments" (first-party, fully
+//     granted via seedFirstPartyGrants) + the "legit-plugin" token
+//   - assert the call fails with the session-mismatch error
+//
+// The test does NOT assert what each binding does AFTER the session check
+// (it never gets past it). It only asserts the boundary. Bindings that
+// require setup (e.g. PluginRawQuery needs an open DB) are exercised at
+// the simplest input that reaches the session check.
+// =========================================================================
+
+func TestPluginBindings_RejectSpoofedIdentity(t *testing.T) {
+	app := newTestApp(t)
+	// "legit-plugin" mints a real token.
+	legitToken, err := app.RegisterPluginSession("legit-plugin")
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+	// The attacker spoofs "silt-attachments" (first-party, fully granted)
+	// but uses legit-plugin's token. Every privileged binding MUST reject
+	// the mismatch.
+	const spoofedID = "silt-attachments"
+	mismatchErrSubstring := "session token mismatch"
+
+	// Helper: each call must return an error whose message mentions the
+	// mismatch (proving it failed at the session boundary, not later).
+	assertMismatch := func(t *testing.T, label string, err error) {
+		t.Helper()
+		if err == nil {
+			t.Errorf("%s: expected spoofed-identity rejection, got nil", label)
+			return
+		}
+		if !strings.Contains(err.Error(), mismatchErrSubstring) {
+			t.Errorf("%s: error = %q, want substring %q", label, err.Error(), mismatchErrSubstring)
+		}
+	}
+
+	// Category B (grew sessionToken param in F1): bindings taking pluginID today.
+	t.Run("PluginReadFile", func(t *testing.T) {
+		_, err := app.PluginReadFile(spoofedID, legitToken, "Work", "attachments/x.png")
+		assertMismatch(t, "PluginReadFile", err)
+	})
+	t.Run("PluginListDir", func(t *testing.T) {
+		_, err := app.PluginListDir(spoofedID, legitToken, "Work", "attachments")
+		assertMismatch(t, "PluginListDir", err)
+	})
+	t.Run("PluginListNavigation", func(t *testing.T) {
+		_, err := app.PluginListNavigation(spoofedID, legitToken)
+		assertMismatch(t, "PluginListNavigation", err)
+	})
+	t.Run("PluginResolveNotebookRoot", func(t *testing.T) {
+		_, err := app.PluginResolveNotebookRoot(spoofedID, legitToken, "Work")
+		assertMismatch(t, "PluginResolveNotebookRoot", err)
+	})
+	t.Run("PluginScratchDir", func(t *testing.T) {
+		_, err := app.PluginScratchDir(spoofedID, legitToken, "Work")
+		assertMismatch(t, "PluginScratchDir", err)
+	})
+	t.Run("PluginVaultScratchDir", func(t *testing.T) {
+		_, err := app.PluginVaultScratchDir(spoofedID, legitToken)
+		assertMismatch(t, "PluginVaultScratchDir", err)
+	})
+	t.Run("PluginResolveAsset", func(t *testing.T) {
+		_, err := app.PluginResolveAsset(spoofedID, legitToken, "Work", "x")
+		assertMismatch(t, "PluginResolveAsset", err)
+	})
+	t.Run("PluginReadPluginAsset", func(t *testing.T) {
+		_, err := app.PluginReadPluginAsset(spoofedID, legitToken, "icon.svg")
+		assertMismatch(t, "PluginReadPluginAsset", err)
+	})
+	t.Run("PluginRegisterSurface", func(t *testing.T) {
+		err := app.PluginRegisterSurface(spoofedID, legitToken, "panel", "sidebar-panel", "L")
+		assertMismatch(t, "PluginRegisterSurface", err)
+	})
+	t.Run("PluginOpenInNativeHandler", func(t *testing.T) {
+		err := app.PluginOpenInNativeHandler(spoofedID, legitToken, "Work", "x")
+		assertMismatch(t, "PluginOpenInNativeHandler", err)
+	})
+	t.Run("PluginOpenUrl", func(t *testing.T) {
+		err := app.PluginOpenUrl(spoofedID, legitToken, "https://example.com")
+		assertMismatch(t, "PluginOpenUrl", err)
+	})
+	t.Run("PluginPickOpenFile", func(t *testing.T) {
+		_, err := app.PluginPickOpenFile(spoofedID, legitToken, "*")
+		assertMismatch(t, "PluginPickOpenFile", err)
+	})
+	t.Run("PluginPickSaveFile", func(t *testing.T) {
+		_, err := app.PluginPickSaveFile(spoofedID, legitToken, "out.txt")
+		assertMismatch(t, "PluginPickSaveFile", err)
+	})
+	t.Run("PluginClipboardReadText", func(t *testing.T) {
+		_, err := app.PluginClipboardReadText(spoofedID, legitToken)
+		assertMismatch(t, "PluginClipboardReadText", err)
+	})
+	t.Run("PluginClipboardWriteText", func(t *testing.T) {
+		err := app.PluginClipboardWriteText(spoofedID, legitToken, "leak")
+		assertMismatch(t, "PluginClipboardWriteText", err)
+	})
+	t.Run("PluginNotify", func(t *testing.T) {
+		err := app.PluginNotify(spoofedID, legitToken, "t", "b")
+		assertMismatch(t, "PluginNotify", err)
+	})
+
+	// Category C (grew pluginID + sessionToken in F1): bindings without
+	// pluginID today.
+	t.Run("PluginRawQuery", func(t *testing.T) {
+		_, err := app.PluginRawQuery(spoofedID, legitToken, "SELECT 1", nil)
+		assertMismatch(t, "PluginRawQuery", err)
+	})
+	t.Run("PluginMutateBlock", func(t *testing.T) {
+		_, err := app.PluginMutateBlock(spoofedID, legitToken, "block-id", "text")
+		assertMismatch(t, "PluginMutateBlock", err)
+	})
+	t.Run("PluginUpdateBlockState", func(t *testing.T) {
+		_, err := app.PluginUpdateBlockState(spoofedID, legitToken, "block-id", "DONE")
+		assertMismatch(t, "PluginUpdateBlockState", err)
+	})
+	t.Run("PluginUpdateTaskMeta", func(t *testing.T) {
+		_, err := app.PluginUpdateTaskMeta(spoofedID, legitToken, "block-id", 1, -1)
+		assertMismatch(t, "PluginUpdateTaskMeta", err)
+	})
+	t.Run("PluginCreatePage", func(t *testing.T) {
+		_, err := app.PluginCreatePage(spoofedID, legitToken, "Work", "", "P", "2026-06-13")
+		assertMismatch(t, "PluginCreatePage", err)
+	})
+	t.Run("PluginCreateSection", func(t *testing.T) {
+		err := app.PluginCreateSection(spoofedID, legitToken, "Work", "S")
+		assertMismatch(t, "PluginCreateSection", err)
+	})
+	t.Run("PluginCreateNotebook", func(t *testing.T) {
+		err := app.PluginCreateNotebook(spoofedID, legitToken, "N")
+		assertMismatch(t, "PluginCreateNotebook", err)
+	})
+	t.Run("PluginDeletePage", func(t *testing.T) {
+		err := app.PluginDeletePage(spoofedID, legitToken, "Work", "", "P")
+		assertMismatch(t, "PluginDeletePage", err)
+	})
+	t.Run("PluginRenamePage", func(t *testing.T) {
+		err := app.PluginRenamePage(spoofedID, legitToken, "Work", "", "old", "new")
+		assertMismatch(t, "PluginRenamePage", err)
+	})
+
+	// Sanity: the same bindings succeed when the token matches. This proves
+	// the rejection was due to identity mismatch, not a broken binding.
+	t.Run("correct identity passes the session check", func(t *testing.T) {
+		// PluginRawQuery: with a matching token, it should NOT return the
+		// mismatch error (it may return a "vault database not loaded" error
+		// in this minimal app, which is fine — we only assert the session
+		// check passed).
+		_, err := app.PluginRawQuery("legit-plugin", legitToken, "SELECT 1", nil)
+		if err != nil && strings.Contains(err.Error(), mismatchErrSubstring) {
+			t.Errorf("correct identity should pass session check, got mismatch: %v", err)
+		}
+	})
+}
+
+// TestPluginBindings_RejectMissingSessionToken verifies that every privileged
+// binding rejects an empty session token (the bypass path a malicious plugin
+// would take if it imported wailsjs/go/main/App.js directly without going
+// through RegisterPluginSession).
+func TestPluginBindings_RejectMissingSessionToken(t *testing.T) {
+	app := newTestApp(t)
+
+	// Sample of bindings across categories. The remaining bindings follow
+	// the same validatePluginSession-first pattern; this test covers one
+	// representative from each file to keep the regression suite focused.
+	if _, err := app.PluginReadFile("silt-attachments", "", "Work", "x"); err == nil {
+		t.Error("PluginReadFile: expected rejection for empty token")
+	}
+	if _, err := app.PluginRawQuery("silt-attachments", "", "SELECT 1", nil); err == nil {
+		t.Error("PluginRawQuery: expected rejection for empty token")
+	}
+	if _, err := app.PluginMutateBlock("silt-attachments", "", "id", "text"); err == nil {
+		t.Error("PluginMutateBlock: expected rejection for empty token")
+	}
+	if _, err := app.PluginUpdateTaskMeta("silt-attachments", "", "id", 1, -1); err == nil {
+		t.Error("PluginUpdateTaskMeta: expected rejection for empty token")
+	}
+	if err := app.PluginNotify("silt-attachments", "", "t", "b"); err == nil {
+		t.Error("PluginNotify: expected rejection for empty token")
 	}
 }

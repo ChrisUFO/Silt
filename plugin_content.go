@@ -467,7 +467,11 @@ func moveWithin(blocks []parser.ParsedBlock, id, afterID string) []parser.Parsed
 
 // PluginCreatePage wraps the core CreatePage for the SDK (sandboxed to the
 // declared notebook scope). Returns the resolved date string.
-func (a *App) PluginCreatePage(notebook, section, page, dateStr string) (string, error) {
+// Session-token verified (#236).
+func (a *App) PluginCreatePage(pluginID, sessionToken, notebook, section, page, dateStr string) (string, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return "", err
+	}
 	return a.CreatePage(notebook, section, page, dateStr)
 }
 
@@ -476,26 +480,46 @@ func (a *App) PluginCreatePage(notebook, section, page, dateStr string) (string,
 // CapabilityDeniedError here, before the frontend registry adds the surface.
 // The frontend registerSurface SDK method calls this first; only on success
 // does it add the surface to the frontend surfaces map.
-func (a *App) PluginRegisterSurface(pluginID, surfaceID, kind, label string) error {
+// Session-token verified (#236).
+func (a *App) PluginRegisterSurface(pluginID, sessionToken, surfaceID, kind, label string) error {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
 	return a.requireGrant(pluginID, plugins.CapUISurface)
 }
 
 // PluginCreateSection wraps the core CreateSection for the SDK.
-func (a *App) PluginCreateSection(notebook, section string) error {
+// Session-token verified (#236).
+func (a *App) PluginCreateSection(pluginID, sessionToken, notebook, section string) error {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
 	return a.CreateSection(notebook, section)
 }
 
 // PluginCreateNotebook wraps the core CreateNotebook for the SDK.
-func (a *App) PluginCreateNotebook(name string) error {
+// Session-token verified (#236).
+func (a *App) PluginCreateNotebook(pluginID, sessionToken, name string) error {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
 	return a.CreateNotebook(name)
 }
 
 // PluginDeletePage wraps the core DeletePage for the SDK.
-func (a *App) PluginDeletePage(notebook, section, page string) error {
+// Session-token verified (#236).
+func (a *App) PluginDeletePage(pluginID, sessionToken, notebook, section, page string) error {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
 	return a.DeletePage(notebook, section, page)
 }
 
 // PluginRenamePage wraps the core RenamePage for the SDK.
-func (a *App) PluginRenamePage(notebook, section, oldName, newName string) error {
+// Session-token verified (#236).
+func (a *App) PluginRenamePage(pluginID, sessionToken, notebook, section, oldName, newName string) error {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
 	return a.RenamePage(notebook, section, oldName, newName)
 }

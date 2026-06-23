@@ -131,6 +131,16 @@ import '@fontsource/crimson-pro/latin-500.css'
 import '@fontsource/crimson-pro/latin-600.css'
 import '@fontsource/crimson-pro/latin-700.css'
 
+// Material Symbols Outlined — the icon font used throughout the UI. Bundled
+// via @fontsource (woff2 self-hosted by Vite) so the host webview's CSP can
+// ship with `font-src 'self'` and no Google Fonts CDN allowlist (#237, F2).
+// The previous setup loaded it from fonts.googleapis.com; bundling keeps
+// Silt 100% offline and consistent with the local-first font philosophy
+// documented at the top of this file. The 400 weight is the default
+// Material Symbols Outlined rendering; the codebase does not override the
+// weight via CSS, so a single weight file matches the prior rendering.
+import '@fontsource/material-symbols-outlined/400.css'
+
 export type FontCategory = 'sans' | 'mono' | 'display' | 'serif'
 export type FontSource = 'bundled' | 'system'
 
@@ -155,39 +165,213 @@ export interface FontEntry {
  */
 export const FONT_REGISTRY: FontEntry[] = [
   // Sans-serif body fonts
-  { id: 'plus-jakarta-sans', displayName: 'Plus Jakarta Sans', cssFamily: 'Plus Jakarta Sans', category: 'sans', source: 'bundled' },
-  { id: 'inter', displayName: 'Inter', cssFamily: 'Inter', category: 'sans', source: 'bundled' },
-  { id: 'work-sans', displayName: 'Work Sans', cssFamily: 'Work Sans', category: 'sans', source: 'bundled' },
-  { id: 'manrope', displayName: 'Manrope', cssFamily: 'Manrope', category: 'sans', source: 'bundled' },
-  { id: 'mulish', displayName: 'Mulish', cssFamily: 'Mulish', category: 'sans', source: 'bundled' },
-  { id: 'outfit', displayName: 'Outfit', cssFamily: 'Outfit', category: 'sans', source: 'bundled' },
-  { id: 'atkinson-hyperlegible', displayName: 'Atkinson Hyperlegible', cssFamily: 'Atkinson Hyperlegible', category: 'sans', source: 'bundled' },
-  { id: 'geist', displayName: 'Geist', cssFamily: 'Geist', category: 'sans', source: 'bundled' },
-  { id: 'dm-sans', displayName: 'DM Sans', cssFamily: 'DM Sans', category: 'sans', source: 'bundled' },
-  { id: 'figtree', displayName: 'Figtree', cssFamily: 'Figtree', category: 'sans', source: 'bundled' },
-  { id: 'public-sans', displayName: 'Public Sans', cssFamily: 'Public Sans', category: 'sans', source: 'bundled' },
-  { id: 'lexend', displayName: 'Lexend', cssFamily: 'Lexend', category: 'sans', source: 'bundled' },
+  {
+    id: 'plus-jakarta-sans',
+    displayName: 'Plus Jakarta Sans',
+    cssFamily: 'Plus Jakarta Sans',
+    category: 'sans',
+    source: 'bundled'
+  },
+  {
+    id: 'inter',
+    displayName: 'Inter',
+    cssFamily: 'Inter',
+    category: 'sans',
+    source: 'bundled'
+  },
+  {
+    id: 'work-sans',
+    displayName: 'Work Sans',
+    cssFamily: 'Work Sans',
+    category: 'sans',
+    source: 'bundled'
+  },
+  {
+    id: 'manrope',
+    displayName: 'Manrope',
+    cssFamily: 'Manrope',
+    category: 'sans',
+    source: 'bundled'
+  },
+  {
+    id: 'mulish',
+    displayName: 'Mulish',
+    cssFamily: 'Mulish',
+    category: 'sans',
+    source: 'bundled'
+  },
+  {
+    id: 'outfit',
+    displayName: 'Outfit',
+    cssFamily: 'Outfit',
+    category: 'sans',
+    source: 'bundled'
+  },
+  {
+    id: 'atkinson-hyperlegible',
+    displayName: 'Atkinson Hyperlegible',
+    cssFamily: 'Atkinson Hyperlegible',
+    category: 'sans',
+    source: 'bundled'
+  },
+  {
+    id: 'geist',
+    displayName: 'Geist',
+    cssFamily: 'Geist',
+    category: 'sans',
+    source: 'bundled'
+  },
+  {
+    id: 'dm-sans',
+    displayName: 'DM Sans',
+    cssFamily: 'DM Sans',
+    category: 'sans',
+    source: 'bundled'
+  },
+  {
+    id: 'figtree',
+    displayName: 'Figtree',
+    cssFamily: 'Figtree',
+    category: 'sans',
+    source: 'bundled'
+  },
+  {
+    id: 'public-sans',
+    displayName: 'Public Sans',
+    cssFamily: 'Public Sans',
+    category: 'sans',
+    source: 'bundled'
+  },
+  {
+    id: 'lexend',
+    displayName: 'Lexend',
+    cssFamily: 'Lexend',
+    category: 'sans',
+    source: 'bundled'
+  },
   // Monospace fonts
-  { id: 'jetbrains-mono', displayName: 'JetBrains Mono', cssFamily: 'JetBrains Mono', category: 'mono', source: 'bundled' },
-  { id: 'fira-code', displayName: 'Fira Code', cssFamily: 'Fira Code', category: 'mono', source: 'bundled' },
-  { id: 'ibm-plex-mono', displayName: 'IBM Plex Mono', cssFamily: 'IBM Plex Mono', category: 'mono', source: 'bundled' },
-  { id: 'space-mono', displayName: 'Space Mono', cssFamily: 'Space Mono', category: 'mono', source: 'bundled' },
-  { id: 'geist-mono', displayName: 'Geist Mono', cssFamily: 'Geist Mono', category: 'mono', source: 'bundled' },
-  { id: 'martian-mono', displayName: 'Martian Mono', cssFamily: 'Martian Mono', category: 'mono', source: 'bundled' },
+  {
+    id: 'jetbrains-mono',
+    displayName: 'JetBrains Mono',
+    cssFamily: 'JetBrains Mono',
+    category: 'mono',
+    source: 'bundled'
+  },
+  {
+    id: 'fira-code',
+    displayName: 'Fira Code',
+    cssFamily: 'Fira Code',
+    category: 'mono',
+    source: 'bundled'
+  },
+  {
+    id: 'ibm-plex-mono',
+    displayName: 'IBM Plex Mono',
+    cssFamily: 'IBM Plex Mono',
+    category: 'mono',
+    source: 'bundled'
+  },
+  {
+    id: 'space-mono',
+    displayName: 'Space Mono',
+    cssFamily: 'Space Mono',
+    category: 'mono',
+    source: 'bundled'
+  },
+  {
+    id: 'geist-mono',
+    displayName: 'Geist Mono',
+    cssFamily: 'Geist Mono',
+    category: 'mono',
+    source: 'bundled'
+  },
+  {
+    id: 'martian-mono',
+    displayName: 'Martian Mono',
+    cssFamily: 'Martian Mono',
+    category: 'mono',
+    source: 'bundled'
+  },
   // Display / headline fonts
-  { id: 'hanken-grotesk', displayName: 'Hanken Grotesk', cssFamily: 'Hanken Grotesk', category: 'display', source: 'bundled' },
-  { id: 'sora', displayName: 'Sora', cssFamily: 'Sora', category: 'display', source: 'bundled' },
-  { id: 'schibsted-grotesk', displayName: 'Schibsted Grotesk', cssFamily: 'Schibsted Grotesk', category: 'display', source: 'bundled' },
-  { id: 'bricolage-grotesque', displayName: 'Bricolage Grotesque', cssFamily: 'Bricolage Grotesque', category: 'display', source: 'bundled' },
+  {
+    id: 'hanken-grotesk',
+    displayName: 'Hanken Grotesk',
+    cssFamily: 'Hanken Grotesk',
+    category: 'display',
+    source: 'bundled'
+  },
+  {
+    id: 'sora',
+    displayName: 'Sora',
+    cssFamily: 'Sora',
+    category: 'display',
+    source: 'bundled'
+  },
+  {
+    id: 'schibsted-grotesk',
+    displayName: 'Schibsted Grotesk',
+    cssFamily: 'Schibsted Grotesk',
+    category: 'display',
+    source: 'bundled'
+  },
+  {
+    id: 'bricolage-grotesque',
+    displayName: 'Bricolage Grotesque',
+    cssFamily: 'Bricolage Grotesque',
+    category: 'display',
+    source: 'bundled'
+  },
   // Serif fonts (warm / editorial)
-  { id: 'source-serif-4', displayName: 'Source Serif 4', cssFamily: 'Source Serif 4', category: 'serif', source: 'bundled' },
-  { id: 'newsreader', displayName: 'Newsreader', cssFamily: 'Newsreader', category: 'serif', source: 'bundled' },
-  { id: 'lora', displayName: 'Lora', cssFamily: 'Lora', category: 'serif', source: 'bundled' },
-  { id: 'crimson-pro', displayName: 'Crimson Pro', cssFamily: 'Crimson Pro', category: 'serif', source: 'bundled' },
+  {
+    id: 'source-serif-4',
+    displayName: 'Source Serif 4',
+    cssFamily: 'Source Serif 4',
+    category: 'serif',
+    source: 'bundled'
+  },
+  {
+    id: 'newsreader',
+    displayName: 'Newsreader',
+    cssFamily: 'Newsreader',
+    category: 'serif',
+    source: 'bundled'
+  },
+  {
+    id: 'lora',
+    displayName: 'Lora',
+    cssFamily: 'Lora',
+    category: 'serif',
+    source: 'bundled'
+  },
+  {
+    id: 'crimson-pro',
+    displayName: 'Crimson Pro',
+    cssFamily: 'Crimson Pro',
+    category: 'serif',
+    source: 'bundled'
+  },
   // System fallbacks (always available offline; no bundled files)
-  { id: 'system-ui', displayName: 'System UI', cssFamily: 'system-ui', category: 'sans', source: 'system' },
-  { id: 'sans-serif', displayName: 'Sans Serif (generic)', cssFamily: 'sans-serif', category: 'sans', source: 'system' },
-  { id: 'monospace', displayName: 'Monospace (generic)', cssFamily: 'monospace', category: 'mono', source: 'system' },
+  {
+    id: 'system-ui',
+    displayName: 'System UI',
+    cssFamily: 'system-ui',
+    category: 'sans',
+    source: 'system'
+  },
+  {
+    id: 'sans-serif',
+    displayName: 'Sans Serif (generic)',
+    cssFamily: 'sans-serif',
+    category: 'sans',
+    source: 'system'
+  },
+  {
+    id: 'monospace',
+    displayName: 'Monospace (generic)',
+    cssFamily: 'monospace',
+    category: 'mono',
+    source: 'system'
+  }
 ]
 
 /** Registry ids of the three Cyber Forest (default) families. */
@@ -197,7 +381,9 @@ export const DEFAULT_HEADLINE_ID = 'hanken-grotesk'
 
 /** The bundled (non-system) entries of a given category, in registry order. */
 export function bundledByCategory(category: FontCategory): FontEntry[] {
-  return FONT_REGISTRY.filter((f) => f.source === 'bundled' && f.category === category)
+  return FONT_REGISTRY.filter(
+    (f) => f.source === 'bundled' && f.category === category
+  )
 }
 
 /** The system-fallback entries (rendered in their own optgroup). */

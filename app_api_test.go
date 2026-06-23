@@ -628,8 +628,9 @@ func TestMutateBlock_UnknownIDErrors(t *testing.T) {
 func TestPluginRawQuery_AllowsSelectRejectsWrite(t *testing.T) {
 	app := newTestApp(t)
 	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", "44444444-4444-4444-4444-444444444444", "query me")
+	tok := registerTestSession(t, app, "test-plugin")
 
-	res, err := app.PluginRawQuery("SELECT id, clean_content FROM blocks WHERE type = ?", []any{"TASK"})
+	res, err := app.PluginRawQuery("test-plugin", tok, "SELECT id, clean_content FROM blocks WHERE type = ?", []any{"TASK"})
 	if err != nil {
 		t.Fatalf("PluginRawQuery SELECT: %v", err)
 	}
@@ -640,7 +641,7 @@ func TestPluginRawQuery_AllowsSelectRejectsWrite(t *testing.T) {
 		t.Errorf("single-row result must not report Truncated=true")
 	}
 
-	if _, err := app.PluginRawQuery("DELETE FROM blocks", nil); err == nil {
+	if _, err := app.PluginRawQuery("test-plugin", tok, "DELETE FROM blocks", nil); err == nil {
 		t.Errorf("expected PluginRawQuery to reject non-SELECT statements")
 	}
 }
@@ -651,12 +652,13 @@ func TestPluginRawQuery_RejectsStackedWrite(t *testing.T) {
 	// prefix check.
 	app := newTestApp(t)
 	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", "66666666-6666-6666-6666-666666666666", "stacked")
+	tok := registerTestSession(t, app, "test-plugin")
 
-	if _, err := app.PluginRawQuery("SELECT 1; DROP TABLE blocks", nil); err == nil {
+	if _, err := app.PluginRawQuery("test-plugin", tok, "SELECT 1; DROP TABLE blocks", nil); err == nil {
 		t.Fatalf("expected stacked write to be rejected by read-only connection")
 	}
 	// Sanity: the index must still be intact.
-	res, err := app.PluginRawQuery("SELECT COUNT(*) AS n FROM blocks", nil)
+	res, err := app.PluginRawQuery("test-plugin", tok, "SELECT COUNT(*) AS n FROM blocks", nil)
 	if err != nil {
 		t.Fatalf("SELECT after rejected stacked write: %v", err)
 	}
@@ -670,8 +672,9 @@ func TestPluginRawQuery_AllowsBlockCommentPrefix(t *testing.T) {
 	// handle it so a perfectly valid SELECT is not falsely rejected.
 	app := newTestApp(t)
 	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", "77777777-7777-7777-7777-777777777777", "commented")
+	tok := registerTestSession(t, app, "test-plugin")
 
-	res, err := app.PluginRawQuery("/* explain */ SELECT id FROM blocks LIMIT 1", nil)
+	res, err := app.PluginRawQuery("test-plugin", tok, "/* explain */ SELECT id FROM blocks LIMIT 1", nil)
 	if err != nil {
 		t.Fatalf("PluginRawQuery with leading block comment: %v", err)
 	}
@@ -690,9 +693,10 @@ func TestPluginRawQuery_AllowsBlockCommentPrefix(t *testing.T) {
 func TestPluginRawQuery_TruncationFlag(t *testing.T) {
 	app := newTestApp(t)
 	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", "88888888-8888-8888-8888-888888888888", "truncation-guard")
+	tok := registerTestSession(t, app, "test-plugin")
 
 	// Far under the cap → Truncated must be false.
-	res, err := app.PluginRawQuery("SELECT id FROM blocks LIMIT 10", nil)
+	res, err := app.PluginRawQuery("test-plugin", tok, "SELECT id FROM blocks LIMIT 10", nil)
 	if err != nil {
 		t.Fatalf("PluginRawQuery under cap: %v", err)
 	}
@@ -737,7 +741,8 @@ func TestPluginRawQuery_TruncationCapHit(t *testing.T) {
 	maxPluginQueryRows = 3
 	t.Cleanup(func() { maxPluginQueryRows = origCap })
 
-	res, err := app.PluginRawQuery("SELECT id FROM blocks", nil)
+	tok := registerTestSession(t, app, "test-plugin")
+	res, err := app.PluginRawQuery("test-plugin", tok, "SELECT id FROM blocks", nil)
 	if err != nil {
 		t.Fatalf("PluginRawQuery: %v", err)
 	}
@@ -753,8 +758,9 @@ func TestPluginUpdateBlockState_WrapsUpdate(t *testing.T) {
 	app := newTestApp(t)
 	taskID := "55555555-5555-5555-5555-555555555555"
 	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", taskID, "do it")
+	tok := registerTestSession(t, app, "test-plugin")
 
-	ok, err := app.PluginUpdateBlockState(taskID, "DONE")
+	ok, err := app.PluginUpdateBlockState("test-plugin", tok, taskID, "DONE")
 	if err != nil || !ok {
 		t.Fatalf("PluginUpdateBlockState: ok=%v err=%v", ok, err)
 	}
@@ -1337,8 +1343,9 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 	t.Run("pin toggle round-trips through markdown", func(t *testing.T) {
 		app := newTestApp(t)
 		filePath, taskID, _ := seedTaskFile(t, app)
+		tok := registerTestSession(t, app, "test-plugin")
 
-		ok, err := app.PluginUpdateTaskMeta(taskID, 1, -1)
+		ok, err := app.PluginUpdateTaskMeta("test-plugin", tok, taskID, 1, -1)
 		if err != nil || !ok {
 			t.Fatalf("PluginUpdateTaskMeta pin=1: ok=%v err=%v", ok, err)
 		}
@@ -1350,7 +1357,7 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 		// Unpin writes an explicit [pin:: false] (tri-state #123): the token
 		// is preserved so a user-typed [pin:: false] survives round-trips and
 		// toggling cannot silently revert.
-		ok, err = app.PluginUpdateTaskMeta(taskID, 0, -1)
+		ok, err = app.PluginUpdateTaskMeta("test-plugin", tok, taskID, 0, -1)
 		if err != nil || !ok {
 			t.Fatalf("PluginUpdateTaskMeta pin=0: ok=%v err=%v", ok, err)
 		}
@@ -1363,7 +1370,7 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 		}
 
 		// pin=-2 clears the token entirely (nil → renderer omits it).
-		ok, err = app.PluginUpdateTaskMeta(taskID, -2, -1)
+		ok, err = app.PluginUpdateTaskMeta("test-plugin", tok, taskID, -2, -1)
 		if err != nil || !ok {
 			t.Fatalf("PluginUpdateTaskMeta pin=-2: ok=%v err=%v", ok, err)
 		}
@@ -1376,8 +1383,9 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 	t.Run("progress set round-trips through markdown", func(t *testing.T) {
 		app := newTestApp(t)
 		filePath, taskID, _ := seedTaskFile(t, app)
+		tok := registerTestSession(t, app, "test-plugin")
 
-		ok, err := app.PluginUpdateTaskMeta(taskID, -1, 75)
+		ok, err := app.PluginUpdateTaskMeta("test-plugin", tok, taskID, -1, 75)
 		if err != nil || !ok {
 			t.Fatalf("PluginUpdateTaskMeta progress=75: ok=%v err=%v", ok, err)
 		}
@@ -1390,9 +1398,10 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 	t.Run("no-op sentinels return true without writing", func(t *testing.T) {
 		app := newTestApp(t)
 		filePath, taskID, _ := seedTaskFile(t, app)
+		tok := registerTestSession(t, app, "test-plugin")
 		before, _ := os.ReadFile(filePath)
 
-		ok, err := app.PluginUpdateTaskMeta(taskID, -1, -1)
+		ok, err := app.PluginUpdateTaskMeta("test-plugin", tok, taskID, -1, -1)
 		if err != nil || !ok {
 			t.Fatalf("no-op: ok=%v err=%v", ok, err)
 		}
@@ -1405,7 +1414,8 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 	t.Run("invalid pin value rejected", func(t *testing.T) {
 		app := newTestApp(t)
 		_, taskID, _ := seedTaskFile(t, app)
-		ok, err := app.PluginUpdateTaskMeta(taskID, 2, -1)
+		tok := registerTestSession(t, app, "test-plugin")
+		ok, err := app.PluginUpdateTaskMeta("test-plugin", tok, taskID, 2, -1)
 		if ok || err == nil {
 			t.Errorf("pin=2 should be rejected, got ok=%v err=%v", ok, err)
 		}
@@ -1414,7 +1424,8 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 	t.Run("invalid progress value rejected", func(t *testing.T) {
 		app := newTestApp(t)
 		_, taskID, _ := seedTaskFile(t, app)
-		ok, err := app.PluginUpdateTaskMeta(taskID, -1, 200)
+		tok := registerTestSession(t, app, "test-plugin")
+		ok, err := app.PluginUpdateTaskMeta("test-plugin", tok, taskID, -1, 200)
 		if ok || err == nil {
 			t.Errorf("progress=200 should be rejected, got ok=%v err=%v", ok, err)
 		}
@@ -1423,7 +1434,8 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 	t.Run("non-task block rejected", func(t *testing.T) {
 		app := newTestApp(t)
 		_, _, noteID := seedTaskFile(t, app)
-		ok, err := app.PluginUpdateTaskMeta(noteID, 1, -1)
+		tok := registerTestSession(t, app, "test-plugin")
+		ok, err := app.PluginUpdateTaskMeta("test-plugin", tok, noteID, 1, -1)
 		if ok || err == nil {
 			t.Errorf("non-task block should be rejected, got ok=%v err=%v", ok, err)
 		}
@@ -1432,11 +1444,12 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 	t.Run("block missing from file returns error", func(t *testing.T) {
 		app := newTestApp(t)
 		filePath, taskID, _ := seedTaskFile(t, app)
+		tok := registerTestSession(t, app, "test-plugin")
 		// Overwrite the file so the indexed block is no longer present
 		// (simulates a concurrent external edit that removed the line).
 		writeFile(t, filePath, "# Empty\n- [ ] different task <!-- id: 99999999-9999-9999-9999-999999999999 -->\n")
 
-		ok, err := app.PluginUpdateTaskMeta(taskID, 1, -1)
+		ok, err := app.PluginUpdateTaskMeta("test-plugin", tok, taskID, 1, -1)
 		if ok || err == nil {
 			t.Errorf("missing block should error, got ok=%v err=%v", ok, err)
 		}

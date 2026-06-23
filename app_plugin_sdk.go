@@ -104,7 +104,13 @@ type PluginRawQueryResult struct {
 // `SELECT 1; DROP TABLE blocks;`) regardless of how the prefix check is
 // bypassed. Results are returned as PluginRawQueryResult: the row slice plus
 // a Truncated flag the SDK can surface when the result hit maxPluginQueryRows.
-func (a *App) PluginRawQuery(sqlText string, params []any) (PluginRawQueryResult, error) {
+// Session-token verified (#236) — closes the impersonation vector where a
+// malicious main-webview plugin bypasses the SDK and calls App.PluginRawQuery
+// directly.
+func (a *App) PluginRawQuery(pluginID, sessionToken, sqlText string, params []any) (PluginRawQueryResult, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return PluginRawQueryResult{}, err
+	}
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {
@@ -163,7 +169,12 @@ func (a *App) PluginRawQuery(sqlText string, params []any) (PluginRawQueryResult
 }
 
 // PluginMutateBlock wraps MutateBlock for the plugin SDK, returning success.
-func (a *App) PluginMutateBlock(blockID, newText string) (bool, error) {
+// Session-token verified (#236) — a plugin cannot mutate another plugin's
+// blocks by spoofing the call without the SDK.
+func (a *App) PluginMutateBlock(pluginID, sessionToken, blockID, newText string) (bool, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return false, err
+	}
 	if err := a.MutateBlock(blockID, newText); err != nil {
 		return false, err
 	}
@@ -171,7 +182,11 @@ func (a *App) PluginMutateBlock(blockID, newText string) (bool, error) {
 }
 
 // PluginUpdateBlockState wraps UpdateBlockState for the plugin SDK.
-func (a *App) PluginUpdateBlockState(blockID, status string) (bool, error) {
+// Session-token verified (#236).
+func (a *App) PluginUpdateBlockState(pluginID, sessionToken, blockID, status string) (bool, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return false, err
+	}
 	if err := a.UpdateBlockState(blockID, status); err != nil {
 		return false, err
 	}
@@ -193,7 +208,10 @@ func (a *App) PluginUpdateBlockState(blockID, status string) (bool, error) {
 // The tri-state pin sentinel preserves a typed [pin:: false] across UI
 // toggles: the renderer emits exactly one pin token from the *bool, so
 // pin → unpin → pin can never produce two competing tokens (#123).
-func (a *App) PluginUpdateTaskMeta(blockID string, pin int, progress int) (bool, error) {
+func (a *App) PluginUpdateTaskMeta(pluginID, sessionToken, blockID string, pin int, progress int) (bool, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return false, err
+	}
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if pin < -2 || pin > 1 {

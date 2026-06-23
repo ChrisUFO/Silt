@@ -140,6 +140,12 @@
   // <mark>/</mark> highlight tags the snippet() function emits. This keeps
   // user-authored note text from injecting arbitrary HTML into the modal
   // while still rendering the relevance highlight.
+  //
+  // CSP context (#237, F2): the host-webview CSP does NOT enable
+  // `require-trusted-types-for 'script'`, so this @html sink works without
+  // a Trusted Types policy. If a future tightening enables Trusted Types,
+  // wrap the returned string in a `policy.createHTML(...)` call (the
+  // Svelte 5 compiler translates @html to element.innerHTML).
   function sanitizeSnippet(snip: string): string {
     if (!snip) return ''
     const esc = snip

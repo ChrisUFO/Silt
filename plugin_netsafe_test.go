@@ -132,12 +132,16 @@ func TestIsForbiddenPluginHeader(t *testing.T) {
 // Verifies the redirectSafeHeaders allowlist contains exactly the expected
 // safe headers and excludes sensitive ones — guards against accidental
 // additions to the allowlist.
+//
+// `user-agent` is intentionally NOT allowlisted (#247, F13): a plugin that
+// embeds credentials in the UA would leak them across a cross-host redirect.
+// stripHeadersForRedirect resets the UA explicitly (see
+// TestStripHeadersForRedirect_ResetsUserAgent).
 func TestRedirectSafeHeaders_AllowlistIntegrity(t *testing.T) {
 	expected := map[string]bool{
 		"accept":          true,
 		"accept-language": true,
 		"content-type":    true,
-		"user-agent":      true,
 	}
 	for k, v := range expected {
 		if redirectSafeHeaders[k] != v {
@@ -147,10 +151,58 @@ func TestRedirectSafeHeaders_AllowlistIntegrity(t *testing.T) {
 	if len(redirectSafeHeaders) != len(expected) {
 		t.Errorf("redirectSafeHeaders has %d entries, want exactly %d — unexpected key added or removed", len(redirectSafeHeaders), len(expected))
 	}
-	for _, h := range []string{"authorization", "cookie", "x-api-key", "x-forwarded-for"} {
+	for _, h := range []string{"authorization", "cookie", "x-api-key", "x-forwarded-for", "user-agent"} {
 		if redirectSafeHeaders[h] {
 			t.Errorf("redirectSafeHeaders[%q] should be false (sensitive header)", h)
 		}
+	}
+}
+
+// stripHeadersForRedirect must RESET User-Agent (not just delete it) so a
+// plugin that embedded credentials in the UA cannot leak them across a
+// cross-host redirect (#247, F13).
+func TestStripHeadersForRedirect_ResetsUserAgent(t *testing.T) {
+	req := &http.Request{
+		Header: http.Header{},
+	}
+	// Simulate a plugin that embeds a credential in the UA — the exact
+	// anti-pattern F13 protects against.
+	req.Header.Set("User-Agent", "my-plugin/1.0 token=abc123")
+	req.Header.Set("X-Api-Key", "leak-me-please")
+	req.Header.Set("Accept", "application/json")
+
+	stripHeadersForRedirect(req)
+
+	// UA must be reset to Go's default, NOT preserved.
+	if got := req.Header.Get("User-Agent"); got != "Go-http-client/1.1" {
+		t.Errorf("User-Agent = %q, want %q (reset, not preserved)", got, "Go-http-client/1.1")
+	}
+	// Custom auth header must be stripped.
+	if got := req.Header.Get("X-Api-Key"); got != "" {
+		t.Errorf("X-Api-Key = %q, want empty (stripped)", got)
+	}
+	// Safe header must be preserved.
+	if got := req.Header.Get("Accept"); got != "application/json" {
+		t.Errorf("Accept = %q, want %q (preserved)", got, "application/json")
+	}
+}
+
+// stripHeadersForRedirect must reset UA even when the request did not set
+// one explicitly (the transport would inject one anyway, but setting it
+// explicitly makes the intent visible and survives transport changes).
+func TestStripHeadersForRedirect_SetsDefaultUserAgentWhenAbsent(t *testing.T) {
+	req := &http.Request{
+		Header: http.Header{},
+	}
+	// No User-Agent set on the incoming request.
+	if _, hadUA := req.Header["User-Agent"]; hadUA {
+		t.Fatal("precondition: request must not have a User-Agent")
+	}
+
+	stripHeadersForRedirect(req)
+
+	if got := req.Header.Get("User-Agent"); got != "Go-http-client/1.1" {
+		t.Errorf("User-Agent = %q, want %q (explicitly set even when absent)", got, "Go-http-client/1.1")
 	}
 }
 

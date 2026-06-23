@@ -233,23 +233,35 @@ func isForbiddenPluginHeader(lowerKey string) bool {
 // redirectSafeHeaders is the strict allowlist of request headers that survive
 // a cross-host redirect (#160). Go's net/http strips only Authorization and
 // Cookie automatically; custom auth headers (X-Api-Key, etc.) that are not in
-// isForbiddenPluginHeader would otherwise leak to the redirect target. This
-// allowlist is applied in CheckRedirect so ONLY safe, non-sensitive headers
-// are forwarded.
+// isForbiddenPluginHeader would otherwise leak to the redirect target.
+//
+// `user-agent` is intentionally NOT in this allowlist (#247, F13): a plugin
+// that embeds credentials in the UA (e.g. `User-Agent: my-plugin/1.0
+// token=abc123`) would leak them across a cross-host redirect.
+// stripHeadersForRedirect explicitly RESETS the UA to Go's default rather
+// than just deleting it, so the redirect carries a benign identifier rather
+// than none. Same-host redirects preserve the plugin-supplied UA (legitimate
+// use case: API versioning via UA) because stripHeadersForRedirect is only
+// invoked inside the cross-host branch of CheckRedirect.
 var redirectSafeHeaders = map[string]bool{
 	"accept":          true,
 	"accept-language": true,
 	"content-type":    true,
-	"user-agent":      true,
 }
 
 // stripHeadersForRedirect removes every header from req that is NOT in the
-// redirectSafeHeaders allowlist (#160). Called from CheckRedirect on every
-// redirect hop so custom auth headers cannot leak to the redirect target.
+// redirectSafeHeaders allowlist (#160), and explicitly resets User-Agent to
+// Go's default (#247, F13). Called from CheckRedirect on every redirect hop
+// so custom auth headers cannot leak to the redirect target.
 func stripHeadersForRedirect(req *http.Request) {
 	for k := range req.Header {
 		if !redirectSafeHeaders[strings.ToLower(k)] {
 			req.Header.Del(k)
 		}
 	}
+	// Reset (not just delete) so the redirect carries a benign UA. Deleting
+	// would cause Go's http transport to inject `Go-http-client/1.1` anyway,
+	// but setting it explicitly makes the intent visible and survives any
+	// future transport change.
+	req.Header.Set("User-Agent", "Go-http-client/1.1")
 }
