@@ -14,7 +14,7 @@
     "generate": "cd .. && wails generate module"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^6.2.4",
+    "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/svelte": "^5.3.1",
     "@testing-library/user-event": "^14.6.1",
@@ -28,7 +28,7 @@
     "svelte-check": "^4.6.0",
     "tslib": "^2.8.1",
     "typescript": "^5.9.3",
-    "vite": "^7.3.5",
+    "vite": "^8.1.0",
     "vitest": "^4.1.8"
   },
   "dependencies": {
