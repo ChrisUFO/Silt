@@ -335,15 +335,23 @@ function wrapCalloutBody(body: string, maxLen: number = 80): string[] {
   const paragraphs = body.split(/\n\n+/)
   const lines: string[] = []
   for (let pi = 0; pi < paragraphs.length; pi++) {
-    if (pi > 0) lines.push('') // blank line between paragraphs
-    const words = paragraphs[pi].split(' ')
+    if (pi > 0) lines.push('')
+    const tokens = paragraphs[pi].split(/(\s+)/)
     let current = ''
-    for (const w of words) {
-      if (current && current.length + w.length + 1 > maxLen) {
+    for (const w of tokens) {
+      const isSpace = /^\s+$/.test(w)
+      if (current && current.length + w.length + (isSpace ? 0 : 1) > maxLen) {
         lines.push(current)
         current = ''
       }
-      current = current ? `${current} ${w}` : w
+      if (isSpace) {
+        current += w
+      } else if (current) {
+        // Only add a separator space if current doesn't already end with one
+        current = current.endsWith(' ') ? `${current}${w}` : `${current} ${w}`
+      } else {
+        current = w
+      }
     }
     if (current) lines.push(current)
   }
@@ -363,18 +371,28 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
 
     // Multi-line <details> detection (#183). When a NOTE starts with <details>
     // but does not end with </details>, walk forward consuming subsequent NOTE
-    // blocks until the closing tag is found.
+    // blocks until the closing tag is found. Bound to 50 blocks to prevent
+    // runaway consumption from a stray unclosed tag.
     if (
       blocks[i].type === 'NOTE' &&
       rawText.trimStart().startsWith('<details>') &&
       !rawText.includes('</details>')
     ) {
+      const maxDetailsMerge = 50
+      const startIdx = i
       const parts: string[] = []
-      while (i < blocks.length) {
+      while (i < blocks.length && i - startIdx < maxDetailsMerge) {
         const ct = blocks[i].clean_text || ''
         parts.push(ct)
         if (ct.includes('</details>')) break
         i++
+      }
+      // If we hit the bound without finding </details>, bail to regular NOTE handling
+      if (!parts.some((p) => p.includes('</details>'))) {
+        i = startIdx
+        content.push(blockToNode(blocks[i]))
+        i++
+        continue
       }
       const merged = parts.join('\n')
       const summaryMatch = merged.match(/<summary>(.*?)<\/summary>/)

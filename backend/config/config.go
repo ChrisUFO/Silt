@@ -277,7 +277,7 @@ func Defaults() SystemConfig {
 			// Code block (#189). Insert a fenced code block.
 			"insert_code": "Ctrl+Alt+C",
 			// Foldable details (#183). Toggle collapse/expand.
-			"toggle_details": "Ctrl+.",
+			"toggle_details": "Ctrl+Shift+D",
 			// Table hotkeys (#172). Row/column insertion.
 			"table_insert_row_above": "Ctrl+Shift+Up",
 			"table_insert_row_below": "Ctrl+Shift+Down",

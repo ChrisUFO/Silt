@@ -19,6 +19,14 @@ import { TextSelection } from '@tiptap/pm/state'
 /** The three Silt block node types, in canonical order. */
 export const BLOCK_TYPES = ['taskBlock', 'noteBlock', 'headerBlock'] as const
 
+/** Extended set that includes container block types (callout, details) for
+ *  operations like Enter that should produce an exit block below them. */
+const CONTAINER_BLOCK_TYPES = [
+  ...BLOCK_TYPES,
+  'calloutBlock',
+  'detailsBlock'
+] as const
+
 /**
  * Walk up from the editor's current selection to the nearest enclosing block
  * node (noteBlock / taskBlock / headerBlock). Returns the block node and its
@@ -102,6 +110,29 @@ function currentBlockInfo(editor: Editor) {
   }
 }
 
+// Like currentBlockInfo but also matches calloutBlock and detailsBlock.
+// Used by the Enter handler to detect when to exit a container block.
+function currentContainerInfo(editor: Editor): {
+  node: ProseMirrorNode
+  pos: number
+  depth: number
+  index: number
+} | null {
+  const pos = editor.state.selection.$from
+  for (let d = pos.depth; d >= 1; d--) {
+    const node = pos.node(d)
+    if (CONTAINER_BLOCK_TYPES.includes(node.type.name as never)) {
+      return {
+        node,
+        pos: pos.before(d),
+        depth: node.attrs.depth || 0,
+        index: pos.index(d)
+      }
+    }
+  }
+  return null
+}
+
 function setBlockDepth(
   editor: Editor,
   nodePos: number,
@@ -147,15 +178,52 @@ export const SiltBlockKeymaps = Extension.create({
   addKeyboardShortcuts() {
     return {
       Enter: () => {
-        const info = currentBlockInfo(this.editor)
+        // Use currentContainerInfo to also detect calloutBlock and detailsBlock.
+        const info = currentContainerInfo(this.editor)
         if (!info) return false
+
+        // For calloutBlock and detailsBlock: exit into a fresh plain note below.
+        if (
+          info.node.type.name === 'calloutBlock' ||
+          info.node.type.name === 'detailsBlock'
+        ) {
+          const newBlock = {
+            type: 'noteBlock',
+            attrs: {
+              id: null,
+              depth: 0,
+              bullet: '- ',
+              file_date: new Date().toISOString().slice(0, 10)
+            }
+          }
+          const insertPos = info.pos + info.node.nodeSize
+          this.editor.view.dispatch(
+            this.editor.state.tr.insert(insertPos, [
+              this.editor.state.schema.nodeFromJSON(newBlock)
+            ])
+          )
+          const newPos = insertPos + 1
+          this.editor.commands.focus()
+          const tr = this.editor.state.tr
+          const sel = TextSelection.create(
+            this.editor.state.doc,
+            newPos,
+            newPos
+          )
+          this.editor.view.dispatch(tr.setSelection(sel))
+          return true
+        }
 
         // Default to a plain (no-bullet) line. Only noteBlocks inherit /
         // resequence the bullet marker — pressing Enter after a task or
         // header should start a fresh plain line, not a bulleted one (#258).
         let nextBullet = ''
+        let nextQuote = false
+        let nextQuoteDepth = 1
         if (info.node.type.name === 'noteBlock') {
           nextBullet = getNextBullet(info.node.attrs.bullet || '')
+          nextQuote = info.node.attrs.quote === true
+          nextQuoteDepth = Number(info.node.attrs.quoteDepth) || 1
         }
 
         // Create a new NoteBlock at the same depth right after the current block.
@@ -165,6 +233,8 @@ export const SiltBlockKeymaps = Extension.create({
             id: null,
             depth: info.depth,
             bullet: nextBullet,
+            quote: nextQuote,
+            quoteDepth: nextQuoteDepth,
             file_date: new Date().toISOString().slice(0, 10)
           }
         }
@@ -394,6 +464,28 @@ export const SiltBlockKeymaps = Extension.create({
         )
         this.editor.view.dispatch(tr)
         return true
+      },
+
+      // Details toggle (#183). Mod-. toggles the enclosing detailsBlock's open
+      // attr. The editor's keymap dispatches this instead of a DOM listener to
+      // avoid per-instance listener duplication and collision with superscript.
+      'Mod-.': () => {
+        const pos = this.editor.state.selection.$from
+        for (let d = pos.depth; d >= 1; d--) {
+          const parent = pos.node(d)
+          if (parent.type.name === 'detailsBlock') {
+            const nodePos = pos.before(d)
+            const currentOpen = parent.attrs.open === true
+            const tr = this.editor.state.tr.setNodeAttribute(
+              nodePos,
+              'open',
+              !currentOpen
+            )
+            this.editor.view.dispatch(tr)
+            return true
+          }
+        }
+        return false
       },
 
       // Table row/column hotkeys (#172). Default bindings match the

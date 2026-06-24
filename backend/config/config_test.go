@@ -701,7 +701,7 @@ func TestDefaults_FormattingConfig(t *testing.T) {
 	if _, ok := d.Hotkeys["toggle_details"]; !ok {
 		t.Errorf("defaults hotkeys missing %q", "toggle_details")
 	}
-	if d.Hotkeys["toggle_details"] != "Ctrl+." {
+	if d.Hotkeys["toggle_details"] != "Ctrl+Shift+D" {
 		t.Errorf("toggle_details default: got %q", d.Hotkeys["toggle_details"])
 	}
 	// Table hotkeys (#172).

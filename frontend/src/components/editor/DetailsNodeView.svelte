@@ -27,31 +27,9 @@
     }
   }
 
-  function onEditorKeydown(e: KeyboardEvent): void {
-    if ((e.ctrlKey || e.metaKey) && e.key === '.') {
-      e.preventDefault()
-      // Only toggle this details block if the cursor is inside it
-      const sel = editor.state.selection.$from
-      for (let d = sel.depth; d >= 1; d--) {
-        const parent = sel.node(d)
-        if (
-          parent.type.name === 'detailsBlock' &&
-          parent.attrs.id === node.attrs.id
-        ) {
-          toggleOpen()
-          break
-        }
-      }
-    }
-  }
-
-  $effect(() => {
-    const el = editor.options.element as HTMLElement | null
-    if (el) {
-      el.addEventListener('keydown', onEditorKeydown)
-      return () => el.removeEventListener('keydown', onEditorKeydown)
-    }
-  })
+  // The Ctrl+. toggle is bound via SiltBlockKeymaps (keymaps.ts) to avoid
+  // per-instance listener duplication and collision with the superscript
+  // shortcut. See the Mod-. handler in keymaps.ts.
 </script>
 
 <NodeViewWrapper
