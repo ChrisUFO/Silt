@@ -186,7 +186,11 @@ export const TaskBlock = Node.create({
       // content survives.
       new InputRule({
         find: /^\s*\[([ xX]?)]\s$/,
-        handler: (({ state, range, match }) => {
+        handler: (({
+          state,
+          range,
+          match
+        }: Parameters<NonNullable<InputRule['handler']>>[0]) => {
           const $start = state.doc.resolve(range.from)
           if ($start.parentOffset !== range.from - $start.start()) {
             return null
@@ -281,7 +285,11 @@ export const NoteBlock = Node.create({
     return [
       new InputRule({
         find: /^\s*([-*+])\s$/,
-        handler: (({ state, range, match }) => {
+        handler: (({
+          state,
+          range,
+          match
+        }: Parameters<NonNullable<InputRule['handler']>>[0]) => {
           const $start = state.doc.resolve(range.from)
           if ($start.parentOffset !== range.from - $start.start()) {
             return null
@@ -299,7 +307,11 @@ export const NoteBlock = Node.create({
       }),
       new InputRule({
         find: /^\s*(\d+[.)])\s$/,
-        handler: (({ state, range, match }) => {
+        handler: (({
+          state,
+          range,
+          match
+        }: Parameters<NonNullable<InputRule['handler']>>[0]) => {
           const $start = state.doc.resolve(range.from)
           if ($start.parentOffset !== range.from - $start.start()) {
             return null
