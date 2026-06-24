@@ -506,6 +506,27 @@ body {
   opacity: 0.7;
 }
 
+/* Blockquote marker (#188). A left accent border + indent renders the `> `
+   prefix visually; deeper `>>` runs add a second border. The marker is a
+   NOTE attr, not a separate node, so this styles the inner content wrapper. */
+.silt-quote {
+  border-left: 3px solid
+    color-mix(in srgb, var(--color-accent-primary-start) 60%, transparent);
+  padding-left: 12px;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+.silt-quote[data-quote^='>>'] {
+  border-left: 3px solid
+    color-mix(in srgb, var(--color-accent-secondary-start) 50%, transparent);
+  margin-left: 8px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .silt-quote {
+    transition: none;
+  }
+}
+
 /* Selection highlight uses the theme accent. */
 .ProseMirror ::selection {
   background: color-mix(

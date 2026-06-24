@@ -183,6 +183,52 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(doc.content[0]?.attrs?.bullet).toBe('')
   })
 
+  it('round-trips a blockquote (`> `) note — flat and nested (#188)', () => {
+    // Flat quote: the `> ` prefix is detected on load and re-emitted on save.
+    const blocks = [
+      mkBlock('NOTE', {
+        raw_text: '> quoted text',
+        clean_text: '> quoted text'
+      })
+    ]
+    const doc = blocksToDoc(blocks)
+    const noteNode = doc.content[0]
+    expect(noteNode?.attrs?.quote).toBe('> ')
+    expect(noteNode?.attrs?.bullet).toBe('')
+    // Body is the text without the marker.
+    expect(noteNode?.content).toEqual([{ type: 'text', text: 'quoted text' }])
+    // Save: the marker is re-prepended so the on-disk line is `> quoted text`.
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toBe('> quoted text')
+    expect(back[0].raw_text).toBe('> quoted text')
+
+    // Nested quote (`>> `): the full `>` run round-trips verbatim.
+    const nested = [
+      mkBlock('NOTE', {
+        raw_text: '>> deep quote',
+        clean_text: '>> deep quote'
+      })
+    ]
+    const nestedDoc = blocksToDoc(nested)
+    expect(nestedDoc.content[0]?.attrs?.quote).toBe('>> ')
+    expect(docToBlocks(nestedDoc)[0].clean_text).toBe('>> deep quote')
+  })
+
+  it('a quote note with alignment round-trips both markers (#188 + #173)', () => {
+    // `> text <!-- silt-align: center -->` — quote prefix + align marker.
+    const blocks = [
+      mkBlock('NOTE', {
+        raw_text: '> quoted',
+        clean_text: '> quoted <!-- silt-align: center -->'
+      })
+    ]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0]?.attrs?.quote).toBe('> ')
+    expect(doc.content[0]?.attrs?.align).toBe('center')
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toBe('> quoted <!-- silt-align: center -->')
+  })
+
   it('handles empty clean_text (placeholder block)', () => {
     const blocks = [mkBlock('NOTE', { clean_text: '' })]
     const back = docToBlocks(blocksToDoc(blocks))

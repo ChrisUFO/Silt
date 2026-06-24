@@ -253,6 +253,16 @@ export const NoteBlock = Node.create({
         },
         renderHTML: (attrs) => ({ 'data-bullet': attrs.bullet })
       },
+      // Blockquote prefix (#188). A `> ` (or nested `>> `, `>>> `) prefix is
+      // just another recognized marker style, parallel to `bullet`. Empty
+      // string = not a quote. The marker is stored verbatim so the exact `>`
+      // run round-trips and the NodeView can render nested left borders.
+      quote: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-quote') || '',
+        renderHTML: (attrs) =>
+          attrs.quote ? { 'data-quote': attrs.quote } : {}
+      },
       // Block-level text alignment (#173). Only NOTE and HEADER support it;
       // TASK blocks do not get this attr. Default 'left' = no marker emitted.
       align: {

@@ -8,6 +8,7 @@
   let isEmpty = $derived(!node.content.size || node.textContent.trim() === '')
   let align = $derived(node.attrs.align || 'left')
   let bullet = $derived(node.attrs.bullet || '')
+  let quote = $derived(node.attrs.quote || '')
   let depth = $derived(node.attrs.depth || 0)
 
   let dragHandleEl: HTMLElement | null = $state(null)
@@ -59,7 +60,13 @@
     {/if}
   {/if}
 
-  <div class="flex-1 min-w-0" style="text-align: {align}">
+  <div
+    class="flex-1 min-w-0"
+    class:silt-quote={!!quote}
+    data-quote={quote || undefined}
+    style="text-align: {align}"
+    role={quote ? 'blockquote' : undefined}
+  >
     <NodeViewContent
       class="whitespace-pre-wrap break-words min-h-[22px] focus:outline-none"
     />

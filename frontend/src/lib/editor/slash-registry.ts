@@ -135,31 +135,168 @@ registerSlashCommand({
 // --- Inline formatting commands (#168) ------------------------------------
 // Metadata-only built-ins; the editor dispatches them by id via
 // handleSlashSelect. Each toggles its mark on the current selection.
-registerSlashCommand({ id: 'bold', label: 'Bold', description: 'Make the selection bold', icon: 'format_bold', shortcut: 'Ctrl+B' })
-registerSlashCommand({ id: 'italic', label: 'Italic', description: 'Make the selection italic', icon: 'format_italic', shortcut: 'Ctrl+I' })
-registerSlashCommand({ id: 'underline', label: 'Underline', description: 'Underline the selection', icon: 'format_underlined', shortcut: 'Ctrl+U' })
-registerSlashCommand({ id: 'strike', label: 'Strikethrough', description: 'Cross out the selection', icon: 'format_strikethrough', shortcut: 'Ctrl+Shift+X' })
-registerSlashCommand({ id: 'code', label: 'Inline code', description: 'Format as inline code', icon: 'code', shortcut: 'Ctrl+E' })
-registerSlashCommand({ id: 'highlight', label: 'Highlight', description: 'Highlight the selection', icon: 'highlight', shortcut: 'Ctrl+Shift+H' })
-registerSlashCommand({ id: 'subscript', label: 'Subscript', description: 'Lower the selection below the line', icon: 'subscript', shortcut: 'Ctrl+,' })
-registerSlashCommand({ id: 'superscript', label: 'Superscript', description: 'Raise the selection above the line', icon: 'superscript', shortcut: 'Ctrl+.' })
-registerSlashCommand({ id: 'link', label: 'Link', description: 'Add a hyperlink to the selection', icon: 'link', shortcut: 'Ctrl+K' })
-registerSlashCommand({ id: 'clear-formatting', label: 'Clear formatting', description: 'Remove all formatting from the selection', icon: 'format_clear', shortcut: 'Ctrl+\\' })
+registerSlashCommand({
+  id: 'bold',
+  label: 'Bold',
+  description: 'Make the selection bold',
+  icon: 'format_bold',
+  shortcut: 'Ctrl+B'
+})
+registerSlashCommand({
+  id: 'italic',
+  label: 'Italic',
+  description: 'Make the selection italic',
+  icon: 'format_italic',
+  shortcut: 'Ctrl+I'
+})
+registerSlashCommand({
+  id: 'underline',
+  label: 'Underline',
+  description: 'Underline the selection',
+  icon: 'format_underlined',
+  shortcut: 'Ctrl+U'
+})
+registerSlashCommand({
+  id: 'strike',
+  label: 'Strikethrough',
+  description: 'Cross out the selection',
+  icon: 'format_strikethrough',
+  shortcut: 'Ctrl+Shift+X'
+})
+registerSlashCommand({
+  id: 'code',
+  label: 'Inline code',
+  description: 'Format as inline code',
+  icon: 'code',
+  shortcut: 'Ctrl+E'
+})
+registerSlashCommand({
+  id: 'highlight',
+  label: 'Highlight',
+  description: 'Highlight the selection',
+  icon: 'highlight',
+  shortcut: 'Ctrl+Shift+H'
+})
+registerSlashCommand({
+  id: 'subscript',
+  label: 'Subscript',
+  description: 'Lower the selection below the line',
+  icon: 'subscript',
+  shortcut: 'Ctrl+,'
+})
+registerSlashCommand({
+  id: 'superscript',
+  label: 'Superscript',
+  description: 'Raise the selection above the line',
+  icon: 'superscript',
+  shortcut: 'Ctrl+.'
+})
+registerSlashCommand({
+  id: 'link',
+  label: 'Link',
+  description: 'Add a hyperlink to the selection',
+  icon: 'link',
+  shortcut: 'Ctrl+K'
+})
+registerSlashCommand({
+  id: 'clear-formatting',
+  label: 'Clear formatting',
+  description: 'Remove all formatting from the selection',
+  icon: 'format_clear',
+  shortcut: 'Ctrl+\\'
+})
 
 // --- Heading / block-type commands (#169) ---------------------------------
-registerSlashCommand({ id: 'h2', label: 'Heading 2', description: 'Convert the block to an H2', icon: 'format_size', shortcut: 'Ctrl+Alt+2' })
-registerSlashCommand({ id: 'h3', label: 'Heading 3', description: 'Convert the block to an H3', icon: 'format_size', shortcut: 'Ctrl+Alt+3' })
-registerSlashCommand({ id: 'note', label: 'Plain note', description: 'Convert the block to a plain note (strip header / task)', icon: 'notes', shortcut: 'Ctrl+Alt+0' })
-registerSlashCommand({ id: 'task', label: 'Task', description: 'Convert the block to a task', icon: 'check_box', shortcut: 'Ctrl+Alt+4' })
+registerSlashCommand({
+  id: 'h2',
+  label: 'Heading 2',
+  description: 'Convert the block to an H2',
+  icon: 'format_size',
+  shortcut: 'Ctrl+Alt+2'
+})
+registerSlashCommand({
+  id: 'h3',
+  label: 'Heading 3',
+  description: 'Convert the block to an H3',
+  icon: 'format_size',
+  shortcut: 'Ctrl+Alt+3'
+})
+registerSlashCommand({
+  id: 'note',
+  label: 'Plain note',
+  description: 'Convert the block to a plain note (strip header / task)',
+  icon: 'notes',
+  shortcut: 'Ctrl+Alt+0'
+})
+registerSlashCommand({
+  id: 'task',
+  label: 'Task',
+  description: 'Convert the block to a task',
+  icon: 'check_box',
+  shortcut: 'Ctrl+Alt+4'
+})
 
 // --- Text alignment commands (#173) ---------------------------------------
-registerSlashCommand({ id: 'align-left', label: 'Align left', description: 'Align the current block to the left', icon: 'format_align_left', shortcut: 'Ctrl+Shift+L' })
-registerSlashCommand({ id: 'align-center', label: 'Align center', description: 'Center the current block', icon: 'format_align_center', shortcut: 'Ctrl+Shift+E' })
-registerSlashCommand({ id: 'align-right', label: 'Align right', description: 'Align the current block to the right', icon: 'format_align_right', shortcut: 'Ctrl+Shift+R' })
-registerSlashCommand({ id: 'align-justify', label: 'Align justify', description: 'Justify the current block', icon: 'format_align_justify', shortcut: 'Ctrl+Shift+J' })
+registerSlashCommand({
+  id: 'align-left',
+  label: 'Align left',
+  description: 'Align the current block to the left',
+  icon: 'format_align_left',
+  shortcut: 'Ctrl+Shift+L'
+})
+registerSlashCommand({
+  id: 'align-center',
+  label: 'Align center',
+  description: 'Center the current block',
+  icon: 'format_align_center',
+  shortcut: 'Ctrl+Shift+E'
+})
+registerSlashCommand({
+  id: 'align-right',
+  label: 'Align right',
+  description: 'Align the current block to the right',
+  icon: 'format_align_right',
+  shortcut: 'Ctrl+Shift+R'
+})
+registerSlashCommand({
+  id: 'align-justify',
+  label: 'Align justify',
+  description: 'Justify the current block',
+  icon: 'format_align_justify',
+  shortcut: 'Ctrl+Shift+J'
+})
+
+// --- Quote / blockquote (#188) --------------------------------------------
+registerSlashCommand({
+  id: 'quote',
+  label: 'Quote',
+  description: 'Toggle a blockquote on the current block',
+  icon: 'format_quote',
+  shortcut: 'Ctrl+Shift+9'
+})
 
 // --- Color commands (#170) ------------------------------------------------
-registerSlashCommand({ id: 'text-color', label: 'Text color', description: 'Pick a text color for the selection', icon: 'palette' })
-registerSlashCommand({ id: 'background-color', label: 'Background color', description: 'Pick a background color for the selection', icon: 'format_color_fill' })
-registerSlashCommand({ id: 'remove-color', label: 'Remove text color', description: 'Remove the text color from the selection', icon: 'format_color_reset' })
-registerSlashCommand({ id: 'remove-background', label: 'Remove background color', description: 'Remove the background color from the selection', icon: 'format_color_reset' })
+registerSlashCommand({
+  id: 'text-color',
+  label: 'Text color',
+  description: 'Pick a text color for the selection',
+  icon: 'palette'
+})
+registerSlashCommand({
+  id: 'background-color',
+  label: 'Background color',
+  description: 'Pick a background color for the selection',
+  icon: 'format_color_fill'
+})
+registerSlashCommand({
+  id: 'remove-color',
+  label: 'Remove text color',
+  description: 'Remove the text color from the selection',
+  icon: 'format_color_reset'
+})
+registerSlashCommand({
+  id: 'remove-background',
+  label: 'Remove background color',
+  description: 'Remove the background color from the selection',
+  icon: 'format_color_reset'
+})

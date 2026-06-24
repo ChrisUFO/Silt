@@ -17,6 +17,7 @@ export {
   SiltBlockKeymaps,
   convertToBlock,
   setBlockAlign,
+  toggleBlockQuote,
   findActiveBlock,
   BLOCK_TYPES
 } from './keymaps'

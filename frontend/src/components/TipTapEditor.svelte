@@ -16,6 +16,7 @@
     SiltBlockKeymaps,
     convertToBlock,
     setBlockAlign,
+    toggleBlockQuote,
     findActiveBlock,
     TaskMetaSuggest,
     applyMetaSuggestion,
@@ -630,6 +631,8 @@
       setBlockAlign(editorInstance as any, 'right')
     } else if (commandId === 'align-justify') {
       setBlockAlign(editorInstance as any, 'justify')
+    } else if (commandId === 'quote') {
+      toggleBlockQuote(editorInstance as any)
     } else if (commandId === 'text-color') {
       openColorPickerPopover('textColor')
     } else if (commandId === 'background-color') {

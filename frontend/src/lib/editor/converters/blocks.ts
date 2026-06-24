@@ -29,6 +29,17 @@ function detectBullet(rawText: string): string {
   return ''
 }
 
+// Detect a blockquote prefix (#188). A leading run of `>` followed by a space
+// is a quote marker (`> `, `>> `, `>>> `). Returns the marker (with trailing
+// space) and the body with the marker stripped, or '' + the original body when
+// the line is not a quote. Quote and bullet markers are mutually exclusive.
+const QUOTE_PREFIX_RE = /^(>+)\s/
+function detectQuote(body: string): { quote: string; body: string } {
+  const m = body.match(QUOTE_PREFIX_RE)
+  if (!m) return { quote: '', body }
+  return { quote: m[1] + ' ', body: body.slice(m[0].length) }
+}
+
 // ---- Alignment marker helpers (#173) -------------------------------------
 // Block-level alignment is persisted as a trailing HTML-comment marker in
 // clean_text: `text <!-- silt-align: center -->`. The marker is invisible
@@ -182,16 +193,25 @@ function blockToNode(block: ParsedBlock): NodeJSON {
     default:
       // Defensive: unknown block types map to NOTE so a malformed doc never
       // drops content. The Go side also treats unrecognized lines as notes.
+      //
+      // Quote detection (#188): a `> ` prefix (stripped of any alignment
+      // marker first) is a blockquote marker, parallel to `bullet`. The
+      // marker is stored on the node so it round-trips verbatim.
+      const { quote, body: quoteStripped } = detectQuote(text)
+      const noteContent: NodeJSON[] = quoteStripped
+        ? legacyTokenizeInline(quoteStripped)
+        : []
       return {
         type: 'noteBlock',
         attrs: {
           id: block.id,
           depth: block.depth,
-          bullet: detectBullet(block.raw_text),
+          bullet: quote ? '' : detectBullet(block.raw_text),
+          quote,
           align,
           file_date: block.file_date || ''
         },
-        content
+        content: noteContent
       }
   }
 }
@@ -292,13 +312,22 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
 
     const baseCleanText = serializeInlineContent(node.content)
 
+    // Quote prefix (#188): a noteBlock carrying a `quote` attr re-emits the
+    // marker (`> `, `>> `…) as the leading text so the on-disk line is
+    // standard markdown blockquote syntax. The marker prepends the body
+    // BEFORE the alignment marker so `> text <!-- silt-align: center -->`
+    // round-trips. TASK/HEADER blocks never carry a quote.
+    const quoteMarker: string =
+      node.type === 'noteBlock' ? (attrs.quote as string) || '' : ''
+
     // Emit alignment marker for NOTE and HEADER blocks (#173). TASK blocks
     // never emit a marker (alignment is not supported on tasks).
     const align = (attrs.align as string) || 'left'
     const cleanText =
-      align !== 'left' && node.type !== 'taskBlock'
+      (quoteMarker ? quoteMarker : '') +
+      (align !== 'left' && node.type !== 'taskBlock'
         ? baseCleanText + emitAlignmentMarker(align)
-        : baseCleanText
+        : baseCleanText)
 
     let type: BlockType
     switch (node.type) {
@@ -338,8 +367,16 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
       block.priority = Number(attrs.priority ?? 3)
       block.raw_text = `- [${block.status === 'DOING' ? '/' : block.status === 'DONE' ? 'x' : ' '}] ${block.status} TASK ${cleanText}`
     } else if (type === 'NOTE') {
-      const bullet: string = attrs.bullet !== undefined ? attrs.bullet : '- '
-      block.raw_text = `${bullet}${cleanText}`
+      if (quoteMarker) {
+        // Quote blocks carry the marker as the prefix; renderBlock sees the
+        // leading `>` (not a `-/*/+` bullet) and emits a plain line, so the
+        // `> ` survives verbatim. Bullet is cleared so the two markers never
+        // coexist.
+        block.raw_text = `${quoteMarker}${baseCleanText}`
+      } else {
+        const bullet: string = attrs.bullet !== undefined ? attrs.bullet : '- '
+        block.raw_text = `${bullet}${cleanText}`
+      }
     } else {
       block.raw_text = `${'#'.repeat(block.depth || 1)} ${cleanText}`
     }

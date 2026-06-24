@@ -272,6 +272,8 @@ func Defaults() SystemConfig {
 			"align_center":  "Ctrl+Shift+E",
 			"align_right":   "Ctrl+Shift+R",
 			"align_justify": "Ctrl+Shift+J",
+			// Blockquote toggle (#188). Standard blockquote binding.
+			"toggle_quote": "Ctrl+Shift+9",
 			// View mode toggle (#171). Standard source/view toggle binding.
 			"toggle_view_mode": "Ctrl+Shift+V",
 		},

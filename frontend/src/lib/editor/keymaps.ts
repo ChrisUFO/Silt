@@ -141,6 +141,26 @@ export function setBlockAlign(editor: Editor, align: string): boolean {
   return true
 }
 
+// Toggle the blockquote marker on the current noteBlock (#188). Sets `> ` when
+// turning quote on (clearing any bullet so the two markers never coexist) and
+// clears it when turning off. No-op on TASK/HEADER blocks (quote is a NOTE
+// marker). Shared by the keymap shortcut and TipTapEditor's slash handler.
+export function toggleBlockQuote(editor: Editor): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const active = findActiveBlock(editor)
+  if (!active) return false
+  if (active.node.type.name !== 'noteBlock') return true // silently skip
+  const nodePos = editor.state.selection.$from.before(active.depth)
+  const isQuote = !!active.node.attrs.quote
+  const tr = editor.state.tr.setNodeMarkup(nodePos, undefined, {
+    ...active.node.attrs,
+    quote: isQuote ? '' : '> ',
+    bullet: isQuote ? active.node.attrs.bullet || '- ' : ''
+  })
+  editor.view.dispatch(tr)
+  return true
+}
+
 export const SiltBlockKeymaps = Extension.create({
   name: 'siltBlockKeymaps',
 
@@ -357,7 +377,11 @@ export const SiltBlockKeymaps = Extension.create({
       'Mod-Shift-l': () => setBlockAlign(this.editor, 'left'),
       'Mod-Shift-e': () => setBlockAlign(this.editor, 'center'),
       'Mod-Shift-r': () => setBlockAlign(this.editor, 'right'),
-      'Mod-Shift-j': () => setBlockAlign(this.editor, 'justify')
+      'Mod-Shift-j': () => setBlockAlign(this.editor, 'justify'),
+
+      // Blockquote toggle (#188). Mod-Shift-9 is the standard blockquote
+      // binding. No-op on TASK/HEADER blocks (quote is a NOTE marker).
+      'Mod-Shift-9': () => toggleBlockQuote(this.editor)
     }
   }
 })
