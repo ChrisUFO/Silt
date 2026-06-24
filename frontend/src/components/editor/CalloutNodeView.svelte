@@ -96,6 +96,9 @@
     >
       {title || ''}
     </span>
+    {#if !title}
+      <span class="text-text-muted italic text-sm select-none">Title</span>
+    {/if}
   </div>
   <div class="pl-7">
     <NodeViewContent

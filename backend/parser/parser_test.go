@@ -1115,6 +1115,29 @@ func TestParseFileContent_NestedCodeFence(t *testing.T) {
 	}
 }
 
+// TestRenderFileContent_BlankLineBeforeFencePreserved verifies that a blank
+// line between a header and a code fence survives render in its original
+// position (not relocated after the fence).
+func TestRenderFileContent_BlankLineBeforeFencePreserved(t *testing.T) {
+	headerID := "11111111-1111-4111-8111-111111111111"
+	noteID := "22222222-2222-4222-8222-222222222222"
+	input := "# Header <!-- id: " + headerID + " -->\n\n```go\npackage main\n```\n\nTrailing note. <!-- id: " + noteID + " -->\n"
+	blocks, _, _, _, err := ParseFileContent(input, "T", "S", "P", "", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	output := RenderFileContent(blocks, input, "", 4)
+	headerIdx := strings.Index(output, "# Header")
+	fenceIdx := strings.Index(output, "```go")
+	if headerIdx < 0 || fenceIdx < 0 {
+		t.Fatalf("missing header or fence in output:\n%s", output)
+	}
+	between := output[headerIdx:fenceIdx]
+	if !strings.Contains(between, "\n\n") {
+		t.Errorf("blank line between header and fence was lost, got:\n%s", output)
+	}
+}
+
 // Helper shared by the benchmark — writes N small daily-note files under
 // Work/Journal/Daily/ (notebook/section/page) so the scanner has realistic
 // 3-level structure to walk.

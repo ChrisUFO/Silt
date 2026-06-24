@@ -308,7 +308,7 @@ registerSlashCommand({
   id: 'code-block',
   label: 'Code block',
   description: 'Insert a fenced code block',
-  icon: 'code',
+  icon: 'data_object',
   shortcut: 'Mod+Alt+C'
 })
 

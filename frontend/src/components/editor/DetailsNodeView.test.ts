@@ -45,4 +45,34 @@ describe('DetailsNodeView (#183)', () => {
     expect(summary?.textContent).toContain('My Summary')
     cleanup()
   })
+
+  it('renders body content in the DOM after toggling open (#183)', async () => {
+    const { container, cleanup } = await mountNodeViewEditor([
+      mkBlock('NOTE', {
+        clean_text:
+          '<details><summary>Expand me</summary>Important body text</details>'
+      })
+    ])
+    // Body content must exist in the DOM even when closed (ProseMirror
+    // requires a live contentDOM for inline* nodes). It's hidden via CSS,
+    // not unmounted.
+    const wrapper = container.querySelector('[data-type="silt-details"]')
+    const contentEl = wrapper?.querySelector(
+      '.svelte-tiptap-node-view-content, [data-view-content]'
+    )
+    // The NodeViewContent element should be present in the DOM regardless
+    // of open state. Check that the body text survives somewhere in the
+    // wrapper's text content after the summary.
+    const fullText = wrapper?.textContent || ''
+    expect(fullText).toContain('Important body text')
+
+    // Toggle open and verify it's still present
+    const toggle = container.querySelector('button')!
+    toggle.click()
+    await new Promise((r) => setTimeout(r, 0))
+    const fullTextAfter =
+      container.querySelector('[data-type="silt-details"]')?.textContent || ''
+    expect(fullTextAfter).toContain('Important body text')
+    cleanup()
+  })
 })

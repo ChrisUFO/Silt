@@ -73,11 +73,15 @@
       {/if}
     </div>
   </div>
-  {#if isOpen}
-    <div class="px-4 py-3 border-t border-border">
-      <NodeViewContent
-        class="whitespace-pre-wrap break-words min-h-[22px] focus:outline-none"
-      />
-    </div>
-  {/if}
+  <div class="px-4 py-3 border-t border-border" class:hidden={!isOpen}>
+    <NodeViewContent
+      class="whitespace-pre-wrap break-words min-h-[22px] focus:outline-none"
+    />
+  </div>
 </NodeViewWrapper>
+
+<style>
+  .hidden {
+    display: none;
+  }
+</style>

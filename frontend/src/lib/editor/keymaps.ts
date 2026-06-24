@@ -483,13 +483,9 @@ export const SiltBlockKeymaps = Extension.create({
         return true
       },
 
-      // Details toggle (#183). The second binding (Ctrl+Shift+D) matches the
-      // config default so the advertised shortcut actually works. Mod-. is kept
-      // as an overload — inside a detailsBlock it toggles open/close and does
-      // not trigger superscript because marks fire before block keymaps.
-      'Mod-.': function (this: any) {
-        return detailsToggleBlock(this.editor)
-      },
+      // Details toggle (#183). Ctrl+Shift+D matches the config default. Mod-.
+      // is bound by the Superscript extension (registered earlier in the
+      // extension list) so it always wins — do not duplicate it here.
       'Ctrl-Shift-D': function (this: any) {
         return detailsToggleBlock(this.editor)
       },

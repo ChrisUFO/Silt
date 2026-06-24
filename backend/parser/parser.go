@@ -602,19 +602,39 @@ func RenderFileContent(blocks []ParsedBlock, originalBody, frontmatter string, s
 	var pendingPreserved []string
 	var codeFenceLines []string
 	var inCodeBlock bool
+	// Collect CODE block IDs in order so we can attach preserved blank/prose
+	// lines from before each opening fence to the correct CODE block (#189).
+	var codeBlockIDs []string
+	for _, b := range blocks {
+		if b.Type == BlockCode && b.ID != "" {
+			codeBlockIDs = append(codeBlockIDs, b.ID)
+		}
+	}
+	codeBlockIdx := 0
 	if originalBody != "" {
 		for _, line := range strings.Split(originalBody, "\n") {
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "```") {
 				if !inCodeBlock {
-					// Opening fence: start accumulating.
+					// Opening fence: attach any pending blank/prose lines to
+					// the CODE block that follows so they survive in their
+					// original position before the fence.
+					if codeBlockIdx < len(codeBlockIDs) {
+						cbID := codeBlockIDs[codeBlockIdx]
+						if preservedBefore[cbID] == nil {
+							preservedBefore[cbID] = append(preservedBefore[cbID], pendingPreserved...)
+							pendingPreserved = nil
+						}
+					}
 					inCodeBlock = true
 					codeFenceLines = append(codeFenceLines, line)
 				} else {
 					// Closing fence: drop the entire fence from the body walker.
 					// renderBlock emits the authoritative fence for every CODE
 					// block; preserving the old fence would double-emit it.
-					// Blank lines before the opening ``` remain in pendingPreserved.
+					if codeBlockIdx < len(codeBlockIDs) {
+						codeBlockIdx++
+					}
 					codeFenceLines = nil
 					inCodeBlock = false
 				}
