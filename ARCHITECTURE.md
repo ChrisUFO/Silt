@@ -764,7 +764,31 @@ The editor's transaction lifecycle is wired to the Go backend:
 - **Focus lock (#38):** the editor's `onFocus`/`onBlur` events drive `Acquire/ReleaseFocusLock`; a 20s heartbeat (`RefreshFocusLock`) keeps the lease alive while focused.
 - **Per-tab save-state (#167):** `TipTapEditor` exposes `onSaveStateChange({ dirty, error })` on dirty/error/clean transitions. The callback threads through `VirtualScrollContainer` → `App.svelte`, which writes `TabEntry.dirty` / `TabEntry.saveError`. The tab strip renders a dirty glyph (`circle` icon in `--color-text-muted`) or error glyph (`error` icon in `--color-status-danger`) before the page name, visible from any tab — not just the active one. Controlled by `ui.show_tab_dirty_indicators` (default true). The in-editor footer indicator remains the authoritative surface; the tab glyph is a secondary always-visible hint.
 
-The ProseMirror schema defines three block node types (`taskBlock`, `noteBlock`, `headerBlock`) that map 1:1 to `parser.ParsedBlock`. Each carries a UUID `id` attr and a per-block `file_date`. A `UniqueBlockIds` extension (`appendTransaction`) mints fresh UUIDs for pasted/duplicated blocks to prevent `blocks`-table PK collisions.
+The ProseMirror schema defines block node types that map to `parser.ParsedBlock`:
+the three prose types (`taskBlock`, `noteBlock`, `headerBlock`) map 1:1, plus
+the Sprint 14 block primitives — `calloutBlock` (Obsidian `> [!variant]`),
+`codeBlock` (managed multi-line fenced code), the TipTap `details`/`detailsSummary`/
+`detailsContent` family (foldable sections), and the TipTap `table`/`tableRow`/
+`tableCell`/`tableHeader` family (GFM tables). `noteBlock` additionally carries a
+`quote` attr (a `> ` blockquote marker, parallel to `bullet`). Each carries a
+UUID `id` attr and a per-block `file_date`. A `UniqueBlockIds` extension
+(`appendTransaction`) mints fresh UUIDs for pasted/duplicated blocks to prevent
+`blocks`-table PK collisions.
+
+**Multi-line block model (Sprint 14).** The Go parser reads files line-by-line
+and `renderBlock` collapses `\n`→space for the prose types (TASK/NOTE/HEADER).
+Two strategies extend this without breaking the line-oriented round-trip
+guarantee: (1) fenced code is a managed `CODE` region — the parser's
+`accumulateCodeRegion` collects a ``` ``` run into ONE `ParsedBlock` whose
+`clean_text` retains internal newlines, and `renderBlock` preserves them (the
+block id lives on its own line after the closing fence, so the fence stays
+strictly GFM and interop with Obsidian/GitHub/VS Code is byte-exact); (2)
+tables, `<details>`, quotes, and callouts are stored as one NOTE per line and
+regrouped by the frontend converter's index-based scanner (`blocksToDoc`).
+Nested ``` ``` fences use a length-aware closer (GFM: closer backtick count ≥
+opener). The `blocks` SQLite table needs no schema change — `CODE` is just
+another `type` value and `clean_content` carries the (possibly multi-line) text
+that FTS5 indexes.
 
 NodeView components (`TaskBlockView`, `NoteBlockView`, `HeaderBlockView`) render the Svelte UI for each block type — checkbox cycle for tasks, drag handles, meta badges. The slash menu (`/` at block start) surfaces commands to change block types.
 

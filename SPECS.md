@@ -699,6 +699,29 @@ commands `/h1` `/h2` `/h3` `/note` `/task`.
 Per-page Edit (WYSIWYG) ↔ Source (raw markdown) toggle via Ctrl+E or the
 Edit/Source radio in the page chrome. Source view is read-only.
 
+### Block types (#188, #180, #189, #183, #172)
+
+Silt round-trips the standard markdown block-level vocabulary. Each block type
+is a first-class editor node, so the outliner's block operations (delete,
+duplicate, indent, drag) treat the whole block as a unit. All on-disk forms
+are standard syntax, interchangeable with Obsidian / Joplin / GitHub / VS Code.
+
+| Block | On-disk syntax | Notes |
+|---|---|---|
+| Quote / blockquote (#188) | `> quoted text` | A `>` prefix is a note marker (parallel to `- `). Nested `>> ` quotes render deeper borders. `/quote` or Ctrl+Shift+9 toggles. |
+| Callout (#180) | `> [!variant] message` | Obsidian admonition syntax. Seven variants: `note`, `info`, `tip`, `warning`, `danger`, `success`, `quote` — each with a material icon + theme-token accent. `/callout` family. |
+| Code block (#189) | ` ```lang … ``` ` (GFM fence) | Multi-line; internal newlines are preserved (a managed `CODE` block). Shiki syntax highlighting (theme-aware), language selector, copy button. `/code-block`. |
+| Foldable details (#183) | `<details><summary>…</summary>…</details>` | Native HTML `<details>`; collapse state is ephemeral (not persisted). `/details` or Ctrl+. toggles. |
+| GFM table (#172) | `| a | b |` pipe syntax | Editable grid with Tab/arrow nav, column resize, and a 7-operation contextual toolbar. Block identity on the last row. |
+
+**Multi-line blocks.** The Go parser reads files line-by-line and `renderBlock`
+collapses `\n`→space for prose blocks (TASK/NOTE/HEADER). Two exceptions retain
+newlines: fenced **code blocks** are a managed `CODE` region whose `clean_text`
+keeps internal newlines (the block id lives on its own line after the closing
+fence, so the fence stays strictly GFM); **tables**, **details**, **quotes**,
+and **callouts** are stored as one NOTE block per line and regrouped by the
+frontend converter on load. Literal pipes in table cells are escaped as `\|`.
+
 9.1 Configuration Schema (config.yaml)
 
 # Silt Global System Settings Configuration
@@ -763,6 +786,13 @@ hotkeys:
   align_center: "Ctrl+Shift+E"
   align_right: "Ctrl+Shift+R"
   align_justify: "Ctrl+Shift+J"
+  # Blockquote toggle (#188).
+  toggle_quote: "Ctrl+Shift+9"
+  # Table row/column insert hotkeys (#172). Deletion + merge are toolbar-only.
+  table_insert_row_above: "Ctrl+Shift+Up"
+  table_insert_row_below: "Ctrl+Shift+Down"
+  table_insert_col_left: "Ctrl+Shift+Left"
+  table_insert_col_right: "Ctrl+Shift+Right"
   # View mode toggle (#171).
   toggle_view_mode: "Ctrl+Shift+V"
 
