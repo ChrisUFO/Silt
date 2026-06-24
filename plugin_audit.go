@@ -55,7 +55,13 @@ func truncateNetworkLog(path string, keepLines int) {
 
 // appendNetworkAuditLine writes one entry to the per-plugin on-disk log file.
 // Extracted from auditNetwork's pre-#235 inline path; the I/O is identical.
-// Best-effort — errors are silently ignored (the audit log is diagnostic).
+// Best-effort — errors are logged, never surfaced (the audit log is
+// diagnostic).
+//
+// Concurrency: NOT goroutine-safe — callers must serialize. In production the
+// background writer goroutine (networkAuditWriterState.process) is the sole
+// caller; in the inline fallback path (tests, pre-init) auditNetwork holds
+// networkAuditMu. Mirrors the pre-#235 contract.
 //
 // #254: the on-disk format is a single-line JSON object per entry (one
 // json.Marshal + trailing newline). JSON is self-describing, survives column
@@ -69,6 +75,7 @@ func appendNetworkAuditLine(vaultPath string, entry *NetworkAuditEntry) {
 	logPath := filepath.Join(vaultPath, ".system", "plugins", entry.Plugin, "network.log")
 	data, err := json.Marshal(entry)
 	if err != nil {
+		log.Printf("appendNetworkAuditLine: json.Marshal failed: %v", err)
 		return
 	}
 	_ = os.MkdirAll(filepath.Dir(logPath), 0o700)
