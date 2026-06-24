@@ -733,10 +733,14 @@ body {
   }
 }
 
-/* GFM tables (#172). TipTap's Table extension renders a native editable grid
-   with Tab/arrow navigation, column resize, and cell selection; this themes
-   it to Cyber-Ink. The contextual toolbar floats above a focused table. */
-.ProseMirror table[data-type='table'] {
+/* GFM tables (#172). TipTap's Table extension renders the grid inside a
+   `.tableWrapper` NodeView, so we key off that wrapper (more robust than the
+   data-type attr, which the NodeView applies programmatically). Borders use
+   the theme's `--color-border-active` token (not `--color-border-muted`, which
+   is nearly invisible against the surface) so cells are clearly delimited on
+   every theme — no new theme token is required, the border palette already
+   covers this. */
+.ProseMirror .tableWrapper table {
   border-collapse: collapse;
   table-layout: fixed;
   width: 100%;
@@ -748,14 +752,15 @@ body {
     color-mix(in srgb, var(--color-surface, #1a1d24) 92%, transparent)
   );
 }
-.ProseMirror table[data-type='table'] td,
-.ProseMirror table[data-type='table'] th {
-  border: 1px solid var(--color-border-muted, #27272a);
+.ProseMirror .tableWrapper table td,
+.ProseMirror .tableWrapper table th {
+  border: 1px solid var(--color-border-active, #3f3f46);
   padding: 6px 10px;
   vertical-align: top;
   min-width: 64px;
+  position: relative;
 }
-.ProseMirror table[data-type='table'] th {
+.ProseMirror .tableWrapper table th {
   background: color-mix(
     in srgb,
     var(--color-accent-primary-start) 12%,
@@ -764,7 +769,7 @@ body {
   font-weight: 600;
   text-align: left;
 }
-.ProseMirror table[data-type='table'] .selectedCell::after {
+.ProseMirror .tableWrapper table .selectedCell::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -775,7 +780,7 @@ body {
   );
   pointer-events: none;
 }
-.ProseMirror table[data-type='table'] .column-resize-handle {
+.ProseMirror .tableWrapper table .column-resize-handle {
   position: absolute;
   right: -2px;
   top: 0;
