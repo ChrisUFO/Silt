@@ -155,7 +155,7 @@ describe('makePluginContext — getPluginSettings (#133)', () => {
       section: '',
       page: ''
     })
-    mocks.getPluginSettingsForNotebook.mockResolvedValue(undefined)
+    mocks.getPluginSettingsForNotebook.mockResolvedValue(null as unknown as Record<string, unknown>)
     const ctx = makePluginContext('p')
     const got = await ctx.getPluginSettings()
     expect(got).toEqual({})

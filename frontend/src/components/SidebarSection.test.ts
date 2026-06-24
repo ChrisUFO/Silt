@@ -9,12 +9,17 @@ type NavSectionShape = {
   children?: NavSectionShape[]
 }
 
+type DropTargetShape = { level: string; name: string; before: boolean }
+type DragItemShape = { level: string; name: string; section?: string }
+
 function makeProps(
   overrides: {
     section?: NavSectionShape
     depth?: number
     activeSection?: string
     expandedSections?: Set<string>
+    dropTarget?: DropTargetShape | null
+    dragItem?: DragItemShape | null
   } = {}
 ) {
   return {
@@ -29,8 +34,8 @@ function makeProps(
     activePage: '',
     expandedSections: overrides.expandedSections ?? new Set<string>(),
     navOrder: { pages: {} as Record<string, string[]> },
-    dropTarget: null,
-    dragItem: null,
+    dropTarget: (overrides.dropTarget ?? null) as DropTargetShape | null,
+    dragItem: (overrides.dragItem ?? null) as DragItemShape | null,
     onToggleSection: vi.fn(),
     onSelectPage: vi.fn(),
     onPinPage: vi.fn(),
@@ -227,10 +232,9 @@ describe('SidebarSection (#88 deep-nesting)', () => {
           { name: 'Weekly', count: 2 }
         ]
       },
-      expandedSections: new Set(['Journal'])
+      expandedSections: new Set(['Journal']),
+      dropTarget: { level: 'page', name: 'Weekly', before: true }
     })
-    // Simulate: dragging "Daily" over "Weekly" — before indicator.
-    props.dropTarget = { level: 'page', name: 'Weekly', before: true }
     render(SidebarSection, { props })
     const weekly = screen.getByText('Weekly').closest('button')!
     expect(weekly.classList.contains('drag-over-top')).toBe(true)
@@ -244,9 +248,9 @@ describe('SidebarSection (#88 deep-nesting)', () => {
         path: 'Journal',
         pages: [{ name: 'Daily', count: 5 }]
       },
-      expandedSections: new Set(['Journal'])
+      expandedSections: new Set(['Journal']),
+      dropTarget: { level: 'page', name: 'Daily', before: false }
     })
-    props.dropTarget = { level: 'page', name: 'Daily', before: false }
     render(SidebarSection, { props })
     const daily = screen.getByText('Daily').closest('button')!
     expect(daily.classList.contains('drag-over-bottom')).toBe(true)
@@ -258,11 +262,10 @@ describe('SidebarSection (#88 deep-nesting)', () => {
         name: 'Journal',
         path: 'Journal',
         pages: [{ name: 'Daily', count: 5 }]
-      }
+      },
+      dragItem: { level: 'page', name: 'SomePage', section: 'Other' },
+      dropTarget: { level: 'section', name: 'Journal', before: false }
     })
-    // A page is being dragged over this section header.
-    props.dragItem = { level: 'page', name: 'SomePage', section: 'Other' }
-    props.dropTarget = { level: 'section', name: 'Journal', before: false }
     render(SidebarSection, { props })
     const header = screen.getByRole('treeitem', { name: /Journal/ })
     expect(header.classList.contains('drag-over-into')).toBe(true)
@@ -277,11 +280,10 @@ describe('SidebarSection (#88 deep-nesting)', () => {
         name: 'Journal',
         path: 'Journal',
         pages: []
-      }
+      },
+      dragItem: { level: 'section', name: 'Other' },
+      dropTarget: { level: 'section', name: 'Journal', before: true }
     })
-    // A section is being dragged over this section header (reorder).
-    props.dragItem = { level: 'section', name: 'Other' }
-    props.dropTarget = { level: 'section', name: 'Journal', before: true }
     render(SidebarSection, { props })
     const header = screen.getByRole('treeitem', { name: /Journal/ })
     expect(header.classList.contains('drag-over-top')).toBe(true)
