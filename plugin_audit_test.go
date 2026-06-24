@@ -62,35 +62,8 @@ func TestParseNetworkLogLine_JSON_HostWithSpaces(t *testing.T) {
 	}
 }
 
-// parseNetworkLogLine still accepts the legacy space-delimited format
-// (`<RFC3339> <METHOD> <host> <status> <pluginID>`) so logs written by the
-// previous release survive an upgrade. This backward-compat window lasts one
-// release; a follow-up issue will drop the legacy parser.
-func TestParseNetworkLogLine_LegacyFallback(t *testing.T) {
-	line := "2026-06-23T10:00:00Z GET example.com/path/with spaces 200 p"
-	got, ok := parseNetworkLogLine(line)
-	if !ok {
-		t.Fatalf("parseNetworkLogLine(legacy) returned ok=false; line=%q", line)
-	}
-	if got.Plugin != "p" {
-		t.Errorf("plugin = %q, want p", got.Plugin)
-	}
-	if got.Status != 200 {
-		t.Errorf("status = %d, want 200", got.Status)
-	}
-	if got.Host != "example.com/path/with spaces" {
-		t.Errorf("host = %q, want example.com/path/with spaces", got.Host)
-	}
-	if got.Method != "GET" {
-		t.Errorf("method = %q, want GET", got.Method)
-	}
-	if got.At != "2026-06-23T10:00:00Z" {
-		t.Errorf("at = %q, want 2026-06-23T10:00:00Z", got.At)
-	}
-}
-
-// parseNetworkLogLine rejects garbage that is neither valid JSON nor the
-// legacy format (too few fields).
+// parseNetworkLogLine rejects strings that are not valid JSON with a
+// non-empty At field.
 func TestParseNetworkLogLine_RejectsGarbage(t *testing.T) {
 	for _, line := range []string{
 		"",
@@ -106,8 +79,7 @@ func TestParseNetworkLogLine_RejectsGarbage(t *testing.T) {
 
 // A full round-trip (write via appendNetworkAuditLine → read via
 // parseNetworkLogLine) preserves every field, including a host with embedded
-// spaces that the legacy space-delimited format could only handle via a
-// non-obvious right-to-left parse.
+// spaces.
 func TestNetworkAuditRoundTrip_JSON(t *testing.T) {
 	vaultPath := t.TempDir()
 	entry := &NetworkAuditEntry{

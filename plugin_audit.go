@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -65,9 +64,7 @@ func truncateNetworkLog(path string, keepLines int) {
 //
 // #254: the on-disk format is a single-line JSON object per entry (one
 // json.Marshal + trailing newline). JSON is self-describing, survives column
-// re-ordering, and is parseable by standard tooling (jq, SIEM ingest). The
-// read path (parseNetworkLogLine) still accepts the legacy space-delimited
-// format for one release so existing logs survive an upgrade.
+// re-ordering, and is parseable by standard tooling (jq, SIEM ingest).
 func appendNetworkAuditLine(vaultPath string, entry *NetworkAuditEntry) {
 	if vaultPath == "" {
 		return
@@ -159,9 +156,8 @@ func (a *App) ClearNetworkAudit() error {
 // seedNetworkAuditFromDisk reads every on-disk network.log file under the
 // vault's .system/plugins/ tree and seeds the in-memory audit log so entries
 // survive a restart (#157). Called once during initializeVaultServices. The
-// on-disk format is one line per entry (#254: a single-line JSON object; the
-// reader also accepts the legacy space-delimited format for one release). The
-// in-memory log is capped at 500 entries (most recent).
+// on-disk format is one JSON object per line (#254). The in-memory log is
+// capped at 500 entries (most recent).
 func seedNetworkAuditFromDisk(vaultPath string) {
 	if vaultPath == "" {
 		return
@@ -205,38 +201,15 @@ func seedNetworkAuditFromDisk(vaultPath string) {
 	networkAuditMu.Unlock()
 }
 
-// parseNetworkLogLine parses one line from a network.log file into a
-// NetworkAuditEntry. The current format (#254) is a single-line JSON object.
-// Falls back to the legacy space-delimited format
-// (`<RFC3339> <METHOD> <host> <status> <pluginID>`) for logs written by the
-// previous release, so an upgrade does not drop existing entries. The legacy
-// parser will be removed after one release (follow-up issue). Returns ok=false
-// on any parse failure (best-effort). The legacy parse is right-to-left
-// (status = second-to-last field, pluginID = last) to tolerate spaces in the
-// host/path segment, which a left-to-right split would misalign.
+// parseNetworkLogLine parses one JSON-format line from a network.log file
+// into a NetworkAuditEntry. Lines are single-line JSON objects (#254).
+// Returns ok=false on any parse failure (best-effort).
 func parseNetworkLogLine(line string) (NetworkAuditEntry, bool) {
-	// JSON format (current release): one json object per line.
 	var entry NetworkAuditEntry
 	if err := json.Unmarshal([]byte(line), &entry); err == nil && entry.At != "" {
 		return entry, true
 	}
-	// Legacy format (pre-#254): space-delimited, parsed from the right.
-	parts := strings.Fields(line)
-	n := len(parts)
-	if n < 5 {
-		return NetworkAuditEntry{}, false
-	}
-	status, err := strconv.Atoi(parts[n-2])
-	if err != nil {
-		return NetworkAuditEntry{}, false
-	}
-	return NetworkAuditEntry{
-		At:     parts[0],
-		Method: parts[1],
-		Host:   strings.Join(parts[2:n-2], " "),
-		Status: status,
-		Plugin: parts[n-1],
-	}, true
+	return NetworkAuditEntry{}, false
 }
 
 // auditNetwork appends a {plugin, host, status, time} row. The body is NEVER
