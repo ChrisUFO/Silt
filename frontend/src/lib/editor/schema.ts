@@ -21,7 +21,6 @@
 //   The editor-created default is '- ' (matching renderBlock's default).
 
 import { Node, Mark, mergeAttributes, InputRule } from '@tiptap/core'
-import type { Transaction } from 'prosemirror-state'
 import Highlight from '@tiptap/extension-highlight'
 import Subscript from '@tiptap/extension-subscript'
 import Superscript from '@tiptap/extension-superscript'
