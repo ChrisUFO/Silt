@@ -1,3 +1,12 @@
+# New Editor Block Types
+
+- Mark any block as a quote with `/quote` or `Ctrl+Shift+9`; nested quotes render with a deeper border.
+- Insert callout boxes — note, info, tip, warning, danger, success, or quote — that stand out with an icon and a colored accent.
+- Add fenced code blocks with syntax highlighting, a per-block language picker, and a one-click copy button. Multi-line code is preserved exactly.
+- Collapse long sections with foldable regions; click the summary or press `Ctrl+.` to expand and collapse.
+- Insert editable tables with standard pipe-table formatting, keyboard cell navigation, drag-to-resize columns, and a row/column toolbar (insert, delete, merge).
+- Every new block type is reachable from the `/` slash menu, the formatting toolbar, and (where standard) a keyboard shortcut, and all of them round-trip through the file as standard markdown that opens cleanly in any other editor.
+
 # Security
 
 - All known dependency vulnerabilities resolved (Go stdlib, transitive Go modules, and frontend build tooling).
