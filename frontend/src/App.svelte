@@ -16,6 +16,7 @@
     UnlinkNotebook
   } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
+  import type { config } from '../wailsjs/go/models.js'
   import { fade } from 'svelte/transition'
   import TitleBar from './components/TitleBar.svelte'
   import Sidebar from './components/Sidebar.svelte'
@@ -249,7 +250,7 @@
               section: activePersist.section,
               page: activePersist.page
             }
-          : null) as any
+          : null) as unknown as config.TabRef
       )
     } catch (e) {
       console.error('SetOpenTabs failed:', e)

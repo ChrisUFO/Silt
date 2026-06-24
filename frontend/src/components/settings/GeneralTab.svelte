@@ -112,6 +112,22 @@
     settings.dirty = true
   }
 
+  // Narrowing helpers for draft sub-objects. Each initializes the nested
+  // object on first access so inline handlers stay concise.
+  function draftUI(): Record<string, any> {
+    if (!draft!.ui) draft!.ui = {} as any
+    return draft!.ui as Record<string, any>
+  }
+  function draftUIFormatting(): Record<string, any> {
+    const ui = draftUI()
+    if (!ui.formatting) ui.formatting = {} as any
+    return ui.formatting as Record<string, any>
+  }
+  function draftEditor(): Record<string, any> {
+    if (!draft!.editor) draft!.editor = {} as any
+    return draft!.editor as Record<string, any>
+  }
+
   function changed(): boolean {
     if (!draft || !lastSaved) return false
     return JSON.stringify(draft) !== JSON.stringify(lastSaved)
@@ -428,7 +444,7 @@
         <label class="flex items-center gap-2.5 cursor-pointer select-none">
           <input
             checked={draft.ui?.show_format_toolbar !== false}
-            onchange={(e: Event) => { if (!draft!.ui) draft!.ui = {} as any; draft!.ui.show_format_toolbar = (e.currentTarget as HTMLInputElement).checked; touch() }}
+            onchange={(e: Event) => { draftUI().show_format_toolbar = (e.currentTarget as HTMLInputElement).checked; touch() }}
             type="checkbox"
             class="w-4 h-4 accent-[#10b981] cursor-pointer"
           />
@@ -439,7 +455,7 @@
         <label class="flex items-center gap-2.5 cursor-pointer select-none">
           <input
             checked={draft.ui?.formatting?.typography_enabled !== false}
-            onchange={(e: Event) => { if (!draft!.ui) draft!.ui = {} as any; if (!draft!.ui.formatting) draft!.ui.formatting = {} as any; const fmt = draft!.ui.formatting!; fmt.typography_enabled = (e.currentTarget as HTMLInputElement).checked; touch() }}
+            onchange={(e: Event) => { draftUIFormatting().typography_enabled = (e.currentTarget as HTMLInputElement).checked; touch() }}
             type="checkbox"
             class="w-4 h-4 accent-[#10b981] cursor-pointer"
           />
@@ -450,7 +466,7 @@
         <label class="flex items-center gap-2.5 cursor-pointer select-none">
           <input
             checked={draft.ui?.formatting?.color_enabled !== false}
-            onchange={(e: Event) => { if (!draft!.ui) draft!.ui = {} as any; if (!draft!.ui.formatting) draft!.ui.formatting = {} as any; const fmt = draft!.ui.formatting!; fmt.color_enabled = (e.currentTarget as HTMLInputElement).checked; touch() }}
+            onchange={(e: Event) => { draftUIFormatting().color_enabled = (e.currentTarget as HTMLInputElement).checked; touch() }}
             type="checkbox"
             class="w-4 h-4 accent-[#10b981] cursor-pointer"
           />
@@ -461,7 +477,7 @@
         <label class="flex items-center gap-2.5 cursor-pointer select-none">
           <input
             checked={draft.editor?.show_word_count === true}
-            onchange={(e: Event) => { if (!draft!.editor) draft!.editor = {} as any; draft!.editor.show_word_count = (e.currentTarget as HTMLInputElement).checked; touch() }}
+            onchange={(e: Event) => { draftEditor().show_word_count = (e.currentTarget as HTMLInputElement).checked; touch() }}
             type="checkbox"
             class="w-4 h-4 accent-[#10b981] cursor-pointer"
           />
@@ -472,7 +488,7 @@
         <label class="flex items-center gap-2.5 cursor-pointer select-none">
           <input
             checked={draft.editor?.focus_mode === true}
-            onchange={(e: Event) => { if (!draft!.editor) draft!.editor = {} as any; draft!.editor.focus_mode = (e.currentTarget as HTMLInputElement).checked; touch() }}
+            onchange={(e: Event) => { draftEditor().focus_mode = (e.currentTarget as HTMLInputElement).checked; touch() }}
             type="checkbox"
             class="w-4 h-4 accent-[#10b981] cursor-pointer"
           />
