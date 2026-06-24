@@ -654,6 +654,51 @@
       // blocks are inserted at the cursor position (ARCHITECTURE §5.1 — the
       // UniqueBlockIds extension mints fresh UUIDs for the inserted nodes).
       showTemplatePicker = true
+    } else if (commandId === 'quote') {
+      // Toggle blockquote on the current noteBlock (#188).
+      const active = findActiveBlock(editorInstance as any)
+      if (active && active.node.type.name === 'noteBlock') {
+        const nodePos = editorInstance.state.selection.$from.before(
+          active.depth
+        )
+        const currentQuote = active.node.attrs.quote || false
+        editorInstance.view.dispatch(
+          editorInstance.state.tr.setNodeAttribute(
+            nodePos,
+            'quote',
+            !currentQuote
+          )
+        )
+      }
+    } else if (commandId === 'code-block') {
+      editorInstance.commands.insertContent({
+        type: 'codeBlock',
+        attrs: { lang: '' }
+      })
+    } else if (commandId === 'details') {
+      editorInstance.commands.insertContent({
+        type: 'detailsBlock',
+        attrs: { summary: '', open: false }
+      })
+    } else if (commandId === 'table') {
+      if ((editorInstance as any).commands.insertTable) {
+        ;(editorInstance as any).commands.insertTable({ rows: 3, cols: 3 })
+      }
+    } else if (commandId === 'table-5x4') {
+      if ((editorInstance as any).commands.insertTable) {
+        ;(editorInstance as any).commands.insertTable({ rows: 5, cols: 4 })
+      }
+    } else if (commandId === 'table-custom') {
+      if ((editorInstance as any).commands.insertTable) {
+        ;(editorInstance as any).commands.insertTable({ rows: 4, cols: 4 })
+      }
+    } else if (commandId.startsWith('callout')) {
+      const variant =
+        commandId === 'callout' ? 'note' : commandId.replace('callout-', '')
+      editorInstance.commands.insertContent({
+        type: 'calloutBlock',
+        attrs: { variant, title: '' }
+      })
     } else if (FORMAT_COMMANDS[commandId]) {
       // Inline formatting slash commands (#168). Each toggles its mark.
       const mark = FORMAT_COMMANDS[commandId]

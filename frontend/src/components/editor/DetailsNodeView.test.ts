@@ -41,9 +41,9 @@ describe('DetailsNodeView (#183)', () => {
       })
     ])
     const wrapper = container.querySelector('[data-type="silt-details"]')
-    // Summary text is rendered in a contenteditable span inside the button
-    const toggle = wrapper?.querySelector('button')
-    expect(toggle?.textContent).toContain('My Summary')
+    // Summary text is rendered in a contenteditable span outside the toggle button
+    const summary = wrapper?.querySelector('[contenteditable="true"]')
+    expect(summary?.textContent).toContain('My Summary')
     cleanup()
   })
 })

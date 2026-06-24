@@ -422,30 +422,37 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 		// the fence are accumulated into a single CODE block.
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
 			if !codeFenceOpen {
-				// Opening fence: start accumulating.
+				// Opening fence: start accumulating. Strip any stale ID from
+				// a prior round-trip so saved output stays clean.
 				codeFenceOpen = true
-				codeFenceLine = line
-				codeFenceLang = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "```"))
+				codeFenceLine = CleanLineID(line)
+				codeFenceLang = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(codeFenceLine), "```"))
 				codeContentLines = nil
 				continue
 			}
-			// Closing fence: emit a single CODE block for the accumulated content.
+			// Closing fence: emit a single CODE block for the accumulated
+			// content. Reuse any existing <!-- id: ... --> from a prior save
+			// so Smart Graph ((uuid)) references survive (#189 follow-up).
 			codeFenceOpen = false
-			blockID := generateUUIDv4()
+			existingID, _, cleanLine, _ := EnsureBlockID(line)
+			blockID := existingID
+			if blockID == "" {
+				blockID = generateUUIDv4()
+			}
 			content := strings.Join(codeContentLines, "\n")
 			idSuffix := fmt.Sprintf(" <!-- id: %s -->", blockID)
 			blocks = append(blocks, ParsedBlock{
 				ID:        blockID,
 				Type:      BlockCode,
 				Depth:     0,
-				RawText:   codeFenceLine + "\n" + content + "\n" + line,
+				RawText:   codeFenceLine + "\n" + content + "\n" + cleanLine,
 				CleanText: content,
 				CodeLang:  codeFenceLang,
 				LineNumber: lineNumber - len(codeContentLines) - 1,
 			})
 			outputLines = append(outputLines, codeFenceLine)
 			outputLines = append(outputLines, codeContentLines...)
-			outputLines = append(outputLines, line+idSuffix)
+			outputLines = append(outputLines, cleanLine+idSuffix)
 			codeFenceLine = ""
 			codeFenceLang = ""
 			codeContentLines = nil
@@ -565,10 +572,10 @@ func RenderFileContent(blocks []ParsedBlock, originalBody, frontmatter string, s
 	// algorithm SaveFileBlocks used to inline, now centralized here so every
 	// writer benefits from preserved user content.
 	//
-	// For fenced code blocks (#189), the entire fence (opening ``` + body +
-	// closing ``` <!-- id: uuid -->) is bucketed as a unit. When the closing
-	// fence's ID matches a CODE block in the new blocks, the full fence is
-	// assigned to that block; otherwise it falls through to pendingPreserved.
+	// Fenced code blocks (#189) are handled by renderBlock which emits the
+	// authoritative fence for every CODE block. The body walker therefore
+	// drops the original fence to avoid double-emission. Unclosed/orphan
+	// fences are flushed via pendingPreserved at the end of the walk.
 	preservedBefore := make(map[string][]string)
 	var pendingPreserved []string
 	var codeFenceLines []string
@@ -582,17 +589,13 @@ func RenderFileContent(blocks []ParsedBlock, originalBody, frontmatter string, s
 					inCodeBlock = true
 					codeFenceLines = append(codeFenceLines, line)
 				} else {
-					// Closing fence: check for block ID match.
-					codeFenceLines = append(codeFenceLines, line)
+					// Closing fence: drop the entire fence from the body walker.
+					// renderBlock emits the authoritative fence for every CODE
+					// block; preserving the old fence would double-emit it.
+					// Blank lines before the opening ``` remain in pendingPreserved.
+					codeFenceLines = nil
 					inCodeBlock = false
-				// Fenced code block: drop the entire fence from the body walker.
-				// renderBlock (§renderBlock) emits the authoritative fence for
-				// every CODE block in the new block list. Preserving the old
-				// fence via the body walker would double-emit it. Blank lines
-				// before the opening ``` remain in pendingPreserved and are
-				// preserved as spacing.
-				codeFenceLines = nil
-			}
+				}
 				continue
 			}
 			if inCodeBlock {

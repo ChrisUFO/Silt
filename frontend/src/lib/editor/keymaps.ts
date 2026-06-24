@@ -376,6 +376,57 @@ export const SiltBlockKeymaps = Extension.create({
         return true
       },
 
+      // Quote depth increment (#188). Mod-Shift-8 bumps quoteDepth up.
+      'Mod-Shift-8': () => {
+        const active = findActiveBlock(this.editor)
+        if (
+          !active ||
+          active.node.type.name !== 'noteBlock' ||
+          !active.node.attrs.quote
+        )
+          return false
+        const nodePos = this.editor.state.selection.$from.before(active.depth)
+        const depth = (active.node.attrs.quoteDepth || 1) + 1
+        const tr = this.editor.state.tr.setNodeAttribute(
+          nodePos,
+          'quoteDepth',
+          depth
+        )
+        this.editor.view.dispatch(tr)
+        return true
+      },
+
+      // Table row/column hotkeys (#172). Look up live bindings from config so
+      // user remapping in settings.json is reflected at runtime.
+      'Mod-Shift-ArrowUp': () => {
+        if ((this.editor as any).can().addRowBefore()) {
+          ;(this.editor as any).chain().focus().addRowBefore().run()
+          return true
+        }
+        return false
+      },
+      'Mod-Shift-ArrowDown': () => {
+        if ((this.editor as any).can().addRowAfter()) {
+          ;(this.editor as any).chain().focus().addRowAfter().run()
+          return true
+        }
+        return false
+      },
+      'Mod-Shift-ArrowLeft': () => {
+        if ((this.editor as any).can().addColBefore()) {
+          ;(this.editor as any).chain().focus().addColBefore().run()
+          return true
+        }
+        return false
+      },
+      'Mod-Shift-ArrowRight': () => {
+        if ((this.editor as any).can().addColAfter()) {
+          ;(this.editor as any).chain().focus().addColAfter().run()
+          return true
+        }
+        return false
+      },
+
       // Text alignment shortcuts (#173). Mod-Shift-L/E/R/J for left/center/
       // right/justify. No-op for TASK blocks (alignment not supported on tasks).
       'Mod-Shift-l': () => setBlockAlign(this.editor, 'left'),

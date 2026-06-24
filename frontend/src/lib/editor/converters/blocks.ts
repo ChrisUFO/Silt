@@ -327,19 +327,25 @@ function tableToGFMRows(node: NodeJSON): string[] {
   return rows
 }
 
-// Helper to word-wrap text into ~80-char `> ` lines (#180).
+// Helper to word-wrap text into ~80-char `> ` lines (#180). Preserves
+// paragraph boundaries (double newlines) so multi-paragraph callout body
+// content survives a round-trip without collapsing into one block.
 function wrapCalloutBody(body: string, maxLen: number = 80): string[] {
-  const words = body.split(' ')
+  const paragraphs = body.split(/\n\n+/)
   const lines: string[] = []
-  let current = ''
-  for (const w of words) {
-    if (current && current.length + w.length + 1 > maxLen) {
-      lines.push(current)
-      current = ''
+  for (let pi = 0; pi < paragraphs.length; pi++) {
+    if (pi > 0) lines.push('') // blank line between paragraphs
+    const words = paragraphs[pi].split(' ')
+    let current = ''
+    for (const w of words) {
+      if (current && current.length + w.length + 1 > maxLen) {
+        lines.push(current)
+        current = ''
+      }
+      current = current ? `${current} ${w}` : w
     }
-    current = current ? `${current} ${w}` : w
+    if (current) lines.push(current)
   }
-  if (current) lines.push(current)
   return lines
 }
 
@@ -353,6 +359,44 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
   let i = 0
   while (i < blocks.length) {
     const rawText = blocks[i].clean_text || ''
+
+    // Multi-line <details> detection (#183). When a NOTE starts with <details>
+    // but does not end with </details>, walk forward consuming subsequent NOTE
+    // blocks until the closing tag is found.
+    if (
+      blocks[i].type === 'NOTE' &&
+      rawText.trimStart().startsWith('<details>') &&
+      !rawText.includes('</details>')
+    ) {
+      const parts: string[] = []
+      while (i < blocks.length) {
+        const ct = blocks[i].clean_text || ''
+        parts.push(ct)
+        if (ct.includes('</details>')) break
+        i++
+      }
+      const merged = parts.join('\n')
+      const summaryMatch = merged.match(/<summary>(.*?)<\/summary>/)
+      const summary = summaryMatch ? summaryMatch[1] : ''
+      const bodyContent = merged
+        .replace(/<details><summary>.*?<\/summary>/, '')
+        .replace(/<\/details>\s*$/, '')
+      const bodyNodes: NodeJSON[] = bodyContent
+        ? legacyTokenizeInline(bodyContent)
+        : []
+      content.push({
+        type: 'detailsBlock',
+        attrs: {
+          id: blocks[i]?.id || crypto.randomUUID(),
+          summary,
+          open: false,
+          file_date: blocks[i]?.file_date || ''
+        },
+        content: bodyNodes
+      })
+      i++
+      continue
+    }
 
     // GFM pipe table detection (#172). Consecutive NOTE blocks matching the
     // GFM pipe-table pattern are merged into a single tableBlock. Requires
