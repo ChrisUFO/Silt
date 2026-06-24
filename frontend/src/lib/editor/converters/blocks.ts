@@ -28,6 +28,33 @@ function extractTextContent(content?: NodeJSON[]): string {
   return out
 }
 
+// Push a single line of a `<details>` run as an opaque NOTE block (#183).
+// The Go parser preserves HTML in clean_text verbatim, so these lines
+// round-trip byte-for-byte; only the opener carries the block id.
+function pushDetailsLine(
+  blocks: ParsedBlock[],
+  id: string,
+  text: string,
+  lineNumber: number,
+  fileDate: string
+): void {
+  blocks.push({
+    id,
+    parent_id: '',
+    type: 'NOTE',
+    depth: 0,
+    raw_text: text,
+    clean_text: text,
+    status: '',
+    owner: '',
+    start_date: '',
+    due_date: '',
+    priority: 3,
+    line_number: lineNumber,
+    file_date: fileDate
+  })
+}
+
 // Extract the bullet prefix ('- ', '* ', '+ ', or '') from a note's raw_text,
 // matching the detection logic in Go's renderBlock (parser.go ~line 515-527).
 function detectBullet(rawText: string): string {
@@ -276,12 +303,37 @@ function blockToNode(block: ParsedBlock): NodeJSON {
   }
 }
 
+// Detect the opening of an HTML `<details>` region (#183). The Go parser
+// preserves each line of a `<details>` block as an opaque NOTE (HTML passes
+// through clean_text verbatim, like the color spans), so a foldable section
+// is a RUN of NOTE blocks the converter groups into one Details node tree.
+// `<details>` and `<details open>` both open; the run ends at `</details>`.
+const DETAILS_OPEN_RE = /^<details(?:\s+[^>]*)?>$/i
+const DETAILS_CLOSE_RE = /^<\/details>$/i
+const DETAILS_SUMMARY_RE = /^<summary>([\s\S]*?)<\/summary>$/i
+
 // blocksToDoc converts an ordered list of ParsedBlocks into a ProseMirror doc
-// JSON suitable for editor.commands.setContent(). Each block becomes one
-// top-level block node; nesting is expressed via the depth attr (rendered as
-// indentation by the editor surface + NodeViews).
+// JSON suitable for editor.commands.setContent(). Most blocks become one
+// top-level block node (nesting is expressed via the depth attr), but a
+// `<details>` run (#183) is grouped into a single Details node tree whose
+// inner lines become normal child blocks. An index-based scanner lets a
+// group consume multiple input blocks.
 export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
-  const content = blocks.map(blockToNode)
+  const content: NodeJSON[] = []
+  let i = 0
+  while (i < blocks.length) {
+    const block = blocks[i]
+    if (DETAILS_OPEN_RE.test((block.clean_text || '').trim())) {
+      const { node, consumed } = buildDetailsNode(blocks, i)
+      if (node) {
+        content.push(node)
+        i += consumed
+        continue
+      }
+    }
+    content.push(blockToNode(block))
+    i++
+  }
   // ProseMirror requires a doc to have at least one block child; an empty
   // blocks list yields a single empty note node so the editor always has a
   // place to type (the Placeholder extension shows its hint here).
@@ -298,6 +350,76 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
     })
   }
   return { type: 'doc', content }
+}
+
+// buildDetailsNode reads a `<details>` run starting at blocks[startIdx] and
+// returns the assembled Details node JSON plus the number of input blocks it
+// consumed (opener..closer inclusive). Nested `<details>` are handled by
+// depth counting. The opener's id becomes the Details node's id; the
+// `<summary>` line (if present) seeds the summary; every line between becomes
+// a child block (recursively, so a nested `<details>` is a child Details).
+function buildDetailsNode(
+  blocks: ParsedBlock[],
+  startIdx: number
+): { node: NodeJSON | null; consumed: number } {
+  const opener = blocks[startIdx]
+  let depth = 1
+  let endIdx = startIdx + 1
+  while (endIdx < blocks.length && depth > 0) {
+    const t = (blocks[endIdx].clean_text || '').trim()
+    if (DETAILS_OPEN_RE.test(t)) depth++
+    else if (DETAILS_CLOSE_RE.test(t)) depth--
+    if (depth === 0) break
+    endIdx++
+  }
+  if (depth !== 0) {
+    // Unterminated `<details>` — leave the opener as a plain NOTE.
+    return { node: null, consumed: 1 }
+  }
+
+  const inner = blocks.slice(startIdx + 1, endIdx) // between the tags
+  let summaryText = ''
+  let bodyStart = 0
+  if (inner.length > 0) {
+    const sm = (inner[0].clean_text || '').trim().match(DETAILS_SUMMARY_RE)
+    if (sm) {
+      summaryText = sm[1]
+      bodyStart = 1
+    }
+  }
+  const bodyBlocks = inner.slice(bodyStart)
+  const childNodes = bodyBlocks.length ? blocksToDoc(bodyBlocks).content : []
+
+  const today = new Date().toISOString().slice(0, 10)
+  const node: NodeJSON = {
+    type: 'details',
+    attrs: {
+      id: opener.id || null,
+      open: false,
+      file_date: opener.file_date || today
+    },
+    content: [
+      {
+        type: 'detailsSummary',
+        attrs: { id: null },
+        content: summaryText ? [{ type: 'text', text: summaryText }] : []
+      },
+      {
+        type: 'detailsContent',
+        attrs: { id: null },
+        content: childNodes.length
+          ? childNodes
+          : [
+              {
+                type: 'noteBlock',
+                attrs: { id: null, depth: 0, bullet: '', file_date: today },
+                content: []
+              }
+            ]
+      }
+    ]
+  }
+  return { node, consumed: endIdx - startIdx + 1 }
 }
 
 // docToBlocks is the inverse of blocksToDoc: it walks a ProseMirror doc JSON
@@ -417,6 +539,44 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         file_date: (attrs.file_date as string) || '',
         language: (attrs.language as string) || ''
       })
+      continue
+    }
+
+    // Foldable details (#183): serialize to a RUN of NOTE blocks — the
+    // `<details>` opener, a `<summary>` line, the child blocks (recursively
+    // serialized), and the `</details>` closer. The Go parser preserves each
+    // line verbatim (HTML passes through clean_text), and blocksToDoc regroups
+    // the run on load. The opener carries the block id; collapse state is
+    // ephemeral (never persisted as `<details open>` in v1).
+    if (node.type === 'details') {
+      const fileDate = (attrs.file_date as string) || ''
+      const summaryNode = (node.content || []).find(
+        (c) => c.type === 'detailsSummary'
+      )
+      const contentNode = (node.content || []).find(
+        (c) => c.type === 'detailsContent'
+      )
+      const summaryText = summaryNode
+        ? serializeInlineContent(summaryNode.content)
+        : ''
+      pushDetailsLine(blocks, id, '<details>', lineNumber, fileDate)
+      pushDetailsLine(
+        blocks,
+        '',
+        `<summary>${summaryText}</summary>`,
+        lineNumber,
+        fileDate
+      )
+      if (contentNode?.content) {
+        // Child blocks recurse through docToBlocks so nested details, code,
+        // tables, etc. inside a foldable section round-trip correctly.
+        const childBlocks = docToBlocks({
+          type: 'doc',
+          content: contentNode.content
+        })
+        for (const cb of childBlocks) blocks.push(cb)
+      }
+      pushDetailsLine(blocks, '', '</details>', lineNumber, fileDate)
       continue
     }
 

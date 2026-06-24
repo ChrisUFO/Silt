@@ -683,6 +683,49 @@ body {
   outline: none;
 }
 
+/* Foldable details (#183). TipTap's Details extension renders a native
+   `<details><summary>` container, which gives free disclosure + keyboard
+   operability + implicit aria-expanded. We theme the summary marker and
+   the body chrome; the collapse state is ephemeral (not persisted). */
+.ProseMirror details[data-type='details'] {
+  border: 1px solid var(--color-border-muted, #27272a);
+  border-radius: 8px;
+  background: color-mix(
+    in srgb,
+    var(--color-surface, #1a1d24) 60%,
+    transparent
+  );
+  padding: 6px 10px;
+  margin: 4px 0;
+}
+.ProseMirror details[data-type='details'] > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--color-text-primary, #e6e6e6);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  outline: none;
+}
+.ProseMirror details[data-type='details'] > summary:focus-visible {
+  color: var(--color-accent-primary-start);
+}
+.ProseMirror details[data-type='details'] > summary::before {
+  content: '▶';
+  font-size: 0.7em;
+  transition: transform 0.15s ease;
+  color: var(--color-text-muted, #8b95a3);
+}
+.ProseMirror details[data-type='details'][open] > summary::before {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ProseMirror details[data-type='details'] > summary::before {
+    transition: none;
+  }
+}
+
 /* Selection highlight uses the theme accent. */
 .ProseMirror ::selection {
   background: color-mix(

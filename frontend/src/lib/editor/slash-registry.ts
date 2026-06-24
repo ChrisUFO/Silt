@@ -328,6 +328,15 @@ registerSlashCommand({
   icon: 'code_blocks'
 })
 
+// --- Foldable details (#183) ----------------------------------------------
+registerSlashCommand({
+  id: 'details',
+  label: 'Foldable section',
+  description: 'Insert a collapsible <details> section',
+  icon: 'unfold_more',
+  shortcut: 'Ctrl+.'
+})
+
 // --- Color commands (#170) ------------------------------------------------
 registerSlashCommand({
   id: 'text-color',

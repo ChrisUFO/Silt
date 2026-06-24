@@ -226,6 +226,68 @@ export function insertCodeBlock(editor: Editor, language = ''): boolean {
   return true
 }
 
+// Insert a foldable `<details>` section (#183). Builds the Details >
+// DetailsSummary + DetailsContent(placeholder note) tree the TipTap extension
+// expects. Replaces an empty note/header in place, otherwise inserts below.
+export function insertDetails(editor: Editor): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const schema = editor.state.schema
+  if (!schema.nodes.details) return false
+  const today = new Date().toISOString().slice(0, 10)
+  const placeholder = schema.nodes.noteBlock?.create(
+    { id: null, depth: 0, bullet: '', file_date: today },
+    []
+  )
+  const detailsNode = schema.nodes.details.create(
+    { id: null, open: true, file_date: today },
+    [
+      schema.nodes.detailsSummary.create(
+        { id: null },
+        schema.text('Section title')
+      ),
+      schema.nodes.detailsContent.create(
+        { id: null },
+        placeholder ? [placeholder] : []
+      )
+    ]
+  )
+  const active = findActiveBlock(editor)
+  const isEmptyNote =
+    active &&
+    (active.node.type.name === 'noteBlock' ||
+      active.node.type.name === 'headerBlock') &&
+    (active.node.content.size === 0 || active.node.textContent.trim() === '')
+  if (active && isEmptyNote) {
+    const pos = editor.state.selection.$from.before(active.depth)
+    editor.view.dispatch(
+      editor.state.tr.replaceWith(pos, pos + active.node.nodeSize, detailsNode)
+    )
+    editor.commands.focus()
+    return true
+  }
+  editor.commands.insertContent(detailsNode)
+  editor.commands.focus()
+  return true
+}
+
+// Toggle the `open` attr on the `<details>` enclosing the cursor (#183).
+// Walks up from the selection to the nearest details node and flips open.
+export function toggleDetails(editor: Editor): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const $pos = editor.state.selection.$from
+  for (let d = $pos.depth; d >= 1; d--) {
+    const node = $pos.node(d)
+    if (node.type.name === 'details') {
+      const pos = $pos.before(d)
+      editor.view.dispatch(
+        editor.state.tr.setNodeAttribute(pos, 'open', !node.attrs.open)
+      )
+      return true
+    }
+  }
+  return false
+}
+
 export const SiltBlockKeymaps = Extension.create({
   name: 'siltBlockKeymaps',
 
@@ -446,7 +508,11 @@ export const SiltBlockKeymaps = Extension.create({
 
       // Blockquote toggle (#188). Mod-Shift-9 is the standard blockquote
       // binding. No-op on TASK/HEADER blocks (quote is a NOTE marker).
-      'Mod-Shift-9': () => toggleBlockQuote(this.editor)
+      'Mod-Shift-9': () => toggleBlockQuote(this.editor),
+
+      // Foldable details toggle (#183). Mod-. flips the `open` attr on the
+      // enclosing `<details>` (no-op when the cursor is not inside one).
+      'Mod-.': () => toggleDetails(this.editor)
     }
   }
 })

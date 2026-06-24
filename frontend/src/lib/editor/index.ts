@@ -6,9 +6,12 @@ export {
   TaskBlock,
   NoteBlock,
   HeaderBlock,
+  CalloutBlock,
+  CodeBlock,
   SiltBlockExtensions,
   SiltInlineMarkExtensions,
-  SiltColorMarkExtensions
+  SiltColorMarkExtensions,
+  SiltDetailsExtensions
 } from './schema'
 export { SiltBlockExtensionsWithNodeViews } from './nodeViews'
 export { blocksToDoc, docToBlocks } from './converters'
@@ -20,6 +23,8 @@ export {
   toggleBlockQuote,
   insertCallout,
   insertCodeBlock,
+  insertDetails,
+  toggleDetails,
   findActiveBlock,
   BLOCK_TYPES
 } from './keymaps'

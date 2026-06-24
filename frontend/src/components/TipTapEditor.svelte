@@ -12,6 +12,7 @@
     SiltBlockExtensionsWithNodeViews,
     SiltInlineMarkExtensions,
     SiltColorMarkExtensions,
+    SiltDetailsExtensions,
     UniqueBlockIds,
     SiltBlockKeymaps,
     convertToBlock,
@@ -19,6 +20,7 @@
     toggleBlockQuote,
     insertCallout,
     insertCodeBlock,
+    insertDetails,
     findActiveBlock,
     TaskMetaSuggest,
     applyMetaSuggestion,
@@ -366,6 +368,7 @@
     ...SiltBlockExtensionsWithNodeViews,
     ...SiltInlineMarkExtensions,
     ...SiltColorMarkExtensions,
+    ...SiltDetailsExtensions,
     UniqueBlockIds,
     TaskMetaSuggest.configure({
       onChange: onMetaChange,
@@ -641,6 +644,8 @@
       insertCallout(editorInstance as any, commandId.slice('callout-'.length))
     } else if (commandId === 'code-block') {
       insertCodeBlock(editorInstance as any)
+    } else if (commandId === 'details') {
+      insertDetails(editorInstance as any)
     } else if (commandId === 'text-color') {
       openColorPickerPopover('textColor')
     } else if (commandId === 'background-color') {

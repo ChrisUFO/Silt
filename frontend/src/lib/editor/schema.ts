@@ -23,6 +23,11 @@
 import { Node, Mark, mergeAttributes, InputRule } from '@tiptap/core'
 import { newlineInCode } from '@tiptap/pm/commands'
 import Highlight from '@tiptap/extension-highlight'
+import {
+  Details,
+  DetailsContent,
+  DetailsSummary
+} from '@tiptap/extension-details'
 import Subscript from '@tiptap/extension-subscript'
 import Superscript from '@tiptap/extension-superscript'
 
@@ -558,6 +563,23 @@ export const CodeBlock = Node.create({
     }
   }
 })
+
+// ---- Foldable details (#183) ---------------------------------------------
+// TipTap's Details extension renders a native `<details><summary>` container,
+// which gives free disclosure behaviour (click summary to toggle), keyboard
+// operability, and an implicit aria-expanded. The on-disk form is the HTML
+// itself, preserved line-by-line as opaque NOTE blocks by the Go parser (HTML
+// passes through clean_text verbatim). The converter groups a `<details>` run
+// into this node tree on load and re-emits the run on save. Collapse state is
+// ephemeral in v1 (never written as `<details open>`).
+//
+// `open: false` default keeps sections collapsed on load (the outliner's "the
+// file is the truth" model — collapse is a view concern, not persisted).
+export const SiltDetailsExtensions = [
+  Details.configure({ HTMLAttributes: { 'data-type': 'details' } }),
+  DetailsSummary,
+  DetailsContent
+]
 
 // ---- EmbedNode (block-level, atomic) -------------------------------------
 // Renders Smart Graph `{{embed:uuid}}` as a live EmbedPortal NodeView (#85).

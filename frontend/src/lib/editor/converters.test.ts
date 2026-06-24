@@ -318,6 +318,46 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(docToBlocks(doc)[0].clean_text).toBe('')
   })
 
+  it('round-trips a foldable <details> section (#183)', () => {
+    // On-disk form: a run of opaque NOTE blocks the converter regroups.
+    const id = '11111111-1111-1111-1111-111111111111'
+    const blocks = [
+      mkBlock('NOTE', { id, clean_text: '<details>' }),
+      mkBlock('NOTE', { clean_text: '<summary>Title</summary>' }),
+      mkBlock('NOTE', { clean_text: 'inner note' }),
+      mkBlock('NOTE', { clean_text: '</details>' })
+    ]
+    const doc = blocksToDoc(blocks)
+    const node = doc.content[0]
+    expect(node?.type).toBe('details')
+    const summary = (node?.content || []).find(
+      (c) => c.type === 'detailsSummary'
+    )
+    const content = (node?.content || []).find(
+      (c) => c.type === 'detailsContent'
+    )
+    expect(summary?.content).toEqual([{ type: 'text', text: 'Title' }])
+    // The inner note became a child noteBlock inside detailsContent.
+    const child = content?.content?.[0]
+    expect(child?.type).toBe('noteBlock')
+
+    // Save: re-emits the `<details>` run as opaque NOTE blocks.
+    const back = docToBlocks(doc)
+    expect(back.map((b) => b.clean_text)).toEqual([
+      '<details>',
+      '<summary>Title</summary>',
+      'inner note',
+      '</details>'
+    ])
+  })
+
+  it('handles an unterminated <details> gracefully (#183)', () => {
+    // No closing tag → the opener stays a plain NOTE (no crash, no loss).
+    const blocks = [mkBlock('NOTE', { clean_text: '<details>' })]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0]?.type).toBe('noteBlock')
+  })
+
   it('handles empty clean_text (placeholder block)', () => {
     const blocks = [mkBlock('NOTE', { clean_text: '' })]
     const back = docToBlocks(blocksToDoc(blocks))
