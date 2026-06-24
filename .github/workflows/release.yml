@@ -305,8 +305,7 @@ jobs:
           # (docs/releases/unreleased.md). If the file is missing or still holds
           # the stub comment, fall back to --generate-notes (auto-generated PR
           # list). The fallback is loud on purpose — it means a PR was merged
-          # without running the create-pr skill, or the file was reset
-          # prematurely.
+          # without running the create-pr skill.
           NOTES_FILE="docs/releases/unreleased.md"
           if [ -f "$NOTES_FILE" ] && ! grep -q "Next release notes go here" "$NOTES_FILE"; then
             echo "Using curated release notes from $NOTES_FILE"
@@ -321,28 +320,3 @@ jobs:
             --title "v${{ needs.prepare.outputs.version }}" \
             "${NOTES_ARGS[@]}" \
             release-assets/*
-
-      - name: Checkout main for notes reset
-        if: success()
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
-
-      - name: Reset unreleased.md for next release
-        if: success()
-        run: |
-          set -euo pipefail
-          # After posting, reset the file back to the stub so the next PR starts
-          # with a clean slate. Push to main with [skip ci] so this doesn't
-          # trigger another release. The stub content is hard-coded here (and
-          # mirrored in the initial commit) — keeping it self-contained avoids
-          # a fragile dependency on a specific git ref.
-          cat > docs/releases/unreleased.md <<'STUB'
-          <!-- Next release notes go here. The create-pr skill overwrites this file; the release workflow reads it, posts it to GitHub, and resets it. -->
-          STUB
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/releases/unreleased.md
-          git commit -m "chore(release): reset unreleased notes [skip ci]"
-          git push origin main
