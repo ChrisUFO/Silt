@@ -24,3 +24,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+
+  # Go module dependencies (golang.org/x/sys, wails, modernc.org/sqlite, etc.).
+  # Catches transitive Go advisories the way npm updates catch frontend ones;
+  # golang.org/x/* bumps land here as PRs rather than waiting for govulncheck
+  # to redden the CI gate (F8) on the next advisory.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
