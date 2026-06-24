@@ -17,9 +17,7 @@
     "checkJs": true,
     "isolatedModules": true,
     "sourceMap": true,
-    "strict": false,
-    "strictNullChecks": true,
-    "noImplicitAny": true,
+    "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
