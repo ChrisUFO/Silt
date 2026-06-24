@@ -28,6 +28,10 @@ import {
   DetailsContent,
   DetailsSummary
 } from '@tiptap/extension-details'
+import { Table } from '@tiptap/extension-table'
+import { TableRow } from '@tiptap/extension-table-row'
+import { TableCell } from '@tiptap/extension-table-cell'
+import { TableHeader } from '@tiptap/extension-table-header'
 import Subscript from '@tiptap/extension-subscript'
 import Superscript from '@tiptap/extension-superscript'
 
@@ -579,6 +583,24 @@ export const SiltDetailsExtensions = [
   Details.configure({ HTMLAttributes: { 'data-type': 'details' } }),
   DetailsSummary,
   DetailsContent
+]
+
+// ---- GFM Tables (#172) ---------------------------------------------------
+// TipTap's Table family renders an editable grid with native Tab/arrow-key
+// navigation, column resizing, and cell selection. The on-disk form is
+// standard GFM pipe syntax; the converter groups a run of pipe-prefixed NOTE
+// blocks (one per GFM line) into this node tree on load and re-emits the run
+// on save. resizable lets the user drag column borders; the table's block
+// identity lives on the LAST row (so the whole table has one id).
+export const SiltTableExtensions = [
+  Table.configure({
+    resizable: true,
+    allowTableNodeSelection: false,
+    HTMLAttributes: { 'data-type': 'table' }
+  }),
+  TableRow,
+  TableCell,
+  TableHeader
 ]
 
 // ---- EmbedNode (block-level, atomic) -------------------------------------

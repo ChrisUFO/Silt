@@ -13,6 +13,7 @@
     SiltInlineMarkExtensions,
     SiltColorMarkExtensions,
     SiltDetailsExtensions,
+    SiltTableExtensions,
     UniqueBlockIds,
     SiltBlockKeymaps,
     convertToBlock,
@@ -21,6 +22,7 @@
     insertCallout,
     insertCodeBlock,
     insertDetails,
+    insertTable,
     findActiveBlock,
     TaskMetaSuggest,
     applyMetaSuggestion,
@@ -35,6 +37,7 @@
   import FormattingFirstRunTip from './editor/FormattingFirstRunTip.svelte'
   import SelectionBubble from './editor/SelectionBubble.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
+  import TableContextToolbar from './editor/TableContextToolbar.svelte'
   import { DEFAULT_COLOR_PALETTE, resolveColor } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { clampToViewport } from '../lib/editor/popoverPositioning'
@@ -135,6 +138,7 @@
   // collapsed and the screen coords for positioning the floating bubble.
   let selectionEmpty = $state(true)
   let isLastBlock = $state(false)
+  let cursorInTable = $state(false)
   let selectionCoords = $state<{
     left: number
     top: number
@@ -369,6 +373,7 @@
     ...SiltInlineMarkExtensions,
     ...SiltColorMarkExtensions,
     ...SiltDetailsExtensions,
+    ...SiltTableExtensions,
     UniqueBlockIds,
     TaskMetaSuggest.configure({
       onChange: onMetaChange,
@@ -412,6 +417,10 @@
       // Track selection state for the SelectionBubble (#168).
       const { selection } = editor.state
       selectionEmpty = selection.empty
+      // Contextual table toolbar (#172): shown when the cursor is inside a
+      // table cell (the selection resolves to a tableCell/tableHeader node).
+      cursorInTable =
+        editor.isActive('tableCell') || editor.isActive('tableHeader')
       if (!selection.empty && !editor.isDestroyed) {
         try {
           const start = editor.view.coordsAtPos(selection.from)
@@ -646,6 +655,19 @@
       insertCodeBlock(editorInstance as any)
     } else if (commandId === 'details') {
       insertDetails(editorInstance as any)
+    } else if (commandId === 'table') {
+      insertTable(editorInstance as any, 3, 3)
+    } else if (commandId === 'table-5x4') {
+      insertTable(editorInstance as any, 5, 4)
+    } else if (commandId === 'table-custom') {
+      const input = window.prompt('Table dimensions (rows × columns), e.g. 4x3')
+      const m = input?.match(/^(\d+)\s*[x×]\s*(\d+)$/i)
+      if (m)
+        insertTable(
+          editorInstance as any,
+          parseInt(m[1], 10),
+          parseInt(m[2], 10)
+        )
     } else if (commandId === 'text-color') {
       openColorPickerPopover('textColor')
     } else if (commandId === 'background-color') {
@@ -935,6 +957,9 @@
         {selectionEmpty}
         {selectionCoords}
       />
+      {#if cursorInTable && editorInstance}
+        <TableContextToolbar editor={editorInstance} />
+      {/if}
       {#if editorStore}
         <EditorContent editor={$editorStore} />
       {/if}

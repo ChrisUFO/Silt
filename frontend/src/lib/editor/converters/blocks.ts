@@ -28,10 +28,12 @@ function extractTextContent(content?: NodeJSON[]): string {
   return out
 }
 
-// Push a single line of a `<details>` run as an opaque NOTE block (#183).
-// The Go parser preserves HTML in clean_text verbatim, so these lines
-// round-trip byte-for-byte; only the opener carries the block id.
-function pushDetailsLine(
+// Push one opaque NOTE line — used for `<details>` runs (#183) and GFM table
+// rows (#172). The Go parser preserves the clean_text verbatim (HTML passes
+// through, and pipe characters are just text), so these lines round-trip
+// byte-for-byte. Pass the block id only on the line that should carry the
+// identity (the `<details>` opener / the LAST table row).
+function pushOpaqueNoteLine(
   blocks: ParsedBlock[],
   id: string,
   text: string,
@@ -312,6 +314,112 @@ const DETAILS_OPEN_RE = /^<details(?:\s+[^>]*)?>$/i
 const DETAILS_CLOSE_RE = /^<\/details>$/i
 const DETAILS_SUMMARY_RE = /^<summary>([\s\S]*?)<\/summary>$/i
 
+// ---- GFM table parsing (#172) --------------------------------------------
+// A table is a run of pipe-prefixed NOTE blocks: a header row, a `| --- |`
+// separator row, and one or more data rows. The converter groups the run into
+// one `table` node tree (each row → tableRow; header cells → tableHeader,
+// data cells → tableCell). Literal `|` in a cell is escaped as `\|` per GFM.
+const GFM_ROW_RE = /^\|.*\|$/
+const GFM_SEP_RE = /^\|[\s:|-]+\|$/
+
+// Split a GFM row into cell strings. The leading/trailing `|` are stripped;
+// cells are split on unescaped `|`; `\|` is unescaped back to `|`.
+function parseGfmRow(line: string): string[] {
+  let s = line.trim()
+  if (s.startsWith('|')) s = s.slice(1)
+  if (s.endsWith('|')) s = s.slice(0, -1)
+  // Split on `|` not preceded by `\`.
+  const cells: string[] = []
+  let cur = ''
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (ch === '\\' && s[i + 1] === '|') {
+      cur += '|'
+      i++
+    } else if (ch === '|') {
+      cells.push(cur.trim())
+      cur = ''
+    } else {
+      cur += ch
+    }
+  }
+  cells.push(cur.trim())
+  return cells
+}
+
+// Escape a cell value for GFM: literal `|` → `\|`, newline → space.
+function escapeGfmCell(s: string): string {
+  return s.replace(/\\\|/g, '\\|').replace(/\|/g, '\\|').replace(/\n/g, ' ')
+}
+
+// Test whether a NOTE block's clean_text is a GFM table row.
+function isGfmRow(text: string): boolean {
+  return GFM_ROW_RE.test((text || '').trim())
+}
+function isGfmSeparator(text: string): boolean {
+  return GFM_SEP_RE.test((text || '').trim())
+}
+
+// Does a table run START at blocks[idx]? Requires a header row followed by a
+// separator row (the two-line minimum that distinguishes a table from a stray
+// pipe-prefixed note).
+function tableRunStartsAt(blocks: ParsedBlock[], idx: number): boolean {
+  return (
+    idx + 1 < blocks.length &&
+    isGfmRow(blocks[idx].clean_text || '') &&
+    isGfmSeparator(blocks[idx + 1].clean_text || '')
+  )
+}
+
+// Read a GFM table run starting at blocks[idx] (header + separator + data
+// rows) and return the assembled `table` node JSON + the number of blocks
+// consumed. The block id comes from the LAST row of the run (so the whole
+// table has one identity — matches how it round-trips on disk).
+function buildTableNode(
+  blocks: ParsedBlock[],
+  startIdx: number
+): { node: NodeJSON; consumed: number; id: string } {
+  // Consume consecutive pipe rows.
+  let endIdx = startIdx
+  while (endIdx < blocks.length && isGfmRow(blocks[endIdx].clean_text || '')) {
+    endIdx++
+  }
+  // endIdx is now one past the last table row.
+  const run = blocks.slice(startIdx, endIdx)
+  const headerCells = parseGfmRow(run[0].clean_text || '')
+  const dataRows = run.slice(2).map((b) => parseGfmRow(b.clean_text || ''))
+
+  const today = new Date().toISOString().slice(0, 10)
+  const id = run[run.length - 1].id || null
+
+  const mkCell = (
+    type: 'tableHeader' | 'tableCell',
+    text: string
+  ): NodeJSON => ({
+    type,
+    attrs: {},
+    content: text ? legacyTokenizeInline(text) : []
+  })
+  const mkRow = (
+    cells: string[],
+    type: 'tableHeader' | 'tableCell'
+  ): NodeJSON => ({
+    type: 'tableRow',
+    attrs: {},
+    content: cells.map((c) => mkCell(type, c))
+  })
+
+  const rows: NodeJSON[] = [mkRow(headerCells, 'tableHeader')]
+  for (const r of dataRows) rows.push(mkRow(r, 'tableCell'))
+
+  const node: NodeJSON = {
+    type: 'table',
+    attrs: { id, file_date: run[run.length - 1].file_date || today },
+    content: rows
+  }
+  return { node, consumed: run.length, id: id || '' }
+}
+
 // blocksToDoc converts an ordered list of ParsedBlocks into a ProseMirror doc
 // JSON suitable for editor.commands.setContent(). Most blocks become one
 // top-level block node (nesting is expressed via the depth attr), but a
@@ -323,6 +431,13 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
   let i = 0
   while (i < blocks.length) {
     const block = blocks[i]
+    // GFM table run (#172): header + separator + data rows → one table node.
+    if (tableRunStartsAt(blocks, i)) {
+      const { node, consumed } = buildTableNode(blocks, i)
+      content.push(node)
+      i += consumed
+      continue
+    }
     if (DETAILS_OPEN_RE.test((block.clean_text || '').trim())) {
       const { node, consumed } = buildDetailsNode(blocks, i)
       if (node) {
@@ -559,8 +674,8 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
       const summaryText = summaryNode
         ? serializeInlineContent(summaryNode.content)
         : ''
-      pushDetailsLine(blocks, id, '<details>', lineNumber, fileDate)
-      pushDetailsLine(
+      pushOpaqueNoteLine(blocks, id, '<details>', lineNumber, fileDate)
+      pushOpaqueNoteLine(
         blocks,
         '',
         `<summary>${summaryText}</summary>`,
@@ -576,7 +691,50 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         })
         for (const cb of childBlocks) blocks.push(cb)
       }
-      pushDetailsLine(blocks, '', '</details>', lineNumber, fileDate)
+      pushOpaqueNoteLine(blocks, '', '</details>', lineNumber, fileDate)
+      continue
+    }
+
+    // GFM table (#172): serialize the table node to a run of NOTE blocks —
+    // the header row, the `| --- |` separator, and one block per data row.
+    // Auto-width padding keeps the file human-readable; literal `|` is
+    // escaped as `\|`; cell inline content goes through serializeInlineContent
+    // so marks + Smart Graph tokens survive. The block id lands on the LAST
+    // row so the whole table has one identity.
+    if (node.type === 'table') {
+      const rows = (node.content || []).filter((c) => c.type === 'tableRow')
+      if (rows.length === 0) continue
+      const grid: { header: boolean; cells: string[] }[] = rows.map((r) => ({
+        header: (r.content || []).some((c) => c.type === 'tableHeader'),
+        cells: (r.content || []).map((c) =>
+          escapeGfmCell(serializeInlineContent(c.content))
+        )
+      }))
+      const colCount = Math.max(...grid.map((r) => r.cells.length))
+      // Pad short rows; compute column widths for readability.
+      const widths = new Array(colCount).fill(0)
+      for (const r of grid) {
+        while (r.cells.length < colCount) r.cells.push('')
+        for (let c = 0; c < colCount; c++)
+          widths[c] = Math.max(widths[c], r.cells[c].length, 3)
+      }
+      const pad = (cell: string, c: number) => cell.padEnd(widths[c], ' ')
+      const renderRow = (r: { cells: string[] }) =>
+        '| ' + r.cells.map((c, i) => pad(c, i)).join(' | ') + ' |'
+
+      const lines: string[] = []
+      // Header row (first).
+      lines.push(renderRow(grid[0]))
+      // Separator.
+      lines.push('| ' + widths.map((w) => ''.padEnd(w, '-')).join(' | ') + ' |')
+      // Data rows.
+      for (let r = 1; r < grid.length; r++) lines.push(renderRow(grid[r]))
+
+      const fileDate = (attrs.file_date as string) || ''
+      lines.forEach((line, idx) => {
+        const isLast = idx === lines.length - 1
+        pushOpaqueNoteLine(blocks, isLast ? id : '', line, lineNumber, fileDate)
+      })
       continue
     }
 

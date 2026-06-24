@@ -337,6 +337,26 @@ registerSlashCommand({
   shortcut: 'Ctrl+.'
 })
 
+// --- GFM tables (#172) ----------------------------------------------------
+registerSlashCommand({
+  id: 'table',
+  label: 'Table',
+  description: 'Insert a 3×3 table',
+  icon: 'table_view'
+})
+registerSlashCommand({
+  id: 'table-5x4',
+  label: 'Table (5×4)',
+  description: 'Insert a 5-row, 4-column table',
+  icon: 'grid_on'
+})
+registerSlashCommand({
+  id: 'table-custom',
+  label: 'Custom table…',
+  description: 'Insert a table with custom dimensions',
+  icon: 'edit_grid'
+})
+
 // --- Color commands (#170) ------------------------------------------------
 registerSlashCommand({
   id: 'text-color',

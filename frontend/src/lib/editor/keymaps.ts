@@ -288,6 +288,50 @@ export function toggleDetails(editor: Editor): boolean {
   return false
 }
 
+// Insert a GFM table (#172). rows/cols include the header row. Builds the
+// table > tableRow(tableHeader×cols) + (rows-1)×tableRow(tableCell×cols)
+// tree the TipTap Table extension expects, each cell seeded with an empty
+// paragraph. Replaces an empty note/header in place, else inserts below.
+export function insertTable(editor: Editor, rows = 3, cols = 3): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const schema = editor.state.schema
+  if (!schema.nodes.table) return false
+  const today = new Date().toISOString().slice(0, 10)
+  const emptyCell = (type: 'tableHeader' | 'tableCell') =>
+    schema.nodes[type].create({}, schema.nodes.paragraph?.create?.() ?? null)
+  const headerRow = schema.nodes.tableRow.create(
+    {},
+    Array.from({ length: cols }, () => emptyCell('tableHeader'))
+  )
+  const dataRows = Array.from({ length: Math.max(rows - 1, 0) }, () =>
+    schema.nodes.tableRow.create(
+      {},
+      Array.from({ length: cols }, () => emptyCell('tableCell'))
+    )
+  )
+  const table = schema.nodes.table.create({ id: null, file_date: today }, [
+    headerRow,
+    ...dataRows
+  ])
+  const active = findActiveBlock(editor)
+  const isEmptyNote =
+    active &&
+    (active.node.type.name === 'noteBlock' ||
+      active.node.type.name === 'headerBlock') &&
+    (active.node.content.size === 0 || active.node.textContent.trim() === '')
+  if (active && isEmptyNote) {
+    const pos = editor.state.selection.$from.before(active.depth)
+    editor.view.dispatch(
+      editor.state.tr.replaceWith(pos, pos + active.node.nodeSize, table)
+    )
+    editor.commands.focus()
+    return true
+  }
+  editor.commands.insertContent(table)
+  editor.commands.focus()
+  return true
+}
+
 export const SiltBlockKeymaps = Extension.create({
   name: 'siltBlockKeymaps',
 
@@ -512,7 +556,25 @@ export const SiltBlockKeymaps = Extension.create({
 
       // Foldable details toggle (#183). Mod-. flips the `open` attr on the
       // enclosing `<details>` (no-op when the cursor is not inside one).
-      'Mod-.': () => toggleDetails(this.editor)
+      'Mod-.': () => toggleDetails(this.editor),
+
+      // Table row/column insert shortcuts (#172). No-op outside a table.
+      'Mod-Shift-Up': () =>
+        this.editor.can().addRowBefore?.()
+          ? (this.editor.chain().focus().addRowBefore().run(), true)
+          : false,
+      'Mod-Shift-Down': () =>
+        this.editor.can().addRowAfter?.()
+          ? (this.editor.chain().focus().addRowAfter().run(), true)
+          : false,
+      'Mod-Shift-Left': () =>
+        this.editor.can().addColumnBefore?.()
+          ? (this.editor.chain().focus().addColumnBefore().run(), true)
+          : false,
+      'Mod-Shift-Right': () =>
+        this.editor.can().addColumnAfter?.()
+          ? (this.editor.chain().focus().addColumnAfter().run(), true)
+          : false
     }
   }
 })

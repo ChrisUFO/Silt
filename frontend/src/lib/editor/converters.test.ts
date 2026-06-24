@@ -358,6 +358,89 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(doc.content[0]?.type).toBe('noteBlock')
   })
 
+  it('round-trips a GFM table (#172)', () => {
+    const id = '22222222-2222-2222-2222-222222222222'
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '| Name | Status |' }),
+      mkBlock('NOTE', { clean_text: '| --- | --- |' }),
+      mkBlock('NOTE', { id, clean_text: '| Alice | Active |' })
+    ]
+    const doc = blocksToDoc(blocks)
+    const node = doc.content[0]
+    expect(node?.type).toBe('table')
+    // 2 rows: header (tableHeader cells) + 1 data row (tableCell cells).
+    const rows = (node?.content || []).filter((c) => c.type === 'tableRow')
+    expect(rows).toHaveLength(2)
+    expect(
+      (rows[0]?.content || []).every((c) => c.type === 'tableHeader')
+    ).toBe(true)
+    expect((rows[1]?.content || []).every((c) => c.type === 'tableCell')).toBe(
+      true
+    )
+    // Save: re-emits the GFM run; the block id lands on the last row. Column
+    // widths are auto-padded for readability (a deterministic normalization),
+    // so we assert on cell content + emit-stability rather than exact bytes.
+    const back = docToBlocks(doc)
+    expect(back).toHaveLength(3)
+    expect(back[2].id).toBe(id)
+    // Re-parsing the emitted run yields the same cells (semantic identity).
+    const reparsed = blocksToDoc(back)
+    const rrows = (reparsed.content[0]?.content || []).filter(
+      (c) => c.type === 'tableRow'
+    )
+    const headerCells = (rrows[0]?.content || []).map((c) =>
+      (c.content || []).map((n) => n.text).join('')
+    )
+    const dataCells = (rrows[1]?.content || []).map((c) =>
+      (c.content || []).map((n) => n.text).join('')
+    )
+    expect(headerCells).toEqual(['Name', 'Status'])
+    expect(dataCells).toEqual(['Alice', 'Active'])
+    // Emit is byte-stable across a second pass (canonical form reached).
+    const back2 = docToBlocks(blocksToDoc(back))
+    expect(back2.map((b) => b.clean_text)).toEqual(
+      back.map((b) => b.clean_text)
+    )
+  })
+
+  it('a run without a separator is NOT a table (#172)', () => {
+    // `| a | b |` with no `| --- |` separator → plain NOTEs.
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '| a | b |' }),
+      mkBlock('NOTE', { clean_text: 'plain text' })
+    ]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0]?.type).toBe('noteBlock')
+    expect(doc.content[1]?.type).toBe('noteBlock')
+  })
+
+  it('escapes and round-trips a literal pipe inside a cell (#172)', () => {
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '| a | b |' }),
+      mkBlock('NOTE', { clean_text: '| --- | --- |' }),
+      mkBlock('NOTE', { clean_text: '| x \\| y | z |' })
+    ]
+    const doc = blocksToDoc(blocks)
+    const rows = (doc.content[0]?.content || []).filter(
+      (c) => c.type === 'tableRow'
+    )
+    const dataCells = (rows[1]?.content || []).map((c) =>
+      (c.content || []).map((n) => n.text).join('')
+    )
+    expect(dataCells).toEqual(['x | y', 'z'])
+    // Save re-escapes the literal pipe; the emitted form is stable.
+    const back = docToBlocks(doc)
+    const back2 = docToBlocks(blocksToDoc(back))
+    expect(back2.map((b) => b.clean_text)).toEqual(
+      back.map((b) => b.clean_text)
+    )
+    // And the literal pipe survives the re-parse (still one cell "x | y").
+    const reparsedData = (blocksToDoc(back).content[0]?.content || [])
+      .filter((c) => c.type === 'tableRow')[1]
+      ?.content?.map((c) => (c.content || []).map((n) => n.text).join(''))
+    expect(reparsedData).toEqual(['x | y', 'z'])
+  })
+
   it('handles empty clean_text (placeholder block)', () => {
     const blocks = [mkBlock('NOTE', { clean_text: '' })]
     const back = docToBlocks(blocksToDoc(blocks))

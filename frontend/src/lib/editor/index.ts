@@ -11,7 +11,8 @@ export {
   SiltBlockExtensions,
   SiltInlineMarkExtensions,
   SiltColorMarkExtensions,
-  SiltDetailsExtensions
+  SiltDetailsExtensions,
+  SiltTableExtensions
 } from './schema'
 export { SiltBlockExtensionsWithNodeViews } from './nodeViews'
 export { blocksToDoc, docToBlocks } from './converters'
@@ -24,6 +25,7 @@ export {
   insertCallout,
   insertCodeBlock,
   insertDetails,
+  insertTable,
   toggleDetails,
   findActiveBlock,
   BLOCK_TYPES
