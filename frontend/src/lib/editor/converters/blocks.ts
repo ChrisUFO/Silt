@@ -248,7 +248,8 @@ const CALLOUT_RE =
 
 // Detect if a clean_text is a body continuation of a callout (starts with `> ` but no [!type]).
 function isCalloutBodyLine(text: string): boolean {
-  return /^>[\s>]/.test(text) && !text.match(/^>\s*\[!/)
+  // Accept `> text`, `>> nested`, and bare `>` (Obsidian blank line) but reject `> [!type]`.
+  return /^>(\s|$|>)/.test(text) && !text.match(/^>\s*\[!/)
 }
 
 // ---- GFM pipe-table helpers (#172) ----------------------------------------
@@ -447,6 +448,7 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
 
     const calloutMatch = rawText.match(CALLOUT_RE)
     if (calloutMatch) {
+      const headerBlock = blocks[i]
       const variant = calloutMatch[1].toLowerCase()
       const title = calloutMatch[2] || ''
       const bodyParts: string[] = []
@@ -472,10 +474,10 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
       content.push({
         type: 'calloutBlock',
         attrs: {
-          id: blocks[i - 1]?.id || crypto.randomUUID(),
+          id: headerBlock.id || crypto.randomUUID(),
           variant,
           title,
-          file_date: blocks[i - 1]?.file_date || ''
+          file_date: headerBlock.file_date || ''
         },
         content: bodyContent
       })

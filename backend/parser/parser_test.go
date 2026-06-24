@@ -673,11 +673,8 @@ func blocksEqual(a, b []ParsedBlock) bool {
 			x.DueDate != y.DueDate || x.Priority != y.Priority {
 			return false
 		}
-		// CODE blocks get fresh UUIDs on each parse, so skip ID comparison.
-		if x.Type != BlockCode {
-			if x.ID != y.ID || x.ParentID != y.ParentID {
-				return false
-			}
+		if x.ID != y.ID || x.ParentID != y.ParentID {
+			return false
 		}
 	}
 	return true
@@ -741,14 +738,10 @@ func TestRenderFileContent_RoundTripIdentity(t *testing.T) {
 			if !blocksEqual(first, second) {
 				t.Errorf("round trip changed the blocks\nfirst:  %+v\nsecond: %+v", first, second)
 			}
-			// CODE blocks generate fresh UUIDs on each parse, so byte-stability
-			// across passes only holds for non-code content. The rendered
-			// content pairs (content sans UUID) must match.
-			if !strings.Contains(tc.name, "code_fence") {
-				rendered2 := RenderFileContent(second, body, fm, 4)
-				if rendered != rendered2 {
-					t.Errorf("render is not byte-stable across two passes\n--- pass1 ---\n%s\n--- pass2 ---\n%s", rendered, rendered2)
-				}
+			// The second render must be byte-stable (canonical form reached).
+			rendered2 := RenderFileContent(second, body, fm, 4)
+			if rendered != rendered2 {
+				t.Errorf("render is not byte-stable across two passes\n--- pass1 ---\n%s\n--- pass2 ---\n%s", rendered, rendered2)
 			}
 		})
 	}

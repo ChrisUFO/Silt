@@ -396,8 +396,8 @@ export const SiltBlockKeymaps = Extension.create({
         return true
       },
 
-      // Table row/column hotkeys (#172). Look up live bindings from config so
-      // user remapping in settings.json is reflected at runtime.
+      // Table row/column hotkeys (#172). Default bindings match the
+      // config.go table_insert_row_above/below and col_left/right keys.
       'Mod-Shift-ArrowUp': () => {
         if ((this.editor as any).can().addRowBefore()) {
           ;(this.editor as any).chain().focus().addRowBefore().run()

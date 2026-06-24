@@ -4,8 +4,25 @@
 
   let { node, editor }: NodeViewProps = $props()
   let lang = $derived(node.attrs.lang || '')
-  let isFocused = $derived(editor.isFocused)
+  let isFocused = $state(false)
   let justCopied = $state(false)
+
+  $effect(() => {
+    const onFocus = () => {
+      isFocused = true
+    }
+    const onBlur = () => {
+      isFocused = false
+    }
+    editor.on('focus', onFocus)
+    editor.on('blur', onBlur)
+    // Initialize from current state in case the editor is already focused.
+    isFocused = editor.isFocused
+    return () => {
+      editor.off('focus', onFocus)
+      editor.off('blur', onBlur)
+    }
+  })
 
   function copyContent(): void {
     const text = node.textContent || ''

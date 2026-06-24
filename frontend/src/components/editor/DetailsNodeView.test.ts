@@ -24,13 +24,12 @@ describe('DetailsNodeView (#183)', () => {
         clean_text: '<details><summary>Toggle</summary>Content</details>'
       })
     ])
-    const toggle = container.querySelector('button')
+    const toggle = container.querySelector('button')!
     expect(toggle?.getAttribute('aria-expanded')).toBe('false')
     toggle?.click()
-    // After click, the open attr is true.
-    const wrapper = container.querySelector('[data-type="silt-details"]')
-    // Re-read after Svelte state settles
     await new Promise((r) => setTimeout(r, 0))
+    const toggleAfter = container.querySelector('button')
+    expect(toggleAfter?.getAttribute('aria-expanded')).toBe('true')
     cleanup()
   })
 
