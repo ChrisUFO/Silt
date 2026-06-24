@@ -6,6 +6,7 @@
     reloadFromBackend
   } from '../../settings/store.svelte'
   import type { SystemConfig } from '../../settings/store.svelte'
+  import type { config } from '../../../wailsjs/go/models.js'
   import { parseHotkey } from '../../settings/hotkeys'
   import { displayFamilyName } from '../../theme/fonts'
   import { themeState } from '../../theme/store.svelte'
@@ -114,18 +115,18 @@
 
   // Narrowing helpers for draft sub-objects. Each initializes the nested
   // object on first access so inline handlers stay concise.
-  function draftUI(): Record<string, any> {
-    if (!draft!.ui) draft!.ui = {} as any
-    return draft!.ui as Record<string, any>
+  function draftUI(): config.UIConfig {
+    if (!draft!.ui) draft!.ui = {} as config.UIConfig
+    return draft!.ui as config.UIConfig
   }
-  function draftUIFormatting(): Record<string, any> {
+  function draftUIFormatting(): config.FormattingConfig {
     const ui = draftUI()
-    if (!ui.formatting) ui.formatting = {} as any
-    return ui.formatting as Record<string, any>
+    if (!ui.formatting) ui.formatting = {} as config.FormattingConfig
+    return ui.formatting as config.FormattingConfig
   }
-  function draftEditor(): Record<string, any> {
-    if (!draft!.editor) draft!.editor = {} as any
-    return draft!.editor as Record<string, any>
+  function draftEditor(): config.EditorConfig {
+    if (!draft!.editor) draft!.editor = {} as config.EditorConfig
+    return draft!.editor as config.EditorConfig
   }
 
   function changed(): boolean {
