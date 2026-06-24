@@ -31,7 +31,8 @@ jobs:
     outputs:
       version: ${{ steps.bump.outputs.version }}
       tag: ${{ steps.bump.outputs.tag }}
-      sha: ${{ steps.bump.outputs.sha }}
+      sha: ${{ steps.commit.outputs.sha }}
+      skipped: ${{ steps.skip-check.outputs.skipped }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -40,10 +41,62 @@ jobs:
           # the same repo, but fetch-depth 0 is needed so the tag push is clean.
           fetch-depth: 0
 
-      - name: Bump patch version
-        id: bump
+      # Dependabot PRs land routinely (every batch of version bumps) and
+      # don't warrant their own release — they ride out with the next
+      # user-facing release. github.actor is unreliable for squash-merged
+      # dependabot PRs (the merger becomes the author), so look up the
+      # originating PR via the commits API and check its real author. This
+      # also defeats the "Confused Deputy" pattern documented in the
+      # dependabot-triage skill, where an attacker imitates the bot identity.
+      - name: Check if release should be skipped (Dependabot PR)
+        id: skip-check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "Not a push event (${{ github.event_name }}); proceeding."
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          SHA="${{ github.event.head_commit.sha }}"
+          if [ -z "$SHA" ]; then
+            echo "::warning::No head_commit SHA on push event; proceeding with release."
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          AUTHOR=$(gh api "repos/${{ github.repository }}/commits/${SHA}/pulls" \
+            --jq '.[0].user.login // empty' 2>/dev/null || echo "")
+          if [ "$AUTHOR" = "app/dependabot" ]; then
+            echo "::notice::Skipping release: $SHA was merged from a Dependabot PR."
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Proceeding with release (PR author: ${AUTHOR:-none/direct-push})."
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump patch version (race-safe)
+        id: bump
+        if: ${{ steps.skip-check.outputs.skipped != 'true' }}
+        run: |
+          set -euo pipefail
+          # Re-fetch to see tags pushed by concurrent runs. --prune-tags drops
+          # any local tag that no longer exists on remote, which prevents us
+          # from reusing a stale v0.1.54 pointing at an orphan commit.
+          git fetch origin main --tags --prune --prune-tags --force
+          # Refuse to bump if the trigger commit isn't actually on origin/main.
+          # That would mean the bump is a divergent branch no release should
+          # build from. (Direct pushes to main are blocked by branch
+          # protection, so this is a safety net rather than a normal case.)
+          TRIGGER_SHA="${{ github.event.head_commit.sha }}"
+          if [ -n "$TRIGGER_SHA" ] \
+            && ! git merge-base --is-ancestor "$TRIGGER_SHA" origin/main; then
+            echo "::error::Trigger commit $TRIGGER_SHA is not on origin/main; refusing to bump."
+            exit 1
+          fi
+          # Re-read VERSION: a concurrent run may have already pushed a bump
+          # while we were queued. If it did, that run will publish the release;
+          # we just need to surface the tag it produced.
           OLD="$(tr -d '[:space:]' < VERSION)"
           IFS='.' read -r MAJOR MINOR PATCH <<< "$OLD"
           PATCH=$((PATCH + 1))
@@ -51,22 +104,85 @@ jobs:
           echo "$NEW" > VERSION
           echo "version=$NEW" >> "$GITHUB_OUTPUT"
           echo "tag=v$NEW" >> "$GITHUB_OUTPUT"
-          echo "Bumping version: $OLD -> $NEW"
+          echo "Bumping version: $OLD -> $NEW (from $(git rev-parse --short HEAD))"
 
-      - name: Commit VERSION + create tag
+      - name: Commit VERSION + create tag (idempotent, retried)
         id: commit
+        if: ${{ steps.skip-check.outputs.skipped != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          VERSION="${{ steps.bump.outputs.version }}"
+          TAG="${{ steps.bump.outputs.tag }}"
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # If the tag already exists on remote, a concurrent run won the race.
+          # Adopt it as the release target instead of failing — that run will
+          # publish the release. Refuse only if the tag is orphaned (not
+          # reachable from origin/main), which signals the repo is in an
+          # inconsistent state and a human needs to clean it up.
+          EXISTING_SHA=$(git ls-remote origin "refs/tags/$TAG" 2>/dev/null \
+                         | awk '{print $1}')
+          if [ -n "$EXISTING_SHA" ]; then
+            if git merge-base --is-ancestor "$EXISTING_SHA" origin/main; then
+              echo "Tag $TAG already exists on remote at $EXISTING_SHA; adopting it."
+              echo "sha=$EXISTING_SHA" >> "$GITHUB_OUTPUT"
+              exit 0
+            else
+              echo "::error::Tag $TAG exists at $EXISTING_SHA but is not reachable from origin/main."
+              echo "        This means a previous run pushed a tag whose commit is not on main."
+              echo "        Recover with: git push origin --delete $TAG"
+              exit 1
+            fi
+          fi
+
           git add VERSION
-          git commit -m "chore(release): ${{ steps.bump.outputs.version }} [skip ci]"
-          git tag "${{ steps.bump.outputs.tag }}"
-          git push origin main --tags
+          git commit -m "chore(release): $VERSION [skip ci]"
+          git tag "$TAG"
+
+          # Push with backoff. Between checkout and push, another run may
+          # have advanced origin/main, making our push non-fast-forward.
+          # Reset onto origin/main, re-read VERSION (now bumped by them),
+          # and commit the *next* version. Cap at 5 attempts to bound CI
+          # minutes; if a real contention storm is happening, surface the
+          # error rather than spin forever.
+          PUSHED=false
+          for attempt in 1 2 3 4 5; do
+            if git push origin main --tags; then
+              echo "Pushed on attempt $attempt."
+              PUSHED=true
+              break
+            fi
+            echo "Push attempt $attempt failed; rebasing onto origin/main and re-bumping."
+            git reset --hard origin/main
+            git tag -d "$TAG" 2>/dev/null || true
+            OLD="$(tr -d '[:space:]' < VERSION)"
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$OLD"
+            PATCH=$((PATCH + 1))
+            NEW="${MAJOR}.${MINOR}.${PATCH}"
+            TAG="v$NEW"
+            echo "$NEW" > VERSION
+            echo "Re-bumping to $TAG after concurrent run."
+            git add VERSION
+            git commit -m "chore(release): $NEW [skip ci]"
+            git tag "$TAG"
+            sleep $((attempt * 2))
+          done
+          if [ "$PUSHED" != "true" ]; then
+            echo "::error::Failed to push release after 5 attempts. Manual cleanup required."
+            exit 1
+          fi
+
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   build:
     needs: prepare
+    # Skip when prepare was skipped (Dependabot PR). Otherwise the matrix
+    # would check out an empty tag and fail.
+    if: ${{ needs.prepare.outputs.skipped != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -241,6 +357,10 @@ jobs:
 
   release:
     needs: [prepare, build]
+    # Skip when prepare was skipped (Dependabot PR). The whole release is a
+    # no-op in that case — the bumped commit+tag will still be on main from
+    # the next user-facing release.
+    if: ${{ needs.prepare.outputs.skipped != 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
