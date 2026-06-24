@@ -16,6 +16,7 @@
     UnlinkNotebook
   } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
+  import type { config } from '../wailsjs/go/models.js'
   import { fade } from 'svelte/transition'
   import TitleBar from './components/TitleBar.svelte'
   import Sidebar from './components/Sidebar.svelte'
@@ -110,7 +111,7 @@
   function openPage(
     ref: PageRef,
     mode: OpenPageMode,
-    blockTarget: { fileDate?: string; blockId?: string } = undefined
+    blockTarget: { fileDate?: string; blockId?: string } | undefined = undefined
   ): void {
     const enablePreviewTabs = settings.config?.ui?.enable_preview_tabs !== false
     const maxOpenTabs = settings.config?.ui?.max_open_tabs ?? 8
@@ -243,13 +244,13 @@
           section: t.section,
           page: t.page
         })),
-        activePersist
+        (activePersist
           ? {
               notebook: activePersist.notebook,
               section: activePersist.section,
               page: activePersist.page
             }
-          : null
+          : null) as unknown as config.TabRef
       )
     } catch (e) {
       console.error('SetOpenTabs failed:', e)

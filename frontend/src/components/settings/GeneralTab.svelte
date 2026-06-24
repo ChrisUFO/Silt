@@ -6,6 +6,7 @@
     reloadFromBackend
   } from '../../settings/store.svelte'
   import type { SystemConfig } from '../../settings/store.svelte'
+  import type { config } from '../../../wailsjs/go/models.js'
   import { parseHotkey } from '../../settings/hotkeys'
   import { displayFamilyName } from '../../theme/fonts'
   import { themeState } from '../../theme/store.svelte'
@@ -110,6 +111,22 @@
   // Any mutation to the draft marks the store dirty.
   function touch() {
     settings.dirty = true
+  }
+
+  // Narrowing helpers for draft sub-objects. Each initializes the nested
+  // object on first access so inline handlers stay concise.
+  function draftUI(): config.UIConfig {
+    if (!draft!.ui) draft!.ui = {} as config.UIConfig
+    return draft!.ui as config.UIConfig
+  }
+  function draftUIFormatting(): config.FormattingConfig {
+    const ui = draftUI()
+    if (!ui.formatting) ui.formatting = {} as config.FormattingConfig
+    return ui.formatting as config.FormattingConfig
+  }
+  function draftEditor(): config.EditorConfig {
+    if (!draft!.editor) draft!.editor = {} as config.EditorConfig
+    return draft!.editor as config.EditorConfig
   }
 
   function changed(): boolean {
@@ -428,7 +445,7 @@
         <label class="flex items-center gap-2.5 cursor-pointer select-none">
           <input
             checked={draft.ui?.show_format_toolbar !== false}
-            onchange={(e: Event) => { if (!draft.ui) draft.ui = {} as any; draft.ui.show_format_toolbar = (e.currentTarget as HTMLInputElement).checked; touch() }}
+            onchange={(e: Event) => { draftUI().show_format_toolbar = (e.currentTarget as HTMLInputElement).checked; touch() }}
             type="checkbox"
             class="w-4 h-4 accent-[#10b981] cursor-pointer"
           />
@@ -439,7 +456,7 @@
         <label class="flex items-center gap-2.5 cursor-pointer select-none">
           <input
             checked={draft.ui?.formatting?.typography_enabled !== false}
-            onchange={(e: Event) => { if (!draft.ui) draft.ui = {} as any; if (!draft.ui.formatting) draft.ui.formatting = {} as any; draft.ui.formatting.typography_enabled = (e.currentTarget as HTMLInputElement).checked; touch() }}
+            onchange={(e: Event) => { draftUIFormatting().typography_enabled = (e.currentTarget as HTMLInputElement).checked; touch() }}
             type="checkbox"
             class="w-4 h-4 accent-[#10b981] cursor-pointer"
           />
@@ -450,7 +467,7 @@
         <label class="flex items-center gap-2.5 cursor-pointer select-none">
           <input
             checked={draft.ui?.formatting?.color_enabled !== false}
-            onchange={(e: Event) => { if (!draft.ui) draft.ui = {} as any; if (!draft.ui.formatting) draft.ui.formatting = {} as any; draft.ui.formatting.color_enabled = (e.currentTarget as HTMLInputElement).checked; touch() }}
+            onchange={(e: Event) => { draftUIFormatting().color_enabled = (e.currentTarget as HTMLInputElement).checked; touch() }}
             type="checkbox"
             class="w-4 h-4 accent-[#10b981] cursor-pointer"
           />
@@ -461,7 +478,7 @@
         <label class="flex items-center gap-2.5 cursor-pointer select-none">
           <input
             checked={draft.editor?.show_word_count === true}
-            onchange={(e: Event) => { if (!draft.editor) draft.editor = {} as any; draft.editor.show_word_count = (e.currentTarget as HTMLInputElement).checked; touch() }}
+            onchange={(e: Event) => { draftEditor().show_word_count = (e.currentTarget as HTMLInputElement).checked; touch() }}
             type="checkbox"
             class="w-4 h-4 accent-[#10b981] cursor-pointer"
           />
@@ -472,7 +489,7 @@
         <label class="flex items-center gap-2.5 cursor-pointer select-none">
           <input
             checked={draft.editor?.focus_mode === true}
-            onchange={(e: Event) => { if (!draft.editor) draft.editor = {} as any; draft.editor.focus_mode = (e.currentTarget as HTMLInputElement).checked; touch() }}
+            onchange={(e: Event) => { draftEditor().focus_mode = (e.currentTarget as HTMLInputElement).checked; touch() }}
             type="checkbox"
             class="w-4 h-4 accent-[#10b981] cursor-pointer"
           />

@@ -34,7 +34,7 @@ jobs:
       sha: ${{ steps.bump.outputs.sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # A PAT is not required for the default GITHUB_TOKEN to push back to
           # the same repo, but fetch-depth 0 is needed so the tag push is clean.
@@ -80,7 +80,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout (at release tag)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
@@ -247,7 +247,7 @@ jobs:
       id-token: write # cosign keyless signing via GitHub OIDC (#253, F18)
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 

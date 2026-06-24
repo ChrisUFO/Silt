@@ -817,7 +817,7 @@
       x,
       y,
       activeBlockId,
-      activeBlockNode
+      activeBlockNode: activeBlockNode ?? undefined
     }
   }
 
