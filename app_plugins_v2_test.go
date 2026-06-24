@@ -1313,8 +1313,8 @@ func TestSeedNetworkAuditFromDisk_PopulatesFromLogFile(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	logPath := filepath.Join(logDir, "network.log")
-	logContent := "2026-06-20T10:00:00Z GET example.com/api 200 test-plugin\n" +
-		"2026-06-20T10:01:00Z POST example.com/data 201 test-plugin\n"
+	logContent := `{"at":"2026-06-20T10:00:00Z","method":"GET","host":"example.com/api","status":200,"plugin":"test-plugin"}` + "\n" +
+		`{"at":"2026-06-20T10:01:00Z","method":"POST","host":"example.com/data","status":201,"plugin":"test-plugin"}` + "\n"
 	if err := os.WriteFile(logPath, []byte(logContent), 0o644); err != nil {
 		t.Fatalf("write log: %v", err)
 	}
@@ -1390,36 +1390,11 @@ func TestSeedNetworkAuditFromDisk_RestartPreservesEntries(t *testing.T) {
 	}
 }
 
-func TestParseNetworkLogLine_ToleratesSpacesInHost(t *testing.T) {
-	// The audited Host field includes the URL path, which may contain spaces.
-	// Right-to-left parsing must keep status (2nd-from-last) + pluginID (last)
-	// aligned and rejoin the host/path segment.
-	entry, ok := parseNetworkLogLine("2026-06-20T10:00:00Z GET example.com/with path 200 my-plugin")
-	if !ok {
-		t.Fatal("expected line with a spaced host to parse")
-	}
-	if entry.At != "2026-06-20T10:00:00Z" {
-		t.Errorf("At = %q", entry.At)
-	}
-	if entry.Method != "GET" {
-		t.Errorf("Method = %q", entry.Method)
-	}
-	if entry.Host != "example.com/with path" {
-		t.Errorf("Host = %q, want %q", entry.Host, "example.com/with path")
-	}
-	if entry.Status != 200 {
-		t.Errorf("Status = %d, want 200", entry.Status)
-	}
-	if entry.Plugin != "my-plugin" {
-		t.Errorf("Plugin = %q", entry.Plugin)
-	}
-}
-
 func TestParseNetworkLogLine_RejectsMalformed(t *testing.T) {
 	for _, line := range []string{
-		"",                       // empty
-		"only three fields",      // too few
-		"a b c d e",             // non-numeric status
+		"",             // empty
+		"not json",     // random string
+		"a b c d e",    // not valid JSON
 	} {
 		if _, ok := parseNetworkLogLine(line); ok {
 			t.Errorf("expected parse failure for %q", line)

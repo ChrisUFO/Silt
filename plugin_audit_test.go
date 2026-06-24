@@ -42,8 +42,7 @@ func TestAppendNetworkAuditLine_WritesJSON(t *testing.T) {
 }
 
 // parseNetworkLogLine reads the JSON format and preserves all fields,
-// including a host segment that contains embedded spaces (the case that
-// motivated the switch away from the space-delimited format).
+// including a host segment that contains embedded spaces.
 func TestParseNetworkLogLine_JSON_HostWithSpaces(t *testing.T) {
 	line := `{"at":"2026-06-23T10:00:00Z","method":"GET","host":"example.com/path/with spaces","status":200,"plugin":"p"}`
 	got, ok := parseNetworkLogLine(line)
