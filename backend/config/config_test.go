@@ -697,6 +697,13 @@ func TestDefaults_FormattingConfig(t *testing.T) {
 	if d.Hotkeys["insert_code"] != "Ctrl+Alt+C" {
 		t.Errorf("insert_code default: got %q", d.Hotkeys["insert_code"])
 	}
+	// Details hotkey (#183).
+	if _, ok := d.Hotkeys["toggle_details"]; !ok {
+		t.Errorf("defaults hotkeys missing %q", "toggle_details")
+	}
+	if d.Hotkeys["toggle_details"] != "Ctrl+." {
+		t.Errorf("toggle_details default: got %q", d.Hotkeys["toggle_details"])
+	}
 	// Table hotkeys (#172).
 	for _, key := range []string{"table_insert_row_above", "table_insert_row_below", "table_insert_col_left", "table_insert_col_right"} {
 		if _, ok := d.Hotkeys[key]; !ok {

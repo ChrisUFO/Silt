@@ -808,6 +808,25 @@ plugins:
       columns: ["TODO", "DOING", "DONE"]
 
 
+6.10 Tables (GFM)
+
+Silt supports GitHub Flavored Markdown (GFM) pipe tables. The on-disk representation is standard GFM pipe syntax:
+
+```
+| Name  | Role     |
+| ----- | -------- |
+| Alice | Engineer |
+| Bob   | Designer |
+```
+
+The Go parser treats each line of a GFM table as a separate NOTE block — pipe characters are preserved verbatim in `clean_text`, so no parser change is needed. The frontend converter (`blocks.ts`) detects consecutive NOTE blocks matching the GFM pipe pattern (header row + separator row + data rows) and merges them into a single TipTap `table` node on load. On save, it splits the table back into individual `| ... |` lines.
+
+**Limitations (v1):**
+- Cell content with literal `|` must be escaped as `\|` (handled by the converter).
+- Smart Graph `((uuid))` references in cells round-trip correctly; `{{embed:uuid}}` embeds are block-level and not supported inside cells (emitted as plain text with a console warning).
+- Cell alignment via `:---`, `---:`, `:---:` is preserved in clean_text but not rendered as per-column alignment in v1.
+- No per-cell background color or text color in v1 — the existing inline formatting marks work inside cells.
+
 9.2 Hot Reloading Logic
 
 The Go file-system monitor sets a high-priority watch handler on .system/config.yaml. If settings are modified internally or externally, Go parses the file, updates the system memory state instantly, and triggers a style or action event over the Wails IPC bridge, bypassing the need for a full application reboot.

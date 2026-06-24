@@ -548,10 +548,15 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
     }
 
     // Details block (#183): serialize to <details><summary>...</summary>...</details>
-    // in clean_text. The Go parser preserves HTML verbatim.
+    // in clean_text. The Go parser preserves HTML verbatim. Summary text is
+    // HTML-escaped to prevent injection of markup characters.
     if (node.type === 'detailsBlock') {
       const baseText = serializeInlineContent(node.content)
-      const summary = (attrs.summary as string) || ''
+      const summary = ((attrs.summary as string) || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
       const html = `<details><summary>${summary}</summary>${baseText}</details>`
       blocks.push({
         id,

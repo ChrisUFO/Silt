@@ -492,6 +492,13 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 		}
 	}
 
+	// Flush any unclosed code fence as unmanaged prose (#189). If the fence
+	// never closed, the accumulated lines must still reach the output.
+	if codeFenceOpen && codeFenceLine != "" {
+		outputLines = append(outputLines, codeFenceLine)
+		outputLines = append(outputLines, codeContentLines...)
+	}
+
 	newContent := strings.Join(outputLines, "\n")
 	return blocks, meta, newContent, modifiedAny, nil
 }
@@ -585,8 +592,7 @@ func RenderFileContent(blocks []ParsedBlock, originalBody, frontmatter string, s
 				// before the opening ``` remain in pendingPreserved and are
 				// preserved as spacing.
 				codeFenceLines = nil
-					codeFenceLines = nil
-				}
+			}
 				continue
 			}
 			if inCodeBlock {

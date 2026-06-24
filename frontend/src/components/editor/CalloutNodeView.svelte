@@ -2,9 +2,16 @@
   import { NodeViewWrapper, NodeViewContent } from 'svelte-tiptap'
   import type { NodeViewProps } from '@tiptap/core'
 
-  let { node }: NodeViewProps = $props()
+  let { node, updateAttributes }: NodeViewProps = $props()
   let variant = $derived(node.attrs.variant || 'note')
   let title = $derived(node.attrs.title || '')
+  let titleEl: HTMLSpanElement | null = $state(null)
+
+  function onTitleInput(): void {
+    if (titleEl) {
+      updateAttributes({ title: titleEl.textContent || '' })
+    }
+  }
 
   let variantIcon = $derived.by(() => {
     const icons: Record<string, string> = {
@@ -77,14 +84,18 @@
     >
       {variantIcon}
     </span>
-    {#if title}
-      <span
-        class="font-semibold text-sm leading-6 text-text"
-        aria-hidden="true"
-      >
-        {title}
-      </span>
-    {/if}
+    <span
+      bind:this={titleEl}
+      class="font-semibold text-sm leading-6 text-text outline-none min-w-[20px]"
+      class:opacity-50={!title}
+      contenteditable="true"
+      role="textbox"
+      aria-label="Callout title"
+      data-placeholder="Title"
+      oninput={onTitleInput}
+    >
+      {title || ''}
+    </span>
   </div>
   <div class="pl-7">
     <NodeViewContent

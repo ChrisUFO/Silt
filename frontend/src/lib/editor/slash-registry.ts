@@ -290,6 +290,18 @@ registerSlashCommand({
   description: 'Insert a 3x3 table',
   icon: 'table_view'
 })
+registerSlashCommand({
+  id: 'table-5x4',
+  label: 'Table (5x4)',
+  description: 'Insert a 5-row, 4-column table',
+  icon: 'table_view'
+})
+registerSlashCommand({
+  id: 'table-custom',
+  label: 'Custom table',
+  description: 'Insert a table with custom dimensions',
+  icon: 'table_view'
+})
 
 // --- Code block command (#189) ----------------------------------------------
 registerSlashCommand({
