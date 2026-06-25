@@ -451,6 +451,49 @@ function buildConfigDrivenShortcuts(
   return map
 }
 
+// Register config-driven bindings for inline format marks (bold, italic, etc.)
+// that are also handled by TipTap StarterKit extensions. These read from config
+// at editor-creation time and coexist with the StarterKit's hardcoded defaults.
+function buildFormatMarkShortcuts(
+  editor: Editor
+): Record<string, () => boolean> {
+  const hk = settings.config?.hotkeys ?? {}
+  const pm = (configKey: string, def: string) =>
+    resolveShortcut(configKey, def, hk)
+  const map: Record<string, () => boolean> = {}
+
+  map[pm('format_bold', 'Mod-b')] = () => {
+    editor.chain().focus().toggleBold().run()
+    return true
+  }
+  map[pm('format_italic', 'Mod-i')] = () => {
+    editor.chain().focus().toggleItalic().run()
+    return true
+  }
+  map[pm('format_underline', 'Mod-u')] = () => {
+    editor.chain().focus().toggleUnderline().run()
+    return true
+  }
+  map[pm('format_code', 'Mod-e')] = () => {
+    editor.chain().focus().toggleCode().run()
+    return true
+  }
+  map[pm('format_highlight', 'Mod-Shift-h')] = () => {
+    editor.chain().focus().toggleHighlight().run()
+    return true
+  }
+  map[pm('format_subscript', 'Mod-,')] = () => {
+    editor.chain().focus().toggleSubscript().run()
+    return true
+  }
+  map[pm('format_superscript', 'Mod-.')] = () => {
+    editor.chain().focus().toggleSuperscript().run()
+    return true
+  }
+
+  return map
+}
+
 export const SiltBlockKeymaps = Extension.create({
   name: 'siltBlockKeymaps',
 
@@ -650,7 +693,8 @@ export const SiltBlockKeymaps = Extension.create({
       // LIVE remapping (config change without page navigation) requires
       // re-creating the keymap extension — a documented follow-up. The schema
       // and keymap are immutable at editor-creation time by ProseMirror design.
-      ...buildConfigDrivenShortcuts(this.editor)
+      ...buildConfigDrivenShortcuts(this.editor),
+      ...buildFormatMarkShortcuts(this.editor)
     }
   }
 })

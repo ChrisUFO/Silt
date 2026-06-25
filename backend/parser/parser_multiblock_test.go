@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -607,5 +608,102 @@ func TestCallout_ExternalFileGetsIdOnFirstParse(t *testing.T) {
 	}
 	if modified2 {
 		t.Errorf("second parse should be stable")
+	}
+}
+
+// ---- Backward compatibility: old on-disk format with inline id comments ---
+// Pre-unified files had inline <!-- id: uuid --> comments on each line of a
+// multi-line block. The parser must detect these old-format regions, strip the
+// inline ids, and migrate to the new trailing-id-line format.
+
+func TestBackwardCompat_OldTableWithInlineIDs(t *testing.T) {
+	src := "| a | b | <!-- id: aaaaaaaa-1111-1111-1111-111111111111 -->\n" +
+		"|---|---| <!-- id: aaaaaaaa-2222-2222-2222-111111111111 -->\n" +
+		"| 1 | 2 | <!-- id: aaaaaaaa-3333-3333-3333-111111111111 -->\n"
+	blocks, _, _, modified, err := ParseFileContent(src, "NB", "", "PG", "2026-06-25", 4)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !modified {
+		t.Errorf("expected old-format table to be migrated on first parse")
+	}
+	var tbl *ParsedBlock
+	for i := range blocks {
+		if blocks[i].Type == BlockTable {
+			if tbl != nil {
+				t.Fatalf("expected exactly one BlockTable, got multiple")
+			}
+			tbl = &blocks[i]
+		}
+	}
+	if tbl == nil {
+		t.Fatalf("expected a BlockTable, got %+v", blocks)
+	}
+	if tbl.ID != "aaaaaaaa-3333-3333-3333-111111111111" {
+		t.Errorf("expected last-row id, got %q", tbl.ID)
+	}
+	if strings.Contains(tbl.CleanText, "<!-- id:") {
+		t.Errorf("clean_text should have inline ids stripped: %q", tbl.CleanText)
+	}
+}
+
+func TestBackwardCompat_OldDetailsWithInlineIDs(t *testing.T) {
+	src := "<details> <!-- id: bbbbbbbb-1111-1111-1111-111111111111 -->\n" +
+		"<summary>Title</summary>\n" +
+		"body\n" +
+		"</details>\n"
+	blocks, _, _, modified, err := ParseFileContent(src, "NB", "", "PG", "2026-06-25", 4)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !modified {
+		t.Errorf("expected old-format details to be migrated on first parse")
+	}
+	var det *ParsedBlock
+	for i := range blocks {
+		if blocks[i].Type == BlockDetails {
+			det = &blocks[i]
+		}
+	}
+	if det == nil {
+		t.Fatalf("expected a BlockDetails, got %+v", blocks)
+	}
+	if det.ID != "bbbbbbbb-1111-1111-1111-111111111111" {
+		t.Errorf("expected opener id, got %q", det.ID)
+	}
+	if strings.Contains(det.CleanText, "<!-- id:") {
+		t.Errorf("clean_text should have inline ids stripped: %q", det.CleanText)
+	}
+}
+
+// ---- Migration B: ((uuid)) reference remapping ----------------------------
+
+func TestMigrationB_ReferenceToOldTableRowIdRemapped(t *testing.T) {
+	middleID := "cccccccc-2222-2222-2222-111111111111"
+	lastID := "cccccccc-3333-3333-3333-111111111111"
+	src := "| a | b | <!-- id: cccccccc-1111-1111-1111-111111111111 -->\n" +
+		fmt.Sprintf("|---|---| <!-- id: %s -->\n", middleID) +
+		fmt.Sprintf("| 1 | 2 | <!-- id: %s -->\n", lastID) +
+		fmt.Sprintf("- See ((%s)) <!-- id: dddddddd-1111-1111-1111-111111111111 -->\n", middleID)
+	blocks, _, _, _, err := ParseFileContent(src, "NB", "", "PG", "2026-06-25", 4)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var note *ParsedBlock
+	for i := range blocks {
+		if blocks[i].Type == BlockNote && strings.Contains(blocks[i].CleanText, "((") {
+			note = &blocks[i]
+		}
+	}
+	if note == nil {
+		t.Fatalf("expected a NOTE with a reference, got %+v", blocks)
+	}
+	expected := "((" + lastID + "))"
+	if !strings.Contains(note.CleanText, expected) {
+		t.Errorf("reference not remapped\nexpected: %q\nin clean_text: %q", expected, note.CleanText)
+	}
+	oldRef := "((" + middleID + "))"
+	if strings.Contains(note.CleanText, oldRef) {
+		t.Errorf("old reference should have been remapped: %q", note.CleanText)
 	}
 }

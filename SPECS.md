@@ -800,6 +800,11 @@ hotkeys:
   table_insert_col_right: "Ctrl+Shift+Right"
   # View mode toggle (#171).
   toggle_view_mode: "Ctrl+Shift+V"
+# Editor-scoped shortcuts (heading, alignment, quote, details, table, format
+# marks) are config-driven at editor-creation time (#311). Remap them here;
+# the editor honors the remapped binding on the next page load (live remap
+# without page navigation is a follow-up — the ProseMirror keymap is immutable
+# at schema build time).
 
 # UI Preferences (per-vault)
 ui:

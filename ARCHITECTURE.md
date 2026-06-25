@@ -170,23 +170,50 @@ var TaskTokenRegex = regexp.MustCompile(`\[([\w]+)::\s*([^\]]*)\]`)
 type BlockType string
 
 const (
-	BlockTask BlockType = "TASK"
-	BlockNote BlockType = "NOTE"
+	BlockTask   BlockType = "TASK"
+	BlockNote   BlockType = "NOTE"
 	BlockHeader BlockType = "HEADER"
+	BlockCode   BlockType = "CODE"     // managed fenced code (#189)
+	BlockTable  BlockType = "TABLE"    // managed GFM table (#310)
+	BlockDetails BlockType = "DETAILS" // managed <details> HTML (#310)
+	BlockCallout BlockType = "CALLOUT" // managed Obsidian callout (#308)
 )
 
 type ParsedBlock struct {
-	ID        string    `json:"id"`
-	ParentID  string    `json:"parent_id"`
-	Type      BlockType `json:"type"`
-	Depth     int       `json:"depth"`
-	RawText   string    `json:"raw_text"`
-	CleanText string    `json:"clean_text"`
-	Owner     string    `json:"owner,omitempty"`
-	StartDate string    `json:"start_date,omitempty"`
-	DueDate   string    `json:"due_date,omitempty"`
-	Priority  int       `json:"priority,omitempty"`
+	ID         string    `json:"id"`
+	ParentID   string    `json:"parent_id"`
+	Type       BlockType `json:"type"`
+	Depth      int       `json:"depth"`
+	RawText    string    `json:"raw_text"`
+	CleanText  string    `json:"clean_text"`
+	Owner      string    `json:"owner,omitempty"`
+	StartDate  string    `json:"start_date,omitempty"`
+	DueDate    string    `json:"due_date,omitempty"`
+	Priority   int       `json:"priority,omitempty"`
+	Pinned     *bool     `json:"pinned,omitempty"`
+	Progress   int       `json:"progress,omitempty"`
+	ExtraTokens []string  `json:"extra_tokens,omitempty"`
+	Language   string    `json:"language,omitempty"`
+	LineNumber int       `json:"line_number"`
+	FileDate   string    `json:"file_date,omitempty"`
 }
+
+
+Unified Region Accumulator (#189/#310/#308)
+
+The parser's `accumulateRegion` detects four multi-line region shapes and
+collapses each into ONE managed `ParsedBlock`: fenced code (``` fence),
+GFM table runs (header + separator), `<details>` HTML (depth-counted), and
+Obsidian callouts (`> [!variant]` + consecutive `>` lines). Each becomes
+one `blocks`-table row, one UUID, one FTS5 document. The block identity
+comment lives on its own dedicated trailing line after the region content
+so the on-disk format stays strictly GFM/HTML/Obsidian syntax. The
+`detectRegionKind` / `findRegionCloser` / `skipManagedRegion` helpers are
+shared by `ParseFileContent` and `RenderFileContent` so both paths agree
+on region boundaries. Old-format files with inline id comments on each
+line are detected (id comments stripped before matching), migrated to the
+trailing-id-line format on first parse, and `((uuid))` references to
+vanished per-line ids are remapped to the typed block's id.
 
 
 Unique Block ID Injection (UUIDv4)
