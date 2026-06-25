@@ -702,13 +702,18 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         fileDate
       )
       if (contentNode?.content) {
-        // Child blocks recurse through docToBlocks so nested details, code,
-        // tables, etc. inside a foldable section round-trip correctly.
-        const childBlocks = docToBlocks({
-          type: 'doc',
-          content: contentNode.content
-        })
-        for (const cb of childBlocks) blocks.push(cb)
+        const children = contentNode.content
+        // Skip the synthetic empty-noteBlock placeholder buildDetailsNode
+        // seeds so TipTap's detailsContent has a required child — an empty
+        // <details></details> must round-trip without a blank inner line.
+        const isOnlyPlaceholder =
+          children.length === 1 &&
+          children[0].type === 'noteBlock' &&
+          (children[0].content || []).length === 0
+        if (!isOnlyPlaceholder) {
+          const childBlocks = docToBlocks({ type: 'doc', content: children })
+          for (const cb of childBlocks) blocks.push(cb)
+        }
       }
       pushOpaqueNoteLine(blocks, '', '</details>', lineNumber, fileDate)
       continue

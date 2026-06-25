@@ -157,11 +157,12 @@ export function setBlockAlign(editor: Editor, align: string): boolean {
 }
 
 // Toggle the blockquote marker on the current noteBlock (#188). Sets `> ` when
-// turning quote on and clears it when turning off. No-op on TASK/HEADER blocks
-// (quote is a NOTE marker). The bullet attr is left untouched: docToBlocks
-// ignores `bullet` while `quote` is set, and detectBullet restores the original
-// bullet on reload, so manually clearing/restore here would lose the user's
-// original bullet (a plain note toggled quote-on then off became `- `).
+// Toggle the blockquote marker on the current noteBlock (#188). Quote and
+// bullet are mutually exclusive — the on-disk serializer (docToBlocks) discards
+// `bullet` while `quote` is set, so turning quote ON clears the bullet here to
+// keep the in-editor state consistent with the save→reload cycle. Toggling
+// quote OFF yields a plain note (the bullet was already '' from the quote
+// state). No-op on TASK/HEADER blocks (quote is a NOTE marker).
 export function toggleBlockQuote(editor: Editor): boolean {
   if (!editor || editor.isDestroyed) return false
   const active = findActiveBlock(editor)
@@ -169,9 +170,13 @@ export function toggleBlockQuote(editor: Editor): boolean {
   if (active.node.type.name !== 'noteBlock') return true // silently skip
   const nodePos = editor.state.selection.$from.before(active.depth)
   const isQuote = !!active.node.attrs.quote
+  // Quote and bullet are mutually exclusive on disk (docToBlocks discards
+  // bullet when quote is set). Clearing bullet on toggle-ON keeps the
+  // in-editor state consistent with the save→reload cycle.
   const tr = editor.state.tr.setNodeMarkup(nodePos, undefined, {
     ...active.node.attrs,
-    quote: isQuote ? '' : '> '
+    quote: isQuote ? '' : '> ',
+    bullet: isQuote ? (active.node.attrs.bullet ?? '') : ''
   })
   editor.view.dispatch(tr)
   return true

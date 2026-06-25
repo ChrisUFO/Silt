@@ -430,6 +430,21 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(doc.content[0]?.type).toBe('noteBlock')
   })
 
+  it('empty <details> round-trips without a blank inner line (#183)', () => {
+    // An empty details section must not inflate the file with a placeholder
+    // NOTE line — <details><summary>…</summary></details> with no body content.
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '<details>' }),
+      mkBlock('NOTE', { clean_text: '<summary>T</summary>' }),
+      mkBlock('NOTE', { clean_text: '</details>' })
+    ]
+    const doc = blocksToDoc(blocks)
+    // buildDetailsNode seeds an empty noteBlock placeholder for TipTap; the
+    // save path must strip it so the file stays 3 lines, not 4.
+    const back = docToBlocks(doc).map((b) => b.clean_text)
+    expect(back).toEqual(['<details>', '<summary>T</summary>', '</details>'])
+  })
+
   it('parses a <summary> with HTML attributes (#183)', () => {
     // External HTML often carries attributes on <summary>; parsing should be
     // lenient (the save path emits attribute-free <summary>).

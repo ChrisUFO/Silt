@@ -55,7 +55,7 @@
       const html = await highlightCode(c, lang, theme)
       highlighted = html
       highlightedFor = c
-    }, 60)
+    }, 120)
     highlightTimer = t
     // Cancel the pending highlight if the block unmounts during the debounce
     // window so the callback never writes $state on a destroyed scope.
@@ -78,7 +78,7 @@
 
   function onLanguageChange(e: Event): void {
     const value = (e.currentTarget as HTMLSelectElement).value
-    updateAttributes({ language: value === 'plaintext' ? '' : value })
+    updateAttributes({ language: value })
   }
 </script>
 
@@ -91,10 +91,11 @@
   <div class="silt-code-bar">
     <select
       class="silt-code-lang"
-      value={language || 'plaintext'}
+      value={language}
       aria-label="Code language"
       onchange={onLanguageChange}
     >
+      <option value="">(no language)</option>
       {#each COMMON_LANGUAGES as lang (lang)}
         <option value={lang}>
           {lang}

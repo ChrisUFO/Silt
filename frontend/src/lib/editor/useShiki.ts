@@ -27,6 +27,11 @@ function setCache(key: string, html: string): void {
 // HTML string. Unknown/empty languages fall back to plain (no spans) so the
 // block still renders. Errors degrade to an escaped plain rendering rather
 // than throwing — a bad grammar must never break the editor.
+//
+// Security: the returned HTML is injected via {@html} in CodeBlockView. This
+// is safe because Shiki escapes all user content in its token output (it
+// produces <span class="..."> wrappers, never raw user HTML); the local
+// single-user threat model doesn't warrant a DOMPurify pass on top.
 export async function highlightCode(
   code: string,
   lang: string,

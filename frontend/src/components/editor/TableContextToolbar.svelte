@@ -2,9 +2,8 @@
   import type { Editor } from '@tiptap/core'
 
   // Contextual toolbar for GFM tables (#172). Renders below the format toolbar
-  // when the cursor is inside a table cell. The seven row/column operations
-  // map to TipTap Table commands; Merge is enabled only when ≥ 2 cells are
-  // selected (mergeCells requires a multi-cell selection).
+  // when the cursor is inside a table cell. Six row/column operations map to
+  // TipTap Table commands. Merge cells is omitted — GFM can't represent spans.
   let { editor }: { editor: Editor } = $props()
 
   type Op = {
@@ -86,14 +85,10 @@
         label: 'Delete column',
         can: () => !!editor.can().deleteColumn?.(),
         run: () => editor.chain().focus().deleteColumn().run()
-      },
-      {
-        id: 'merge',
-        icon: 'merge_type',
-        label: 'Merge cells',
-        can: () => !!editor.can().mergeCells?.(),
-        run: () => editor.chain().focus().mergeCells().run()
       }
+      // NOTE: "Merge cells" is intentionally omitted — GFM pipe tables cannot
+      // represent colspan/rowspan, so a merge would be silently flattened on
+      // save and the row structure would change on reload (data corruption).
     ]
   })
 </script>
