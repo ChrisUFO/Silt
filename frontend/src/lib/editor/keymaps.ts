@@ -181,15 +181,18 @@ export function toggleBlockQuote(editor: Editor): boolean {
   return true
 }
 
-// Insert a callout block at the current selection (#180). The callout replaces
-// the current block when it is an empty note, otherwise inserts a new callout
-// below. The variant drives the icon + accent (CALLOUT_VARIANTS in schema.ts).
+// Insert a callout block at the current selection (#180/#308). The callout
+// replaces the current block when it is an empty note, otherwise inserts a new
+// callout below. The variant drives the icon + accent (CALLOUT_VARIANTS in
+// schema.ts). Under `content: 'block+'` the callout MUST seed a placeholder
+// paragraph (block+ requires ≥1 child).
 export function insertCallout(editor: Editor, variant: string): boolean {
   if (!editor || editor.isDestroyed) return false
   const today = new Date().toISOString().slice(0, 10)
+  const paragraph = editor.state.schema.nodes.paragraph
   const calloutNode = editor.state.schema.nodes.calloutBlock?.create(
     { id: null, variant, file_date: today },
-    []
+    paragraph ? [paragraph.create()] : []
   )
   if (!calloutNode) return false
   // If the current block is an empty note/header, replace it in place.

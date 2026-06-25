@@ -467,3 +467,145 @@ func TestMixedRegions_CoexistInOneFile(t *testing.T) {
 		t.Fatalf("reparse: %v\nrendered:\n%s", err, rendered)
 	}
 }
+
+// ---- #308: Callout managed blocks ------------------------------------------
+// Obsidian-style callouts become ONE managed ParsedBlock (Type: CALLOUT).
+// The clean_text is the full `> [!variant] message` + subsequent `>` body
+// lines; renderBlock emits them verbatim + a trailing id line.
+
+func TestCallout_MultilineRoundTrip(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "single-line callout",
+			body: "> [!note] Hello world",
+		},
+		{
+			name: "multi-paragraph callout",
+			body: "> [!warning] Important\n> First paragraph\n> Second paragraph",
+		},
+		{
+			name: "bare > paragraph break",
+			body: "> [!info] Title\n> First para\n>\n> Second para after break",
+		},
+		{
+			name: "all 7 variants",
+			body: "> [!tip] Tip text",
+		},
+		{
+			name: "callout without message",
+			body: "> [!danger]",
+		},
+		{
+			name: "case-insensitive variant",
+			body: "> [!NOTE] Case insensitive",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			block := ParsedBlock{
+				ID:        "88888888-1111-1111-1111-111111111111",
+				Type:      BlockCallout,
+				CleanText: tc.body,
+				FileDate:  "2026-06-25",
+			}
+			rendered := RenderFileContent([]ParsedBlock{block}, "", "", 4)
+			reparsed, _, _, _, err := ParseFileContent(rendered, "NB", "", "PG", "2026-06-25", 4)
+			if err != nil {
+				t.Fatalf("reparse: %v\nrendered:\n%s", err, rendered)
+			}
+			if len(reparsed) != 1 || reparsed[0].Type != BlockCallout {
+				t.Fatalf("expected one BlockCallout, got %+v", reparsed)
+			}
+			if reparsed[0].CleanText != tc.body {
+				t.Errorf("CleanText drifted\nwant: %q\n got: %q", tc.body, reparsed[0].CleanText)
+			}
+			// Byte-stable across a second render pass.
+			rendered2 := RenderFileContent(reparsed, "", "", 4)
+			if rendered != rendered2 {
+				t.Errorf("not byte-stable\n--- pass1 ---\n%s\n--- pass2 ---\n%s", rendered, rendered2)
+			}
+		})
+	}
+}
+
+func TestCallout_RegionBoundary(t *testing.T) {
+	// A callout region ends at the first non-`>` line. The line after the
+	// callout is a separate block (not absorbed).
+	src := "> [!note] Callout title\n> Callout body\nPlain text after callout\n"
+	blocks, _, _, _, err := ParseFileContent(src, "NB", "", "PG", "2026-06-25", 4)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var callout *ParsedBlock
+	var after *ParsedBlock
+	for i := range blocks {
+		if blocks[i].Type == BlockCallout {
+			callout = &blocks[i]
+		} else if strings.Contains(blocks[i].CleanText, "Plain text after callout") {
+			after = &blocks[i]
+		}
+	}
+	if callout == nil {
+		t.Fatalf("expected a BlockCallout, got %+v", blocks)
+	}
+	if !strings.Contains(callout.CleanText, "Callout body") {
+		t.Errorf("callout body lost: %q", callout.CleanText)
+	}
+	if !strings.Contains(callout.CleanText, "Callout title") {
+		t.Errorf("callout title lost: %q", callout.CleanText)
+	}
+	if after == nil {
+		t.Errorf("expected a NOTE after the callout, got %+v", blocks)
+	}
+}
+
+func TestCallout_PlainQuoteNotCallout(t *testing.T) {
+	// A plain `> text` (no `[!`) is NOT a callout — it stays a NOTE.
+	src := "> plain quote <!-- id: 99999999-1111-1111-1111-111111111111 -->\n"
+	blocks, _, _, _, err := ParseFileContent(src, "NB", "", "PG", "2026-06-25", 4)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, b := range blocks {
+		if b.Type == BlockCallout {
+			t.Fatalf("plain quote was falsely detected as a callout: %+v", b)
+		}
+	}
+}
+
+func TestCallout_ExternalFileGetsIdOnFirstParse(t *testing.T) {
+	// A callout authored externally (Obsidian) carries no id. First parse
+	// mints one on its own trailing line.
+	src := "> [!note] External callout\n> from Obsidian\n"
+	blocks, _, _, modified, err := ParseFileContent(src, "NB", "", "PG", "2026-06-25", 4)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !modified {
+		t.Errorf("expected the external callout to be assigned an id on first parse")
+	}
+	var callout *ParsedBlock
+	for i := range blocks {
+		if blocks[i].Type == BlockCallout {
+			callout = &blocks[i]
+		}
+	}
+	if callout == nil {
+		t.Fatalf("expected a BlockCallout, got %+v", blocks)
+	}
+	if callout.ID == "" {
+		t.Errorf("callout has no id")
+	}
+	// Second parse is stable.
+	rendered := RenderFileContent(blocks, "", "", 4)
+	_, _, _, modified2, err := ParseFileContent(rendered, "NB", "", "PG", "2026-06-25", 4)
+	if err != nil {
+		t.Fatalf("reparse: %v", err)
+	}
+	if modified2 {
+		t.Errorf("second parse should be stable")
+	}
+}

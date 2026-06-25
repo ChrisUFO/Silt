@@ -390,6 +390,17 @@ var detailsCloseRe = regexp.MustCompile(`(?i)^</details>$`)
 func isDetailsOpen(s string) bool  { return detailsOpenRe.MatchString(strings.TrimSpace(s)) }
 func isDetailsClose(s string) bool { return detailsCloseRe.MatchString(strings.TrimSpace(s)) }
 
+// ---- Callout detection (#308) ---------------------------------------------
+// An Obsidian-style callout is a `>` line whose body starts with `[!variant]`.
+// The region absorbs all subsequent `>` lines (including bare `>` for paragraph
+// breaks) and ends at the first non-`>` line. A plain `> text` (no `[!`) is NOT
+// a callout — it stays a NOTE with a quote prefix.
+var calloutOpenRe = regexp.MustCompile(`(?i)^>\s*\[!(note|info|tip|warning|danger|success|quote)\]`)
+var gtPrefixRe = regexp.MustCompile(`^>\s?`)
+
+func isCalloutOpen(s string) bool { return calloutOpenRe.MatchString(strings.TrimSpace(s)) }
+func hasGtPrefix(s string) bool   { return gtPrefixRe.MatchString(strings.TrimSpace(s)) }
+
 // ---- Region kind discriminator --------------------------------------------
 
 // regionKind identifies which multi-line region shape was detected at a given
@@ -401,6 +412,7 @@ const (
 	regionCode               // ``` fence
 	regionTable              // GFM pipe table
 	regionDetails            // <details> HTML
+	regionCallout            // > [!variant] Obsidian callout
 )
 
 // detectRegionKind checks what kind of managed multi-line region starts at
@@ -416,6 +428,9 @@ func detectRegionKind(lines []string, idx int) regionKind {
 	}
 	if isDetailsOpen(trimmed) {
 		return regionDetails
+	}
+	if isCalloutOpen(lines[idx]) {
+		return regionCallout
 	}
 	return regionNone
 }
@@ -455,6 +470,14 @@ func findRegionCloser(lines []string, openIdx int, kind regionKind) int {
 			}
 		}
 		return -1
+	case regionCallout:
+		// The callout region absorbs all consecutive `>` lines (including bare
+		// `>` paragraph breaks). It ends at the first non-`>` line.
+		endIdx := openIdx + 1
+		for endIdx < len(lines) && hasGtPrefix(lines[endIdx]) {
+			endIdx++
+		}
+		return endIdx - 1
 	}
 	return -1
 }
@@ -525,6 +548,9 @@ func accumulateRegion(lines []string, openIdx, lineNumber int, meta *FileMetadat
 		inner = strings.Join(lines[openIdx:closer+1], "\n")
 	case regionDetails:
 		blockType = BlockDetails
+		inner = strings.Join(lines[openIdx:closer+1], "\n")
+	case regionCallout:
+		blockType = BlockCallout
 		inner = strings.Join(lines[openIdx:closer+1], "\n")
 	}
 
@@ -902,7 +928,7 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 	// on-disk content (GFM pipe rows / <details> HTML), emitted verbatim.
 	// The identity comment goes on its own trailing line so the content stays
 	// strictly GFM/HTML (#310 — unified region-block model).
-	if block.Type == BlockTable || block.Type == BlockDetails {
+	if block.Type == BlockTable || block.Type == BlockDetails || block.Type == BlockCallout {
 		idLine := ""
 		if idSuffix != "" {
 			idLine = "\n" + strings.TrimSpace(idSuffix)

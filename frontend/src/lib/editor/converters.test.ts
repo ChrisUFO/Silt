@@ -276,7 +276,7 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(back[0].clean_text).toBe('> quoted <!-- silt-align: center -->')
   })
 
-  it('round-trips all 7 callout variants (#180)', () => {
+  it('round-trips all 7 callout variants (#180/#308)', () => {
     const variants = [
       'note',
       'info',
@@ -288,8 +288,7 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     ]
     for (const v of variants) {
       const blocks = [
-        mkBlock('NOTE', {
-          raw_text: `> [!${v}] message`,
+        mkBlock('CALLOUT', {
           clean_text: `> [!${v}] message`
         })
       ]
@@ -297,52 +296,46 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
       const node = doc.content[0]
       expect(node?.type).toBe('calloutBlock')
       expect(node?.attrs?.variant).toBe(v)
-      expect(node?.content).toEqual([{ type: 'text', text: 'message' }])
-      // Save: re-emits the Obsidian `> [!variant] message` line.
+      // content: 'block+' → first paragraph carries the message.
+      expect(node?.content?.[0]?.type).toBe('paragraph')
+      expect(node?.content?.[0]?.content).toEqual([
+        { type: 'text', text: 'message' }
+      ])
+      // Save: re-emits as ONE CALLOUT ParsedBlock.
       const back = docToBlocks(doc)
-      expect(back[0].type).toBe('NOTE')
+      expect(back[0].type).toBe('CALLOUT')
       expect(back[0].clean_text).toBe(`> [!${v}] message`)
-      expect(back[0].raw_text).toBe(`> [!${v}] message`)
     }
   })
 
-  it('a callout without a message round-trips the bare marker (#180)', () => {
-    const blocks = [
-      mkBlock('NOTE', {
-        raw_text: '> [!warning]',
-        clean_text: '> [!warning]'
-      })
-    ]
+  it('a callout without a message round-trips the bare marker (#180/#308)', () => {
+    const blocks = [mkBlock('CALLOUT', { clean_text: '> [!warning]' })]
     const doc = blocksToDoc(blocks)
     expect(doc.content[0]?.type).toBe('calloutBlock')
     expect(doc.content[0]?.attrs?.variant).toBe('warning')
-    expect(doc.content[0]?.content).toEqual([])
+    // block+ requires ≥1 child: the first paragraph is empty.
+    expect(doc.content[0]?.content?.[0]?.type).toBe('paragraph')
     expect(docToBlocks(doc)[0].clean_text).toBe('> [!warning]')
   })
 
-  it('callout detection takes precedence over plain quote (#180)', () => {
-    // `> [!tip] x` is a callout, NOT a quote note.
-    const blocks = [
-      mkBlock('NOTE', { raw_text: '> [!tip] x', clean_text: '> [!tip] x' })
+  it('a CALLOUT block is distinct from a plain quote NOTE (#308)', () => {
+    // A CALLOUT-typed block → calloutBlock; a NOTE with `> ` prefix → noteBlock.
+    const calloutBlocks = [mkBlock('CALLOUT', { clean_text: '> [!tip] x' })]
+    expect(blocksToDoc(calloutBlocks).content[0]?.type).toBe('calloutBlock')
+
+    const quoteBlocks = [
+      mkBlock('NOTE', { raw_text: '> quote', clean_text: '> quote' })
     ]
-    expect(blocksToDoc(blocks).content[0]?.type).toBe('calloutBlock')
+    expect(blocksToDoc(quoteBlocks).content[0]?.type).toBe('noteBlock')
   })
 
-  it('callout variants are matched case-insensitively (#180)', () => {
-    // Obsidian commonly writes [!NOTE] / [!Tip] (uppercase/mixed). Detection is
-    // case-insensitive; the variant is normalized to lowercase for the NodeView
-    // lookup and the on-disk emit.
+  it('callout variants are matched case-insensitively (#180/#308)', () => {
     for (const [input, expected] of [
       ['[!NOTE]', 'note'],
       ['[!Warning]', 'warning'],
       ['[!TIP]', 'tip']
     ] as const) {
-      const blocks = [
-        mkBlock('NOTE', {
-          raw_text: `> ${input} hi`,
-          clean_text: `> ${input} hi`
-        })
-      ]
+      const blocks = [mkBlock('CALLOUT', { clean_text: `> ${input} hi` })]
       const node = blocksToDoc(blocks).content[0]
       expect(node?.type).toBe('calloutBlock')
       expect(node?.attrs?.variant).toBe(expected)

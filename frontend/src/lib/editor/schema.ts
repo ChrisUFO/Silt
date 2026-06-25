@@ -476,7 +476,10 @@ export const CALLOUT_VARIANTS: Record<
 export const CalloutBlock = Node.create({
   name: 'calloutBlock',
   group: 'block',
-  content: 'inline*',
+  // block+ allows multi-paragraph callout bodies (#308). Each `>` line in the
+  // Obsidian callout becomes a paragraph child. Requires ≥1 child (paragraph
+  // is the canonical satisfier); isolating:true keeps the cursor inside.
+  content: 'block+',
   defining: true,
   isolating: true,
 

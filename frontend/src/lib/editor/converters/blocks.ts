@@ -28,32 +28,6 @@ function extractTextContent(content?: NodeJSON[]): string {
   return out
 }
 
-// Push one opaque NOTE line — retained for the callout emission path (Phase 3
-// will remove it when callouts become CALLOUT typed blocks).
-function pushOpaqueNoteLine(
-  blocks: ParsedBlock[],
-  id: string,
-  text: string,
-  lineNumber: number,
-  fileDate: string
-): void {
-  blocks.push({
-    id,
-    parent_id: '',
-    type: 'NOTE',
-    depth: 0,
-    raw_text: text,
-    clean_text: text,
-    status: '',
-    owner: '',
-    start_date: '',
-    due_date: '',
-    priority: 3,
-    line_number: lineNumber,
-    file_date: fileDate
-  })
-}
-
 // Extract the bullet prefix ('- ', '* ', '+ ', or '') from a note's raw_text,
 // matching the detection logic in Go's renderBlock (parser.go ~line 515-527).
 function detectBullet(rawText: string): string {
@@ -77,26 +51,6 @@ function detectQuote(body: string): { quote: string; body: string } {
   const m = body.match(QUOTE_PREFIX_RE)
   if (!m) return { quote: '', body }
   return { quote: m[1] + ' ', body: body.slice(m[0].length) }
-}
-
-// Detect a callout / admonition (#180). An Obsidian-style callout is a `>`
-// line whose body starts with `[!variant]`. Returns the variant + the message
-// (everything after the marker), or null when the line is not a callout. A
-// callout takes precedence over a plain quote (it IS a quote whose first token
-// is the `[!type]` marker). The `i` flag matches Obsidian's case-insensitive
-// variant names ([!NOTE], [!Tip]); the captured variant is lowercased so the
-// NodeView's CALLOUT_VARIANTS lookup and the on-disk emit stay canonical.
-const CALLOUT_RE =
-  /^\[!(note|info|tip|warning|danger|success|quote)\](?:\s+(.*))?$/i
-function detectCallout(
-  body: string
-): { variant: string; message: string } | null {
-  const q = body.match(QUOTE_PREFIX_RE)
-  if (!q) return null
-  const afterMarker = body.slice(q[0].length)
-  const m = afterMarker.match(CALLOUT_RE)
-  if (!m) return null
-  return { variant: m[1].toLowerCase(), message: m[2] ?? '' }
 }
 
 // ---- Alignment marker helpers (#173) -------------------------------------
@@ -279,6 +233,14 @@ function blockToNode(block: ParsedBlock): NodeJSON {
     return parseDetailsHTML(rawText, block.id, block.file_date || '')
   }
 
+  // A CALLOUT block (#308) carries multi-line Obsidian callout syntax as
+  // clean_text (`> [!variant] message` + subsequent `>` body lines). Parse
+  // into a calloutBlock node with paragraph children. Each `>` line becomes
+  // a paragraph; the variant is extracted from the first line's `[!variant]`.
+  if (block.type === 'CALLOUT') {
+    return parseCalloutText(rawText, block.id, block.file_date || '')
+  }
+
   const content: NodeJSON[] = text ? legacyTokenizeInline(text) : []
 
   switch (block.type) {
@@ -313,23 +275,10 @@ function blockToNode(block: ParsedBlock): NodeJSON {
       // Defensive: unknown block types map to NOTE so a malformed doc never
       // drops content. The Go side also treats unrecognized lines as notes.
       //
-      // Callout detection (#180) takes precedence over quote: a `> [!variant]`
-      // line is a callout node, not a plain quote.
-      const callout = detectCallout(text)
-      if (callout) {
-        return {
-          type: 'calloutBlock',
-          attrs: {
-            id: block.id,
-            variant: callout.variant,
-            file_date: block.file_date || ''
-          },
-          content: callout.message ? legacyTokenizeInline(callout.message) : []
-        }
-      }
       // Quote detection (#188): a `> ` prefix (stripped of any alignment
       // marker first) is a blockquote marker, parallel to `bullet`. The
-      // marker is stored on the node so it round-trips verbatim.
+      // marker is stored on the node so it round-trips verbatim. Callouts
+      // (#180/#308) are now CALLOUT-typed blocks — no longer detected here.
       const { quote, body: quoteStripped } = detectQuote(text)
       const noteContent: NodeJSON[] = quoteStripped
         ? legacyTokenizeInline(quoteStripped)
@@ -578,6 +527,82 @@ function serializeChildNodeToBodyLine(node: NodeJSON): string {
   return text
 }
 
+// ---- Callout text parsing (#308) ------------------------------------------
+// The Go parser produces ONE CALLOUT ParsedBlock whose clean_text is the full
+// Obsidian callout syntax (`> [!variant] message` + subsequent `>` body lines).
+// These helpers parse that text into a calloutBlock node with paragraph
+// children (load) and serialize it back (save).
+
+const CALLOUT_MARKER_RE =
+  /^\s*>\s*\[!(note|info|tip|warning|danger|success|quote)\](?:\s+(.*))?$/i
+
+// Parse callout text into a calloutBlock node. Each `>` line becomes a
+// paragraph child; the variant is extracted from the first line's marker.
+function parseCalloutText(
+  text: string,
+  blockId: string,
+  fileDate: string
+): NodeJSON {
+  const lines = text.split('\n')
+  const today = new Date().toISOString().slice(0, 10)
+
+  // Extract variant from the first line.
+  let variant = 'note'
+  let firstMessage = ''
+  const firstMatch = lines[0]?.match(CALLOUT_MARKER_RE)
+  if (firstMatch) {
+    variant = firstMatch[1].toLowerCase()
+    firstMessage = firstMatch[2] ?? ''
+  }
+
+  // Build paragraph children: first line's message is paragraph 1; each
+  // subsequent `>` line is another paragraph (bare `>` = empty paragraph).
+  const mkParagraph = (content: string): NodeJSON => ({
+    type: 'paragraph',
+    attrs: {},
+    content: content ? legacyTokenizeInline(content) : []
+  })
+
+  const children: NodeJSON[] = [mkParagraph(firstMessage)]
+  for (let i = 1; i < lines.length; i++) {
+    // Strip the `> ` or `>` prefix from each body line.
+    const stripped = lines[i].replace(/^\s*>\s?/, '')
+    children.push(mkParagraph(stripped))
+  }
+
+  return {
+    type: 'calloutBlock',
+    attrs: {
+      id: blockId || null,
+      variant,
+      file_date: fileDate || today
+    },
+    content: children
+  }
+}
+
+// Serialize a calloutBlock node back to Obsidian callout text (for docToBlocks).
+// The first paragraph becomes `> [!variant] message`; subsequent paragraphs
+// become `> body` lines.
+function serializeCalloutToText(node: NodeJSON): string {
+  const attrs = (node.attrs || {}) as Record<string, any>
+  const variant = (attrs.variant as string) || 'note'
+  const children = (node.content || []).filter((c) => c.type === 'paragraph')
+
+  const lines: string[] = []
+  // First paragraph: the title/message line.
+  const firstText = children.length
+    ? serializeInlineContent(children[0].content)
+    : ''
+  lines.push(`> [!${variant}]${firstText ? ' ' + firstText : ''}`)
+  // Subsequent paragraphs: body lines.
+  for (let i = 1; i < children.length; i++) {
+    const text = serializeInlineContent(children[i].content)
+    lines.push(text ? `> ${text}` : '>')
+  }
+  return lines.join('\n')
+}
+
 // blocksToDoc converts an ordered list of ParsedBlocks into a ProseMirror doc
 // JSON suitable for editor.commands.setContent(). Each ParsedBlock maps 1:1
 // to one top-level block node (nesting is expressed via the depth attr).
@@ -674,20 +699,17 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
       continue
     }
 
-    // Callout / admonition (#180): serialize to a NOTE whose clean_text is the
-    // Obsidian `> [!variant] message` line. renderBlock sees the leading `>`
-    // (not a bullet) and emits a plain line, so the marker survives verbatim.
+    // Callout / admonition (#180/#308): serialize to ONE CALLOUT ParsedBlock
+    // whose clean_text is the Obsidian `> [!variant] message` + body lines.
     if (node.type === 'calloutBlock') {
-      const variant = (attrs.variant as string) || 'note'
-      const message = serializeInlineContent(node.content)
-      const line = `> [!${variant}]${message ? ' ' + message : ''}`
+      const calloutText = serializeCalloutToText(node)
       blocks.push({
         id,
         parent_id: '',
-        type: 'NOTE',
+        type: 'CALLOUT',
         depth: 0,
-        raw_text: line,
-        clean_text: line,
+        raw_text: calloutText,
+        clean_text: calloutText,
         status: '',
         owner: '',
         start_date: '',

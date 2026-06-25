@@ -154,15 +154,17 @@ describe('block creation scan (#188 / #180 / #189 / #183 / #172)', () => {
     )
   })
 
-  it('insertCallout creates a calloutBlock that saves as `> [!note]` (#180)', () => {
+  it('insertCallout creates a calloutBlock that saves as CALLOUT (#180/#308)', () => {
     const editor = track(makeFullEditor())
     focusFirstBlock(editor)
     expect(insertCallout(editor, 'warning')).toBe(true)
     const node = (editor.getJSON() as DocJSON).content[0]
     expect(node?.type).toBe('calloutBlock')
     expect(node?.attrs?.variant).toBe('warning')
+    // block+ requires ≥1 child: a placeholder paragraph is seeded.
+    expect(node?.content?.[0]?.type).toBe('paragraph')
     const saved = docToBlocks(editor.getJSON() as DocJSON)
-    expect(saved[0].type).toBe('NOTE')
+    expect(saved[0].type).toBe('CALLOUT')
     expect(saved[0].clean_text).toBe('> [!warning]')
   })
 

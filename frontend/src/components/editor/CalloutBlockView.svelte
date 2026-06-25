@@ -27,7 +27,19 @@
   </span>
   <div class="flex-1 min-w-0" role={cfg.role} aria-label={cfg.label}>
     <NodeViewContent
-      class="silt-callout-body whitespace-pre-wrap break-words min-h-[22px] focus:outline-none"
+      class="silt-callout-body break-words min-h-[22px] focus:outline-none"
     />
   </div>
 </NodeViewWrapper>
+
+<style>
+  /* block+ content: paragraphs inside the callout body get compact spacing
+     so multi-paragraph callouts don't look airy. Fully global because the
+     paragraphs are rendered by TipTap's NodeViewContent at runtime. */
+  :global(.silt-callout-body p) {
+    margin: 0 0 0.25rem 0;
+  }
+  :global(.silt-callout-body p:last-child) {
+    margin-bottom: 0;
+  }
+</style>

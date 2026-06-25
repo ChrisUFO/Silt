@@ -50,6 +50,23 @@ const (
 	//
 	// Nested <details> are depth-counted through the matching </details>.
 	BlockDetails BlockType = "DETAILS"
+	// BlockCallout is a managed Obsidian-style callout / admonition (#308).
+	// Like the other multi-line types it is inherently multi-line: CleanText
+	// retains the full `> [!variant] message` + subsequent `>` body lines with
+	// internal newlines. The on-disk form is standard Obsidian callout syntax
+	// plus a trailing block-identity comment:
+	//
+	//   > [!note] Title
+	//   > Body paragraph
+	//   >
+	//   > Second paragraph
+	//   <!-- id: uuid @ date -->
+	//
+	// The region opens at `> [!variant]` and absorbs all subsequent `>` lines
+	// (including bare `>` for paragraph breaks). It ends at the first non-`>`
+	// line. A plain `> text` (without `[!`) is NOT a callout opener — it stays
+	// a NOTE block with a quote prefix.
+	BlockCallout BlockType = "CALLOUT"
 )
 
 type ParsedBlock struct {
