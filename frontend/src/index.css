@@ -528,11 +528,6 @@ body {
     color-mix(in srgb, var(--color-accent-secondary-start) 50%, transparent);
   margin-left: 8px;
 }
-@media (prefers-reduced-motion: reduce) {
-  .silt-quote {
-    transition: none;
-  }
-}
 
 /* Callout / admonition (#180). A bordered, iconified box whose accent is the
    variant's status token (warning → warn, danger → danger, etc.). The variant

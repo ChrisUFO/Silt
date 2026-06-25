@@ -655,6 +655,45 @@ func (a *App) AppendDismissedTip(tipID string) error {
 	return config.Save(a.vaultPath, a.cfg)
 }
 
+// SetShowFormatToolbar atomically writes the format-toolbar visibility to
+// config.yaml. It exists so the global format-toolbar toggle (hotkey / floating
+// button) does NOT route through the frontend's saveConfig — that path clears
+// the settings dirty flag and would silently clobber a user's unsaved EditorTab
+// draft. Mirrors AppendDismissedTip: lock, mutate the one field, self-write
+// suppress, save. The frontend mirrors the field into its config snapshot
+// without touching dirty.
+func (a *App) SetShowFormatToolbar(value bool) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	a.cfg.UI.ShowFormatToolbar = &value
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	return config.Save(a.vaultPath, a.cfg)
+}
+
+// SetFocusMode atomically writes the editor focus-mode flag. Same rationale as
+// SetShowFormatToolbar — avoids clobbering an unsaved settings draft.
+func (a *App) SetFocusMode(value bool) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	a.cfg.Editor.FocusMode = &value
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	return config.Save(a.vaultPath, a.cfg)
+}
+
 // GetPluginSettingsForNotebook resolves a plugin's settings map for the
 // ACTIVE notebook, applying the co-located per-notebook override layer (#133).
 //

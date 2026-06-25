@@ -3,7 +3,9 @@ import {
   GetConfigLoadError,
   SaveSystemConfig,
   UpdatePluginSetting,
-  AppendDismissedTip
+  AppendDismissedTip,
+  SetShowFormatToolbar,
+  SetFocusMode
 } from '../../wailsjs/go/main/App.js'
 import { EventsOn } from '../../wailsjs/runtime/runtime.js'
 import type { config } from '../../wailsjs/go/models.js'
@@ -177,21 +179,52 @@ export async function reloadFromBackend(): Promise<void> {
   settings.pendingExternal = false
 }
 
-/** Toggle the formatting toolbar visibility state. */
-export async function toggleFormatToolbar(): Promise<boolean> {
+/**
+ * Toggle the formatting toolbar visibility state. Writes the single field
+ * atomically via the backend (SetShowFormatToolbar) and mirrors it into the
+ * config snapshot — it deliberately does NOT call saveConfig, which would clear
+ * `dirty` and silently clobber a user's unsaved EditorTab draft. Mirrors the
+ * appendDismissedTip pattern. Returns the new effective value.
+ */
+export async function toggleFormatToolbar(): Promise<boolean | null> {
   const cfg = settings.config
-  if (!cfg) return false
+  if (!cfg) return null
   if (!cfg.ui) cfg.ui = {} as any
-  cfg.ui.show_format_toolbar =
-    cfg.ui.show_format_toolbar === false ? true : false
-  return saveConfig(cfg)
+  const next = cfg.ui.show_format_toolbar === false ? true : false
+  settings.saving = true
+  settings.error = ''
+  try {
+    await SetShowFormatToolbar(next)
+    cfg.ui.show_format_toolbar = next
+    return next
+  } catch (e) {
+    settings.error = errMsg(e)
+    return null
+  } finally {
+    settings.saving = false
+  }
 }
 
-/** Toggle the editor focus mode (dimming inactive paragraphs). */
-export async function toggleFocusMode(): Promise<boolean> {
+/**
+ * Toggle the editor focus mode (dimming inactive paragraphs). Same atomic
+ * single-field write as toggleFormatToolbar — avoids clobbering an unsaved
+ * settings draft.
+ */
+export async function toggleFocusMode(): Promise<boolean | null> {
   const cfg = settings.config
-  if (!cfg) return false
+  if (!cfg) return null
   if (!cfg.editor) cfg.editor = {} as any
-  cfg.editor.focus_mode = !cfg.editor.focus_mode
-  return saveConfig(cfg)
+  const next = !cfg.editor.focus_mode
+  settings.saving = true
+  settings.error = ''
+  try {
+    await SetFocusMode(next)
+    cfg.editor.focus_mode = next
+    return next
+  } catch (e) {
+    settings.error = errMsg(e)
+    return null
+  } finally {
+    settings.saving = false
+  }
 }

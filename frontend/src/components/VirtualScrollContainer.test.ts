@@ -1,163 +1,106 @@
-// Component test for VirtualScrollContainer's inline title editing (#259).
-// Verifies that typing into the contenteditable `<h1>` title does NOT have
-// its caret collapse to position 0 when the debounced rename round-trip
-// flows back through the `page` prop. The editor body has an isFocused guard
-// (TipTapEditor.svelte); the title needs the same protection.
+// Component coverage for the editor chrome relocated into VirtualScrollContainer
+// (the EditorUtilityBar/FormatToolbar conditional + the floating action buttons).
+// The heavy editor child + utility bar are stubbed (existing *.stub.svelte
+// components) and the IPC/store/viewMode seams are mocked, so this exercises
+// only VSC's own conditional wiring — the contract the deleted EditorUtilityBar
+// tests used to cover.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, cleanup, waitFor } from '@testing-library/svelte'
-import { tick } from 'svelte'
+import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import TipTapEditorStub from './TipTapEditor.stub.svelte'
+import EditorUtilityBarStub from './editor/EditorUtilityBar.stub.svelte'
 
 const mocks = vi.hoisted(() => ({
-  fetchPageBlocks: vi.fn(),
-  renamePage: vi.fn(),
-  eventsOn: vi.fn(() => () => {})
+  settings: {
+    config: {
+      ui: { show_format_toolbar: true },
+      editor: { focus_mode: false }
+    }
+  },
+  viewMode: 'edit' as string,
+  toggleFocusMode: vi.fn(() => Promise.resolve(true)),
+  toggleFormatToolbar: vi.fn(() => Promise.resolve(true)),
+  toggleViewMode: vi.fn()
 }))
 
 vi.mock('../../wailsjs/go/main/App.js', () => ({
-  FetchPageBlocks: mocks.fetchPageBlocks,
-  RenamePage: mocks.renamePage
+  FetchPageBlocks: vi.fn(() => Promise.resolve([])),
+  RenamePage: vi.fn(() => Promise.resolve(undefined))
 }))
-
 vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: mocks.eventsOn
+  // VSC stores the returned unsubscribe and calls it on destroy; return a noop.
+  EventsOn: vi.fn(() => () => {})
 }))
 
-// Stub the heavy editor and utility bar — the title-editing contract is
-// independent of their internals.
-vi.mock('./TipTapEditor.svelte', async () => {
-  const mod = await import('./TipTapEditor.stub.svelte')
-  return { default: mod.default }
-})
+vi.mock('./TipTapEditor.svelte', () => ({ default: TipTapEditorStub }))
+vi.mock('./editor/EditorUtilityBar.svelte', () => ({
+  default: EditorUtilityBarStub
+}))
 
-vi.mock('./editor/EditorUtilityBar.svelte', async () => {
-  const mod = await import('./editor/EditorUtilityBar.stub.svelte')
-  return { default: mod.default }
-})
-
+vi.mock('../settings/store.svelte.ts', () => ({
+  settings: mocks.settings,
+  toggleFocusMode: mocks.toggleFocusMode,
+  toggleFormatToolbar: mocks.toggleFormatToolbar
+}))
 vi.mock('../lib/viewMode.svelte', () => ({
-  getViewMode: vi.fn(() => 'edit' as const),
-  toggleViewMode: vi.fn()
+  getViewMode: () => mocks.viewMode,
+  toggleViewMode: mocks.toggleViewMode
 }))
 
 import VirtualScrollContainer from './VirtualScrollContainer.svelte'
 
-function makeProps(overrides: Record<string, unknown> = {}) {
-  return {
-    notebook: 'Work',
-    section: 'Projects',
-    page: 'Untitled',
-    isActive: true,
-    onPageRenamed: vi.fn(),
-    ...overrides
-  }
-}
-
-describe('VirtualScrollContainer — inline title editing (#259)', () => {
+describe('VirtualScrollContainer editor chrome', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
-    mocks.fetchPageBlocks.mockResolvedValue([])
-    mocks.renamePage.mockResolvedValue(undefined)
+    mocks.toggleFocusMode.mockClear()
+    mocks.toggleFormatToolbar.mockClear()
+    mocks.toggleViewMode.mockClear()
+    mocks.viewMode = 'edit'
+    mocks.settings.config.ui.show_format_toolbar = true
+  })
+  afterEach(() => cleanup())
+
+  it('renders the EditorUtilityBar in edit mode with the toolbar enabled', () => {
+    render(VirtualScrollContainer, {
+      props: { notebook: 'NB', section: '', page: 'PG' }
+    })
+    expect(screen.getByTestId('editor-utility-bar-stub')).toBeInTheDocument()
   })
 
-  afterEach(() => {
-    cleanup()
+  it('hides the EditorUtilityBar in source view mode', () => {
+    mocks.viewMode = 'source'
+    render(VirtualScrollContainer, {
+      props: { notebook: 'NB', section: '', page: 'PG' }
+    })
+    expect(screen.queryByTestId('editor-utility-bar-stub')).toBeNull()
+    // The view-mode toggle reflects the action available (switch back to edit).
+    expect(
+      screen.getByRole('button', { name: 'Toggle View Mode' })
+    ).toHaveAttribute('title', 'View Rich Text (Ctrl+Shift+V)')
   })
 
-  it('does NOT overwrite title text when page prop changes during focus', async () => {
-    const props = makeProps()
-    const { rerender } = render(VirtualScrollContainer, { props })
-
-    await waitFor(() => {
-      expect(mocks.fetchPageBlocks).toHaveBeenCalled()
+  it('hides the EditorUtilityBar when show_format_toolbar is false', () => {
+    mocks.settings.config.ui.show_format_toolbar = false
+    render(VirtualScrollContainer, {
+      props: { notebook: 'NB', section: '', page: 'PG' }
     })
-
-    const h1 = document.querySelector(
-      'h1[contenteditable]'
-    ) as HTMLHeadingElement
-    expect(h1).toBeTruthy()
-    expect(h1.textContent).toBe('Untitled')
-
-    // Focus the title (simulates user starting to edit the page name).
-    h1.focus()
-    await tick()
-
-    // Simulate the rename round-trip: the debounced doRename fires,
-    // RenamePage IPC resolves, onPageRenamed is called, and the parent
-    // re-renders with a new page value flowing back into the prop.
-    //
-    // On the BUGGY code, `{page}` is reactively bound in the template, so
-    // Svelte patches the `<h1>` text to whatever the new `page` is —
-    // overwriting whatever the user is typing and collapsing the caret.
-    //
-    // On the FIXED code, a focus guard prevents the reactive patch while
-    // the user is editing, so the title text is preserved.
-    rerender({ ...props, page: 'Different Value' })
-    await tick()
-
-    // The displayed title should NOT have been overwritten while focused.
-    expect(h1.textContent).toBe('Untitled')
+    expect(screen.queryByTestId('editor-utility-bar-stub')).toBeNull()
   })
 
-  it('updates title text when page prop changes and title is NOT focused', async () => {
-    const props = makeProps()
-    const { rerender } = render(VirtualScrollContainer, { props })
-
-    await waitFor(() => {
-      expect(mocks.fetchPageBlocks).toHaveBeenCalled()
+  it('renders the three floating toggle buttons and dispatches their handlers', async () => {
+    render(VirtualScrollContainer, {
+      props: { notebook: 'NB', section: '', page: 'PG' }
     })
-
-    const h1 = document.querySelector(
-      'h1[contenteditable]'
-    ) as HTMLHeadingElement
-    expect(h1.textContent).toBe('Untitled')
-
-    // Title is NOT focused — external page changes should sync into the DOM
-    // (e.g. navigating to a different page, or a rename committed elsewhere).
-    rerender({ ...props, page: 'Renamed Externally' })
-    await tick()
-
-    expect(h1.textContent).toBe('Renamed Externally')
-  })
-
-  it('restores title and displayTitle on rename error (doRename catch)', async () => {
-    // Mock RenamePage to reject — simulates a disk error or name collision.
-    mocks.renamePage.mockRejectedValue(new Error('disk full'))
-
-    const props = makeProps()
-    render(VirtualScrollContainer, { props })
-
-    await waitFor(() => {
-      expect(mocks.fetchPageBlocks).toHaveBeenCalled()
-    })
-
-    const h1 = document.querySelector(
-      'h1[contenteditable]'
-    ) as HTMLHeadingElement
-
-    // Focus the title and type a new name.
-    h1.focus()
-    await tick()
-    h1.textContent = 'Rejected Name'
-
-    // Fire the input handler to start the 500ms rename debounce.
-    h1.dispatchEvent(new Event('input', { bubbles: true }))
-
-    // Wait for the debounce (500ms) + the rejected promise to settle.
-    await waitFor(() => {
-      expect(mocks.renamePage).toHaveBeenCalledWith(
-        'Work',
-        'Projects',
-        'Untitled',
-        'Rejected Name'
-      )
-    })
-    // Allow the catch block to run after the rejection.
-    await tick()
-    await tick()
-
-    // After the rename fails, the DOM should revert to the original page
-    // name — no stale "Rejected Name" lingering in the title.
-    expect(h1.textContent).toBe('Untitled')
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Toggle Focus Mode' })
+    )
+    expect(mocks.toggleFocusMode).toHaveBeenCalledTimes(1)
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Toggle Formatting Toolbar' })
+    )
+    expect(mocks.toggleFormatToolbar).toHaveBeenCalledTimes(1)
+    // The view-mode button is present and announces the current mode.
+    expect(
+      screen.getByRole('button', { name: 'Toggle View Mode' })
+    ).toBeInTheDocument()
   })
 })

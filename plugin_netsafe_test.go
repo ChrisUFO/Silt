@@ -212,9 +212,15 @@ func TestStripHeadersForRedirect_SetsDefaultUserAgentWhenAbsent(t *testing.T) {
 // (#234 fail-closed contract).
 func withSafeFetchLookupIP(t *testing.T, fn func(ctx context.Context, network, host string) ([]net.IP, error)) {
 	t.Helper()
+	safeFetchLookupMu.Lock()
 	orig := safeFetchLookupIP
 	safeFetchLookupIP = fn
-	t.Cleanup(func() { safeFetchLookupIP = orig })
+	safeFetchLookupMu.Unlock()
+	t.Cleanup(func() {
+		safeFetchLookupMu.Lock()
+		safeFetchLookupIP = orig
+		safeFetchLookupMu.Unlock()
+	})
 }
 
 // newSafeFetchClient's DialContext MUST fail-closed when LookupIP returns an

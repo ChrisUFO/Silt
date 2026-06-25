@@ -261,13 +261,13 @@ func Defaults() SystemConfig {
 			"format_highlight":   "Ctrl+Shift+H",
 			"format_subscript":   "Ctrl+,",
 			"format_superscript": "Ctrl+.",
-			// Heading level hotkeys (#169). Standard Word/Google Docs bindings.
+			// Heading level hotkeys (#169). Standard heading-level bindings.
 			"set_h1":   "Ctrl+Alt+1",
 			"set_h2":   "Ctrl+Alt+2",
 			"set_h3":   "Ctrl+Alt+3",
 			"set_note": "Ctrl+Alt+0",
 			"set_task": "Ctrl+Alt+4",
-			// Text alignment hotkeys (#173). Standard Word/Google Docs bindings.
+			// Text alignment hotkeys (#173). Standard alignment bindings.
 			"align_left":    "Ctrl+Shift+L",
 			"align_center":  "Ctrl+Shift+E",
 			"align_right":   "Ctrl+Shift+R",
@@ -277,7 +277,7 @@ func Defaults() SystemConfig {
 			// Foldable details toggle (#183). Ctrl+Shift+. (Ctrl+. is taken by
 			// the Superscript mark).
 			"toggle_details": "Ctrl+Shift+.",
-			// Table row/column insert hotkeys (#172). Standard Word/Google Docs
+			// Table row/column insert hotkeys (#172). Standard row/column-insert
 			// bindings; deletion + merge are toolbar-only in v1.
 			"table_insert_row_above": "Ctrl+Shift+Up",
 			"table_insert_row_below": "Ctrl+Shift+Down",

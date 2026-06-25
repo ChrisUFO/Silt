@@ -107,7 +107,8 @@
             Keyboard Shortcuts
           </h4>
           <span class="text-text-muted text-[10px]">
-            Format: Ctrl+Shift+Key (Leave empty to disable)
+            Leave empty to disable. Modifiers+key (e.g. Ctrl+Shift+9,
+            Ctrl+Alt+2).
           </span>
         </div>
         <div class="grid grid-cols-2 gap-x-6 gap-y-3">

@@ -884,6 +884,7 @@
                 !sidebarCollapsed}
               class:text-text-muted={activeView !== v.id || sidebarCollapsed}
               aria-label={v.label}
+              aria-pressed={activeView === v.id}
               title={v.label}
             >
               {#if activeView === v.id && !sidebarCollapsed}

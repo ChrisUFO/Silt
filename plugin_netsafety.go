@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -100,8 +101,22 @@ func isPrivateIP(ip net.IP) bool {
 // safeFetchLookupIP is the resolver used by newSafeFetchClient's DialContext.
 // Package-level so tests can swap in a stub that simulates DNS failure and
 // pin the fail-closed contract (#234) without exercising the real resolver.
-var safeFetchLookupIP = func(ctx context.Context, network, host string) ([]net.IP, error) {
-	return net.DefaultResolver.LookupIP(ctx, network, host)
+// Guarded by safeFetchLookupMu because the HTTP transport may dial on a
+// background goroutine that outlives the request, so the test's swap/restore
+// must not race the dialer's read (the -race gate caught this).
+var (
+	safeFetchLookupMu sync.RWMutex
+	safeFetchLookupIP = func(ctx context.Context, network, host string) ([]net.IP, error) {
+		return net.DefaultResolver.LookupIP(ctx, network, host)
+	}
+)
+
+// lookupIPSafe returns the current resolver under the read lock so concurrent
+// swaps (tests) can't race a dial-in-flight.
+func lookupIPSafe() func(ctx context.Context, network, host string) ([]net.IP, error) {
+	safeFetchLookupMu.RLock()
+	defer safeFetchLookupMu.RUnlock()
+	return safeFetchLookupIP
 }
 
 // newSafeFetchClient returns an *http.Client with the SSRF-defended transport
@@ -126,7 +141,8 @@ func newSafeFetchClient(timeout time.Duration) *http.Client {
 			if splitErr != nil {
 				return nil, splitErr
 			}
-			ips, lookupErr := safeFetchLookupIP(ctx, "ip", host)
+			lookup := lookupIPSafe()
+			ips, lookupErr := lookup(ctx, "ip", host)
 			if lookupErr != nil || len(ips) == 0 {
 				// IP-literal hosts bypass DNS entirely — validate + dial them
 				// directly so a lookup failure for "1.2.3.4" doesn't wrongly
