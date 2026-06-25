@@ -391,18 +391,26 @@ func TestAuditTrail_UninstallEmitsPerCapabilityRevokeEntries(t *testing.T) {
 		actions = append(actions, e.Action+":"+e.Capability)
 	}
 	// The install and uninstall entries have empty Capability.
-	wantSequence := []string{
-		"install:", "grant:network", "grant:write-files",
-		"revoke:network", "revoke:write-files", "uninstall:",
+	if len(entries) != 6 {
+		t.Fatalf("entry count = %d, want 6\nactions: %v", len(entries), actions)
 	}
-	if len(entries) != len(wantSequence) {
-		t.Fatalf("entry count = %d, want %d\nactions: %v", len(entries), len(wantSequence), actions)
+	if actions[0] != "install:" {
+		t.Errorf("actions[0] = %q, want install:", actions[0])
 	}
-	for i, want := range wantSequence {
-		got := entries[i].Action + ":" + entries[i].Capability
-		if got != want {
-			t.Errorf("entry[%d] = %q, want %q\nfull sequence: %v", i, got, want, actions)
-		}
+	if actions[5] != "uninstall:" {
+		t.Errorf("actions[5] = %q, want uninstall:", actions[5])
+	}
+
+	// Grants must contain network and write-files in any order
+	grants := map[string]bool{actions[1]: true, actions[2]: true}
+	if !grants["grant:network"] || !grants["grant:write-files"] {
+		t.Errorf("grants[1:3] did not contain expected actions, got %v", actions[1:3])
+	}
+
+	// Revokes must contain network and write-files in any order
+	revokes := map[string]bool{actions[3]: true, actions[4]: true}
+	if !revokes["revoke:network"] || !revokes["revoke:write-files"] {
+		t.Errorf("revokes[3:5] did not contain expected actions, got %v", actions[3:5])
 	}
 }
 

@@ -361,18 +361,7 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    height: 36px;
-    padding: 0 8px;
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    background: color-mix(
-      in srgb,
-      var(--color-surface, #1a1d24) 95%,
-      transparent
-    );
-    backdrop-filter: blur(8px);
-    border-bottom: 1px solid var(--color-border-muted, #2a2e36);
+    height: 100%;
   }
 
   .toolbar-group {

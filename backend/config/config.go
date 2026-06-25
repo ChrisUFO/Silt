@@ -285,6 +285,9 @@ func Defaults() SystemConfig {
 			"table_insert_col_right": "Ctrl+Shift+Right",
 			// View mode toggle (#171). Standard source/view toggle binding.
 			"toggle_view_mode": "Ctrl+Shift+V",
+			// Formatting toolbar toggle and focus mode toggle (#168 Phase 3).
+			"toggle_format_toolbar": "Ctrl+Shift+F",
+			"toggle_focus_mode":     "Ctrl+Shift+D",
 		},
 		Plugins: PluginsConfig{
 			Active:   []string{"silt-agenda", "silt-calendar", "silt-kanban"},

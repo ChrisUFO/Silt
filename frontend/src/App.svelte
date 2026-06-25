@@ -31,7 +31,9 @@
     initConfigHotReload,
     loadConfig,
     settings,
-    type SystemConfig
+    type SystemConfig,
+    toggleFormatToolbar,
+    toggleFocusMode
   } from './settings/store.svelte'
   import { initEditorTokens } from './settings/editor-tokens.svelte'
   import { initThemes } from './theme/store.svelte'
@@ -474,6 +476,14 @@
       if (matchHotkey(e, hotkeys.toggle_view_mode)) {
         e.preventDefault()
         window.dispatchEvent(new CustomEvent('toggle-view-mode'))
+      }
+      if (matchHotkey(e, hotkeys.toggle_format_toolbar)) {
+        e.preventDefault()
+        void toggleFormatToolbar()
+      }
+      if (matchHotkey(e, hotkeys.toggle_focus_mode)) {
+        e.preventDefault()
+        void toggleFocusMode()
       }
       // Tab-strip hotkeys (#142). Ctrl+Tab / Ctrl+Shift+Tab cycle MRU;
       // Ctrl+W closes the active tab. All three are remappable / disable-

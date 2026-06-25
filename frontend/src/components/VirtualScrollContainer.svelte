@@ -361,6 +361,9 @@
 </div>
 
 <style>
+  h1[contenteditable] {
+    transition: border-bottom-color 0.25s ease-in-out;
+  }
   h1[contenteditable]:hover {
     border-bottom-color: var(--color-border-muted) !important;
   }

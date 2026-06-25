@@ -2,7 +2,11 @@
   import type { Editor } from 'svelte-tiptap'
   import FormatToolbar from './FormatToolbar.svelte'
   import ViewModeToggle from './ViewModeToggle.svelte'
-  import { settings } from '../../settings/store.svelte'
+  import {
+    settings,
+    toggleFormatToolbar,
+    toggleFocusMode
+  } from '../../settings/store.svelte'
   import { isSystemDark } from '../../lib/systemTheme.svelte'
 
   // EditorUtilityBar — extracted from VirtualScrollContainer (#202).
@@ -23,26 +27,65 @@
   let showFormatToolbar = $derived(
     settings.config?.ui?.show_format_toolbar !== false
   )
+  let focusModeActive = $derived(settings.config?.editor?.focus_mode === true)
   let isDark = $derived(isSystemDark())
   let colorEnabled = $derived(
     settings.config?.ui?.formatting?.color_enabled !== false
   )
+
+  function handleToggleFocus() {
+    toggleFocusMode()
+  }
+
+  function handleToggleToolbar() {
+    toggleFormatToolbar()
+  }
 </script>
 
-{#if viewMode === 'edit' && showFormatToolbar}
-  <div class="unified-utility-bar">
+<div
+  class="unified-utility-bar"
+  class:justify-end={viewMode !== 'edit' || !showFormatToolbar}
+>
+  {#if viewMode === 'edit' && showFormatToolbar}
     <div class="flex items-center">
       <FormatToolbar {editor} {activeMarks} {isDark} {colorEnabled} />
     </div>
-    <div class="flex items-center">
-      <ViewModeToggle mode={viewMode} onToggle={onToggleViewMode} />
-    </div>
-  </div>
-{:else}
-  <div class="unified-utility-bar justify-end">
+  {/if}
+
+  <div class="flex items-center gap-1">
+    {#if viewMode === 'edit'}
+      <!-- Focus Mode Toggle -->
+      <button
+        onclick={handleToggleFocus}
+        class="h-7 w-7 flex items-center justify-center rounded transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover"
+        class:text-accent-primary-start={focusModeActive}
+        class:text-text-muted={!focusModeActive}
+        title="Toggle Focus Mode (Ctrl+Shift+D)"
+        aria-label="Toggle Focus Mode"
+      >
+        <span class="material-symbols-outlined text-[18px]"
+          >center_focus_strong</span
+        >
+      </button>
+
+      <!-- Zen Mode / Toolbar Toggle -->
+      <button
+        onclick={handleToggleToolbar}
+        class="h-7 w-7 flex items-center justify-center rounded transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover"
+        class:text-accent-primary-start={showFormatToolbar}
+        class:text-text-muted={!showFormatToolbar}
+        title="Toggle Formatting Toolbar (Ctrl+Shift+F)"
+        aria-label="Toggle Formatting Toolbar"
+      >
+        <span class="material-symbols-outlined text-[18px]">text_format</span>
+      </button>
+
+      <div class="w-px h-4 bg-border-muted mx-1"></div>
+    {/if}
+
     <ViewModeToggle mode={viewMode} onToggle={onToggleViewMode} />
   </div>
-{/if}
+</div>
 
 <style>
   .unified-utility-bar {

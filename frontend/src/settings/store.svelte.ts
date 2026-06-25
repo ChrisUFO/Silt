@@ -176,3 +176,22 @@ export async function reloadFromBackend(): Promise<void> {
   await loadConfig()
   settings.pendingExternal = false
 }
+
+/** Toggle the formatting toolbar visibility state. */
+export async function toggleFormatToolbar(): Promise<boolean> {
+  const cfg = settings.config
+  if (!cfg) return false
+  if (!cfg.ui) cfg.ui = {} as any
+  cfg.ui.show_format_toolbar =
+    cfg.ui.show_format_toolbar === false ? true : false
+  return saveConfig(cfg)
+}
+
+/** Toggle the editor focus mode (dimming inactive paragraphs). */
+export async function toggleFocusMode(): Promise<boolean> {
+  const cfg = settings.config
+  if (!cfg) return false
+  if (!cfg.editor) cfg.editor = {} as any
+  cfg.editor.focus_mode = !cfg.editor.focus_mode
+  return saveConfig(cfg)
+}
