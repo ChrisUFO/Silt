@@ -328,6 +328,31 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(blocksToDoc(blocks).content[0]?.type).toBe('calloutBlock')
   })
 
+  it('callout variants are matched case-insensitively (#180)', () => {
+    // Obsidian commonly writes [!NOTE] / [!Tip] (uppercase/mixed). Detection is
+    // case-insensitive; the variant is normalized to lowercase for the NodeView
+    // lookup and the on-disk emit.
+    for (const [input, expected] of [
+      ['[!NOTE]', 'note'],
+      ['[!Warning]', 'warning'],
+      ['[!TIP]', 'tip']
+    ] as const) {
+      const blocks = [
+        mkBlock('NOTE', {
+          raw_text: `> ${input} hi`,
+          clean_text: `> ${input} hi`
+        })
+      ]
+      const node = blocksToDoc(blocks).content[0]
+      expect(node?.type).toBe('calloutBlock')
+      expect(node?.attrs?.variant).toBe(expected)
+      // Emits the canonical lowercase marker.
+      expect(docToBlocks(blocksToDoc(blocks))[0].clean_text).toBe(
+        `> [!${expected}] hi`
+      )
+    }
+  })
+
   it('round-trips a multi-line CODE block with language (#189)', () => {
     const code = 'func main() {\n\tprintln("hi")\n}'
     const blocks = [

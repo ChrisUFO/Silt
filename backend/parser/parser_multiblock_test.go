@@ -137,3 +137,50 @@ func TestCodeBlock_NestedBacktickFence(t *testing.T) {
 		t.Errorf("nested-fence body drifted\nwant: %q\n got: %q", inner, reparsed[0].CleanText)
 	}
 }
+
+// A closing fence must be backticks-only (GFM): a ```js line inside the block
+// is an inner fence WITH an info string, NOT a closer. Without this rule a
+// 3-backtick block that documents another fence closes prematurely and the
+// spill becomes prose — silent corruption that contradicts the GFM/Obsidian/
+// GitHub interop guarantee. Must render as ONE block matching GitHub.
+func TestCodeBlock_InfoStringLineIsNotACloser(t *testing.T) {
+	src := "```markdown\n" +
+		"Example:\n" +
+		"```js\n" +
+		"foo()\n" +
+		"```\n" +
+		"done\n"
+	first, _, _, _, err := ParseFileContent(src, "NB", "", "PG", "2026-06-14", 4)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var code *ParsedBlock
+	for i := range first {
+		if first[i].Type == BlockCode {
+			code = &first[i]
+		}
+	}
+	if code == nil {
+		t.Fatalf("expected one BlockCode, got %+v", first)
+	}
+	wantBody := "Example:\n```js\nfoo()"
+	if code.CleanText != wantBody {
+		t.Errorf("info-string-fence body drifted (block split prematurely?)\nwant: %q\n got: %q",
+			wantBody, code.CleanText)
+	}
+	// Round-trip is byte-stable.
+	rendered := RenderFileContent(first, "", "", 4)
+	second, _, _, _, err := ParseFileContent(rendered, "NB", "", "PG", "2026-06-14", 4)
+	if err != nil {
+		t.Fatalf("reparse: %v", err)
+	}
+	var code2 *ParsedBlock
+	for i := range second {
+		if second[i].Type == BlockCode {
+			code2 = &second[i]
+		}
+	}
+	if code2 == nil || code2.CleanText != wantBody {
+		t.Errorf("round-trip lost the info-string-fence body\nrendered:\n%s", rendered)
+	}
+}

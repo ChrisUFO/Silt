@@ -86,9 +86,11 @@ function detectQuote(body: string): { quote: string; body: string } {
 // line whose body starts with `[!variant]`. Returns the variant + the message
 // (everything after the marker), or null when the line is not a callout. A
 // callout takes precedence over a plain quote (it IS a quote whose first token
-// is the `[!type]` marker).
+// is the `[!type]` marker). The `i` flag matches Obsidian's case-insensitive
+// variant names ([!NOTE], [!Tip]); the captured variant is lowercased so the
+// NodeView's CALLOUT_VARIANTS lookup and the on-disk emit stay canonical.
 const CALLOUT_RE =
-  /^\[!(note|info|tip|warning|danger|success|quote)\](?:\s+(.*))?$/
+  /^\[!(note|info|tip|warning|danger|success|quote)\](?:\s+(.*))?$/i
 function detectCallout(
   body: string
 ): { variant: string; message: string } | null {
@@ -97,7 +99,7 @@ function detectCallout(
   const afterMarker = body.slice(q[0].length)
   const m = afterMarker.match(CALLOUT_RE)
   if (!m) return null
-  return { variant: m[1], message: m[2] ?? '' }
+  return { variant: m[1].toLowerCase(), message: m[2] ?? '' }
 }
 
 // ---- Alignment marker helpers (#173) -------------------------------------

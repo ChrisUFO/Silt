@@ -350,6 +350,18 @@ func isCodeFence(trimmedLine string) bool {
 	return codeFenceLen(trimmedLine) >= 3
 }
 
+// isClosingFence reports whether a (TrimSpace'd) line is a valid GFM CLOSING
+// fence for an opener of openerLen backticks. A closer must have at least
+// openerLen backticks AND nothing but whitespace after them — an info string
+// (e.g. ```js) is allowed on an OPENER but disqualifies a closer. Without this
+// check a 3-backtick block documenting another fence (```js) would close
+// prematurely, silently corrupting the file. Openers are still detected with
+// plain codeFenceLen (info strings are legal there).
+func isClosingFence(trimmed string, openerLen int) bool {
+	n := codeFenceLen(trimmed)
+	return n >= openerLen && strings.TrimSpace(trimmed[n:]) == ""
+}
+
 // accumulateCodeRegion reads a fenced code block starting at lines[openIdx]
 // (an opener fence) and returns:
 //   - consumedTo: the index of the last consumed input line (the closer, or
@@ -370,10 +382,12 @@ func accumulateCodeRegion(lines []string, openIdx, lineNumber int, meta *FileMet
 	openerLen := codeFenceLen(openerTrim)
 	lang := strings.TrimSpace(openerTrim[openerLen:])
 
-	// Find the closing fence: the first later fence with >= openerLen backticks.
+	// Find the closing fence: the first later line that is a valid GFM closer
+	// for this opener (>= openerLen backticks, no info string). A ```js line
+	// inside the block is NOT a closer (info strings are opener-only).
 	closer := -1
 	for j := openIdx + 1; j < len(lines); j++ {
-		if codeFenceLen(strings.TrimSpace(lines[j])) >= openerLen {
+		if isClosingFence(strings.TrimSpace(lines[j]), openerLen) {
 			closer = j
 			break
 		}
@@ -661,7 +675,7 @@ func RenderFileContent(blocks []ParsedBlock, originalBody, frontmatter string, s
 				openerLen := codeFenceLen(trimmed)
 				closer := -1
 				for j := idx + 1; j < len(bodyLines0); j++ {
-					if codeFenceLen(strings.TrimSpace(bodyLines0[j])) >= openerLen {
+					if isClosingFence(strings.TrimSpace(bodyLines0[j]), openerLen) {
 						closer = j
 						break
 					}
@@ -673,10 +687,16 @@ func RenderFileContent(blocks []ParsedBlock, originalBody, frontmatter string, s
 				}
 				consumed := closer + 1
 				// If the line right after the closer is this code block's id
-				// comment, skip it too (renderBlock emits a fresh one).
+				// comment, skip it too (renderBlock emits a fresh one). Mirror
+				// accumulateCodeRegion's strict predicate (a dedicated id line)
+				// so render and parse agree on the region boundary; a prose line
+				// that merely ends in an id-shaped comment must NOT be consumed.
 				if consumed < len(bodyLines0) {
-					if m := IDRegex.FindStringSubmatch(bodyLines0[consumed]); len(m) > 1 {
-						consumed++
+					cand := strings.TrimSpace(bodyLines0[consumed])
+					if strings.HasPrefix(cand, "<!-- id:") {
+						if m := IDRegex.FindStringSubmatch(bodyLines0[consumed]); len(m) > 1 {
+							consumed++
+						}
 					}
 				}
 				idx = consumed - 1

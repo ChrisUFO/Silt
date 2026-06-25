@@ -368,7 +368,7 @@
 
   <!-- Floating Editor Actions Bar -->
   <div
-    class="absolute right-6 z-40 flex items-center gap-1 p-1 bg-panel/60 backdrop-blur-md border border-border-muted/50 rounded-full shadow-lg transition-all duration-300 opacity-20 hover:opacity-100 hover:scale-105"
+    class="absolute right-6 z-40 flex items-center gap-1 p-1 bg-panel/60 backdrop-blur-md border border-border-muted/50 rounded-full shadow-lg transition-all duration-300 opacity-60 hover:opacity-100 hover:scale-105"
     class:top-4={!(viewMode === 'edit' && showFormatToolbar)}
     class:top-14={viewMode === 'edit' && showFormatToolbar}
   >
