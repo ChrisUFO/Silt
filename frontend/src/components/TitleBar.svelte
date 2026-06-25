@@ -49,6 +49,10 @@
     return () => window.removeEventListener('resize', onResize)
   })
 
+  let brandZoneWidth = $derived(
+    sidebarCollapsed ? (isMac ? 80 : 48) : (isMac ? 80 : 48) + sidebarWidth
+  )
+
   function handleToggleMax() {
     WindowToggleMaximise()
     // Optimistic flip; resize listener will correct it if the platform
@@ -65,31 +69,40 @@
     <!-- Brand strip aligns over the sidebar; collapses when sidebar does -->
     <div
       class="flex items-center gap-2 h-full flex-shrink-0 transition-all duration-200 ease-out overflow-hidden"
-      style:width={sidebarCollapsed ? '0px' : sidebarWidth + 'px'}
+      style:width={brandZoneWidth + 'px'}
       style:padding-left={isMac && !sidebarCollapsed ? '80px' : undefined}
       class:px-4={!sidebarCollapsed && !isMac}
-      class:px-3={sidebarCollapsed}
+      class:px-3={sidebarCollapsed && !isMac}
     >
-      <div
-        class="relative logo-container flex items-center gap-2 group cursor-pointer"
-      >
+      {#if !isMac || !sidebarCollapsed}
         <div
-          class="relative logo-shimmer flex-shrink-0 w-6 h-6 rounded-md overflow-hidden"
+          class="relative logo-container flex items-center gap-2 group cursor-pointer"
+          class:justify-center={sidebarCollapsed}
+          class:w-full={sidebarCollapsed}
         >
-          <img
-            src={logo}
-            alt="Silt"
-            class="w-full h-full logo-img transition-all duration-300"
-          />
           <div
-            class="absolute inset-0 logo-shimmer-sweep pointer-events-none"
-          ></div>
+            class="relative logo-shimmer flex-shrink-0 w-6 h-6 rounded-md overflow-hidden"
+          >
+            <img
+              src={logo}
+              alt="Silt"
+              class="w-full h-full logo-img transition-all duration-300"
+            />
+            <div
+              class="absolute inset-0 logo-shimmer-sweep pointer-events-none"
+            ></div>
+          </div>
+          {#if !sidebarCollapsed}
+            <span
+              class="font-headline-md text-headline-md text-text-primary font-bold tracking-tight whitespace-nowrap group-hover:text-accent-primary-start transition-colors duration-300"
+              >Silt</span
+            >
+            {#if isMac}
+              <!-- Add a tiny dot next to the wordmark on macOS to fill space if needed, or leave it clean -->
+            {/if}
+          {/if}
         </div>
-        <span
-          class="font-headline-md text-headline-md text-text-primary font-bold tracking-tight whitespace-nowrap group-hover:text-accent-primary-start transition-colors duration-300"
-          >Silt</span
-        >
-      </div>
+      {/if}
     </div>
 
     {#if children}
