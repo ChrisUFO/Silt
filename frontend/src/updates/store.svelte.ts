@@ -17,7 +17,11 @@ import {
   GetUpdateSettings,
   SetUpdateSettings
 } from '../../wailsjs/go/main/App.js'
-import { EventsOn } from '../../wailsjs/runtime/runtime.js'
+import {
+  EventsOn,
+  BrowserOpenURL,
+  Quit
+} from '../../wailsjs/runtime/runtime.js'
 import { pushNotification } from '../notifications/store.svelte'
 
 export type UpdateStatus =
@@ -28,7 +32,6 @@ export type UpdateStatus =
   | 'downloading'
   | 'installing'
   | 'error'
-
 export interface UpdateState {
   status: UpdateStatus
   latestVersion: string
@@ -135,9 +138,11 @@ export async function checkNow(): Promise<void> {
 
 /**
  * startupCheck runs from App.svelte onMount. Quiet on failure (AC5): no error
- * status, no toast. On a found update it raises a non-blocking toast with a
- * View action (AC2). Safe to call when no vault is open — the check is
- * user-global, not vault-scoped.
+ * status, no toast. On a successful check it BOTH records the result in
+ * updateState (so the About panel reflects a startup-discovered update instead
+ * of showing idle) AND raises a non-blocking toast with a View action (AC2).
+ * Safe to call when no vault is open — the check is user-global, not
+ * vault-scoped.
  */
 export async function startupCheck(): Promise<void> {
   let r: CheckResult
@@ -147,6 +152,9 @@ export async function startupCheck(): Promise<void> {
     // Offline / rate-limited / parse error: stay silent on startup.
     return
   }
+  // Reflect the discovery in the shared state so the About panel (if opened
+  // after the toast) shows the available update without a manual re-check.
+  applyCheckResult(r)
   if (!r.hasUpdate) return
   const url = r.releaseUrl
   pushNotification({
@@ -155,7 +163,7 @@ export async function startupCheck(): Promise<void> {
     action: {
       label: 'View',
       run: () => {
-        if (url) openExternal(url)
+        if (url) BrowserOpenURL(url)
       }
     },
     autoDismissMs: 15_000
@@ -172,9 +180,23 @@ export async function downloadAndInstall(assetUrl: string): Promise<void> {
   try {
     const localPath = await DownloadUpdate(assetUrl)
     updateState.status = 'installing'
-    // The installer launches and Silt quits; this call is expected to return
-    // (the Go side detaches the child) right before the app exits.
-    await InstallUpdate(localPath)
+    // Install launches the installer/relaunch. If willQuit, a self-replacing
+    // installer was launched and the app must exit (via the graceful JS Quit,
+    // which runs OnShutdown → vault/WAL flush) so it can replace the locked
+    // binary. If not (Linux xdg-open hand-off), surface guidance and return to
+    // 'available' so the user can retry or place the file manually.
+    const res = (await InstallUpdate(localPath)) as { willQuit?: boolean }
+    if (res?.willQuit) {
+      // status stays 'installing' ("Silt will restart"); the window is exiting.
+      Quit()
+    } else {
+      updateState.status = 'available'
+      pushNotification({
+        kind: 'info',
+        message:
+          'Opened the downloaded package — install it to finish the upgrade.'
+      })
+    }
   } catch (e) {
     updateState.status = 'error'
     updateState.downloadProgress = null
@@ -227,18 +249,6 @@ function friendlyInstallError(e: unknown): string {
   if (/not in the latest release/i.test(msg))
     return 'The update is no longer the latest release. Re-check for updates.'
   return 'The update could not be installed.'
-}
-
-/** openExternal opens a URL in the user's default browser via the Wails bridge. */
-function openExternal(url: string): void {
-  // Imported lazily via the runtime to keep the module side-effect-free for
-  // tests that never render the About tab. The cast avoids a circular type
-  // import in the test harness.
-  import('../../wailsjs/runtime/runtime.js')
-    .then((rt) => rt.BrowserOpenURL?.(url))
-    .catch(() => {
-      /* ignore — the link is also shown in the About tab */
-    })
 }
 
 /**

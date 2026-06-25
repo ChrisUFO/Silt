@@ -115,7 +115,8 @@
             </p>
             {#if notesExcerpt(updateState.releaseNotes)}
               <pre
-                class="text-text-muted text-[11px] font-mono whitespace-pre-wrap bg-bg/40 rounded-md p-2 border border-border-muted">{notesExcerpt(
+                class="text-text-muted text-[11px] whitespace-pre-wrap bg-bg/40 rounded-md p-2 border border-border-muted"
+                style="font-family: var(--editor-mono-font-family, var(--font-mono, monospace))">{notesExcerpt(
                   updateState.releaseNotes
                 )}</pre>
             {/if}

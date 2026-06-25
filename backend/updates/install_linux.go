@@ -13,37 +13,40 @@ import (
 // installForCurrentOS replaces the running AppImage in place and relaunches
 // it. Linux permits renaming over a running file: the live process keeps its
 // mapped inode, so the swap is atomic from the user's perspective. After the
-// rename, the new AppImage is relaunched and Silt returns so the caller quits.
+// rename, the new AppImage is relaunched and Silt returns willQuit=true: the
+// caller must quit so the old instance exits and only the new version runs.
 //
 // If $APPIMAGE is unset (the user runs the .deb build, a bare binary, etc.),
 // the verified asset is opened with xdg-open so the user's file manager /
 // software center handles placement — Silt cannot self-replace a package-managed
-// install safely.
-func installForCurrentOS(localPath string) error {
+// install safely, so it returns willQuit=false and the UI guides the user.
+func installForCurrentOS(localPath string) (bool, error) {
 	appImage := os.Getenv("APPIMAGE")
 	if appImage == "" {
-		return openWithXdg(localPath)
+		return false, openWithXdg(localPath)
 	}
 
 	// The new AppImage must be executable to relaunch.
 	if err := os.Chmod(localPath, 0o755); err != nil {
-		return fmt.Errorf("chmod new AppImage: %w", err)
+		return false, fmt.Errorf("chmod new AppImage: %w", err)
 	}
-	// Rename-over: atomic on the same filesystem. The temp file is on the OS
-	// temp dir which is the same FS as the user's install in the common case;
-	// if not, fall back to a copy+remove.
+	// Atomically swap the running AppImage for the new one. replaceFile writes
+	// to a sibling temp on the SAME filesystem as $APPIMAGE then renames, so an
+	// interruption (crash, disk-full, kill) never leaves a corrupt, un-runnable
+	// AppImage at the install path — the live file is replaced only by a
+	// complete, verified copy.
 	if err := replaceFile(appImage, localPath); err != nil {
-		return fmt.Errorf("replace AppImage: %w", err)
+		return false, fmt.Errorf("replace AppImage: %w", err)
 	}
 
 	// Relaunch the new version detached, then let the caller quit.
 	cmd := exec.Command(appImage)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("relaunch AppImage: %w", err)
+		return true, fmt.Errorf("relaunch AppImage: %w", err)
 	}
 	_ = cmd.Process.Release()
-	return nil
+	return true, nil
 }
 
 // openWithXdg hands the downloaded asset to the desktop's default handler
@@ -59,30 +62,46 @@ func openWithXdg(localPath string) error {
 	return nil
 }
 
-// replaceFile atomically swaps dst with src when they share a filesystem, and
-// falls back to copy+remove across filesystems (os.Rename fails with EXDEV on
-// a cross-device rename; we detect any rename failure and copy instead so the
-// swap still completes, just non-atomically).
+// replaceFile atomically installs src at dst. It first tries an in-place
+// os.Rename (atomic when src and dst share a filesystem). If that fails —
+// typically EXDEV because the OS temp dir is on a different mount than the
+// AppImage install path — it copies src into a sibling temp file IN dst's
+// directory (same filesystem) and renames that over dst. The sibling-temp
+// step keeps the swap atomic even cross-device: dst is never observed in a
+// half-written state, so a crash mid-copy cannot corrupt the running AppImage.
 func replaceFile(dst, src string) error {
 	if err := os.Rename(src, dst); err == nil {
 		return nil
 	}
-	// Cross-device (or other rename error): copy then remove.
+	dir := filepath.Dir(dst)
+	sibling, err := os.CreateTemp(dir, ".silt-update-*.AppImage")
+	if err != nil {
+		return fmt.Errorf("create sibling temp: %w", err)
+	}
+	siblingPath := sibling.Name()
+	// If the copy or the final rename fails, remove the sibling temp so no
+	// partial file litters the install directory.
+	defer os.Remove(siblingPath)
+
 	in, err := os.Open(src)
 	if err != nil {
+		sibling.Close()
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-	if err != nil {
-		return err
+	if _, err := io.Copy(sibling, in); err != nil {
+		sibling.Close()
+		return fmt.Errorf("copy to sibling temp: %w", err)
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
+	if err := sibling.Chmod(0o755); err != nil {
+		sibling.Close()
+		return fmt.Errorf("chmod sibling temp: %w", err)
 	}
-	if err := out.Close(); err != nil {
-		return err
+	if err := sibling.Close(); err != nil {
+		return fmt.Errorf("close sibling temp: %w", err)
 	}
-	return os.Remove(src)
+	if err := os.Rename(siblingPath, dst); err != nil {
+		return fmt.Errorf("rename sibling over AppImage: %w", err)
+	}
+	return nil
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"silt/backend/updates"
@@ -33,6 +34,16 @@ type UpdateSettingsResult struct {
 	LastCheckRFC3339 string `json:"lastCheck"` // empty when never checked
 }
 
+// InstallUpdateResult reports the outcome of launching the verified installer.
+// WillQuit is true when a self-replacing installer/relaunch was launched
+// (Windows NSIS, Linux AppImage in-place): the frontend MUST then call the JS
+// runtime Quit() so the app exits via the graceful OnShutdown path (vault +
+// WAL flush) and the installer can replace the locked binary. WillQuit is
+// false for the Linux xdg-open hand-off, where the app stays running.
+type InstallUpdateResult struct {
+	WillQuit bool `json:"willQuit"`
+}
+
 // CheckForUpdates queries GitHub Releases for the latest non-prerelease and
 // reports whether the running version is older. On success it stamps
 // LastUpdateCheck in settings.json so the startup auto-check throttle (24h)
@@ -46,8 +57,11 @@ func (a *App) CheckForUpdates() (updates.UpdateInfo, error) {
 	}
 	// Stamp the check timestamp regardless of whether an update exists, so the
 	// 24h throttle reflects "we just looked." A persist failure is non-fatal:
-	// the check still succeeded; the next launch simply re-checks.
-	_ = a.stampUpdateCheckTime()
+	// the check still succeeded; the next launch simply re-checks. Logged so a
+	// persist failure is diagnosable in support tickets.
+	if err := a.stampUpdateCheckTime(); err != nil {
+		log.Printf("updates: could not persist LastUpdateCheck: %v", err)
+	}
 	return info, nil
 }
 
@@ -74,11 +88,20 @@ func (a *App) DownloadUpdate(assetURL string) (string, error) {
 }
 
 // InstallUpdate launches the verified local asset so it can replace the
-// running binary, then the caller quits the app. The asset at localPath MUST
-// have been verified by DownloadUpdate first; this binding intentionally does
-// not re-verify (the file is already on disk and trusted from the prior step).
-func (a *App) InstallUpdate(localPath string) error {
-	return updates.Install(localPath)
+// running binary. The result reports whether the app should quit (see
+// InstallUpdateResult). The asset at localPath MUST have been verified by
+// DownloadUpdate first; this binding intentionally does not re-verify (the
+// file is already on disk and trusted from the prior step). The frontend —
+// not this binding — performs the actual Quit so the IPC response reaches the
+// UI before shutdown begins; quitting here would terminate before the promise
+// resolved.
+func (a *App) InstallUpdate(localPath string) (InstallUpdateResult, error) {
+	willQuit, err := updates.Install(localPath)
+	if err != nil {
+		log.Printf("updates: install failed for %s: %v", localPath, err)
+		return InstallUpdateResult{}, err
+	}
+	return InstallUpdateResult{WillQuit: willQuit}, nil
 }
 
 // GetUpdateSettings returns the user's update preferences from settings.json.

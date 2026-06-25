@@ -616,14 +616,21 @@ func (a *App) GetAppVersion() string
 // published SHA256SUMS before returning the local path — it NEVER returns a
 // path for an unverified asset, and a URL not in the release's asset list is
 // rejected (defense against a stale/coerced frontend). InstallUpdate launches
-// the verified installer (Windows NSIS detached; Linux AppImage $APPIMAGE
-// in-place swap + relaunch) so the caller can quit. Get/SetUpdateSettings
+// the verified installer and returns WillQuit so the frontend quits via the
+// graceful JS runtime.Quit() (OnShutdown flushes the vault + WAL). Get/SetUpdateSettings
 // persist the auto-check toggle in user-global settings.json (AutoCheckUpdates
 // *bool, default-on; LastUpdateCheck RFC3339) — NOT SQLite (not reproducible)
 // and NOT vault config.yaml (must be known before a vault opens).
 func (a *App) CheckForUpdates() (updates.UpdateInfo, error)
 func (a *App) DownloadUpdate(assetURL string) (string, error)
-func (a *App) InstallUpdate(localPath string) error
+// InstallUpdate launches the verified installer/relaunch (Windows NSIS
+// detached; Linux AppImage $APPIMAGE in-place swap + relaunch) and returns
+// InstallUpdateResult{WillQuit}. WillQuit is true when a self-replacing
+// installer was launched: the FRONTEND then calls the JS runtime.Quit() so the
+// app exits via the graceful OnShutdown path (vault + WAL flush) and the
+// installer can replace the locked binary. WillQuit is false for the Linux
+// xdg-open hand-off (package-managed install), where the app stays running.
+func (a *App) InstallUpdate(localPath string) (InstallUpdateResult, error)
 func (a *App) GetUpdateSettings() (UpdateSettingsResult, error)
 func (a *App) SetUpdateSettings(autoCheck bool) error
 

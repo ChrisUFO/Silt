@@ -1,19 +1,20 @@
 package updates
 
 // Install launches the verified local asset so it can replace the running
-// binary, then returns so the caller can quit the app. The exact mechanism is
-// OS-specific (see install_windows.go / install_linux.go / install_other.go):
-//
-//   - windows: the NSIS installer .exe is started as a detached process; it
-//     takes over the file replacement and prompts the user as needed.
-//   - linux: if running from an AppImage ($APPIMAGE), the new AppImage is
-//     renamed over the running file and relaunched; otherwise the asset is
-//     opened with xdg-open so the user places it manually.
-//   - other OSes (incl. darwin, which has no build leg): ErrPlatformNotSupported.
+// binary. The bool return reports whether the caller should QUIT the app:
+//   - true  (Windows NSIS, Linux AppImage in-place): a self-replacing
+//     installer/relaunch was launched, so the app must exit for the upgrade
+//     to complete (Windows: to release the locked binary; Linux: to avoid two
+//     live instances). The caller quits via the graceful shutdown path so the
+//     vault/WAL flush.
+//   - false (Linux xdg-open hand-off): the asset was handed to the desktop's
+//     default handler because Silt cannot self-replace a package-managed
+//     install. The app stays running and the UI guides the user to place the
+//     downloaded file manually.
 //
 // Install does NOT verify the asset itself — the caller (the App binding) must
 // run VerifySHA256Sums first. Launching an unverified file is a security
 // regression, so this ordering is load-bearing.
-func Install(localPath string) error {
+func Install(localPath string) (bool, error) {
 	return installForCurrentOS(localPath)
 }
