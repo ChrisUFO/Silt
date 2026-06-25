@@ -415,13 +415,16 @@ function parseDetailsHTML(
   }
 }
 
-// Convert body lines (inside <details>) to child block nodes. Handles nested
-// <details> by detecting <details> openers and finding the matching closer.
+// Convert body lines (inside <details>) to child block nodes. Detects nested
+// multi-line constructs (code fences, GFM tables, callouts, nested <details>)
+// and accumulates them into typed synthetic blocks before falling through to
+// regular NOTE lines.
 function detailsBodyLinesToNodes(lines: string[]): NodeJSON[] {
   const nodes: NodeJSON[] = []
   let i = 0
   while (i < lines.length) {
     const trimmed = lines[i].trim()
+
     // Nested <details> → recursively parse.
     if (DETAILS_OPEN_RE.test(trimmed)) {
       let depth = 1
@@ -439,6 +442,93 @@ function detailsBodyLinesToNodes(lines: string[]): NodeJSON[] {
         continue
       }
     }
+
+    // Code fence → accumulate to closing fence → CODE synthetic block.
+    if (/^```/.test(trimmed)) {
+      let j = i + 1
+      while (j < lines.length && !/^```/.test(lines[j].trim())) j++
+      if (j < lines.length) {
+        const code = lines.slice(i + 1, j).join('\n')
+        const lang = trimmed.slice(3)
+        nodes.push(
+          blockToNode({
+            id: '',
+            parent_id: '',
+            type: 'CODE',
+            depth: 0,
+            raw_text: '',
+            clean_text: code,
+            status: '',
+            owner: '',
+            start_date: '',
+            due_date: '',
+            priority: 3,
+            line_number: i + 1,
+            file_date: '',
+            language: lang
+          })
+        )
+        i = j + 1
+        continue
+      }
+    }
+
+    // GFM table → accumulate pipe rows → TABLE synthetic block.
+    if (
+      /^\|.*\|$/.test(trimmed) &&
+      i + 1 < lines.length &&
+      /^\|[\s:|-]+\|$/.test(lines[i + 1].trim())
+    ) {
+      let j = i
+      while (j < lines.length && /^\|.*\|$/.test(lines[j].trim())) j++
+      const gfm = lines.slice(i, j).join('\n')
+      nodes.push(
+        blockToNode({
+          id: '',
+          parent_id: '',
+          type: 'TABLE',
+          depth: 0,
+          raw_text: '',
+          clean_text: gfm,
+          status: '',
+          owner: '',
+          start_date: '',
+          due_date: '',
+          priority: 3,
+          line_number: i + 1,
+          file_date: ''
+        })
+      )
+      i = j
+      continue
+    }
+
+    // Callout → accumulate `>` lines → CALLOUT synthetic block.
+    if (/^>\s*\[!/i.test(trimmed)) {
+      let j = i + 1
+      while (j < lines.length && /^>/.test(lines[j].trim())) j++
+      const calloutText = lines.slice(i, j).join('\n')
+      nodes.push(
+        blockToNode({
+          id: '',
+          parent_id: '',
+          type: 'CALLOUT',
+          depth: 0,
+          raw_text: calloutText,
+          clean_text: calloutText,
+          status: '',
+          owner: '',
+          start_date: '',
+          due_date: '',
+          priority: 3,
+          line_number: i + 1,
+          file_date: ''
+        })
+      )
+      i = j
+      continue
+    }
+
     // Regular body line → synthetic NOTE → blockToNode.
     const syntheticBlock: ParsedBlock = {
       id: '',
@@ -498,12 +588,33 @@ function serializeDetailsToHTML(node: NodeJSON): string {
 }
 
 // Convert a child node (inside detailsContent) to a text body line (no id).
+// Handles multi-line constructs (codeBlock, table, calloutBlock) by emitting
+// their full on-disk syntax — the caller embeds the multi-line result in the
+// <details> body.
 function serializeChildNodeToBodyLine(node: NodeJSON): string {
   const attrs = (node.attrs || {}) as Record<string, any>
 
   // Nested details → recursively serialize to HTML.
   if (node.type === 'details') {
     return serializeDetailsToHTML(node)
+  }
+
+  // Code block → emit fenced code (preserves language + body).
+  if (node.type === 'codeBlock') {
+    const lang = (attrs.language as string) || ''
+    const code = extractTextContent(node.content)
+    const fence = '```'
+    return `${fence}${lang}\n${code}\n${fence}`
+  }
+
+  // Table → emit GFM rows (reuses the table serialization logic).
+  if (node.type === 'table') {
+    return serializeTableToGFM(node)
+  }
+
+  // Callout → emit Obsidian callout lines.
+  if (node.type === 'calloutBlock') {
+    return serializeCalloutToText(node)
   }
 
   const text = serializeInlineContent(node.content)
@@ -525,6 +636,34 @@ function serializeChildNodeToBodyLine(node: NodeJSON): string {
   }
   // paragraph or unknown: just the text.
   return text
+}
+
+// Serialize a table node to GFM pipe rows (shared by docToBlocks TABLE branch
+// and serializeChildNodeToBodyLine for nested tables in details).
+function serializeTableToGFM(node: NodeJSON): string {
+  const rows = (node.content || []).filter((c) => c.type === 'tableRow')
+  if (rows.length === 0) return ''
+  const grid: { header: boolean; cells: string[] }[] = rows.map((r) => ({
+    header: (r.content || []).some((c) => c.type === 'tableHeader'),
+    cells: (r.content || []).map((c) =>
+      escapeGfmCell(serializeInlineContent(c.content))
+    )
+  }))
+  const colCount = Math.max(...grid.map((r) => r.cells.length))
+  const widths = new Array(colCount).fill(0)
+  for (const r of grid) {
+    while (r.cells.length < colCount) r.cells.push('')
+    for (let c = 0; c < colCount; c++)
+      widths[c] = Math.max(widths[c], r.cells[c].length, 3)
+  }
+  const pad = (cell: string, c: number) => cell.padEnd(widths[c], ' ')
+  const renderRow = (r: { cells: string[] }) =>
+    '| ' + r.cells.map((c, i) => pad(c, i)).join(' | ') + ' |'
+  const lines: string[] = []
+  lines.push(renderRow(grid[0]))
+  lines.push('| ' + widths.map((w) => ''.padEnd(w, '-')).join(' | ') + ' |')
+  for (let r = 1; r < grid.length; r++) lines.push(renderRow(grid[r]))
+  return lines.join('\n')
 }
 
 // ---- Callout text parsing (#308) ------------------------------------------
@@ -771,42 +910,19 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
       continue
     }
 
-    // GFM table (#172/#310): serialize the table node to ONE TABLE ParsedBlock
-    // whose clean_text is the GFM pipe rows. Auto-width padding keeps the file
-    // human-readable; literal `|` is escaped as `\|`; cell inline content goes
-    // through serializeInlineContent so marks + Smart Graph tokens survive.
+    // GFM table (#172/#310): serialize to ONE TABLE ParsedBlock via the
+    // shared serializeTableToGFM helper (also used for nested tables in
+    // details). Literal `|` is escaped as `\|`; auto-width padding.
     if (node.type === 'table') {
-      const rows = (node.content || []).filter((c) => c.type === 'tableRow')
-      if (rows.length === 0) continue
-      const grid: { header: boolean; cells: string[] }[] = rows.map((r) => ({
-        header: (r.content || []).some((c) => c.type === 'tableHeader'),
-        cells: (r.content || []).map((c) =>
-          escapeGfmCell(serializeInlineContent(c.content))
-        )
-      }))
-      const colCount = Math.max(...grid.map((r) => r.cells.length))
-      const widths = new Array(colCount).fill(0)
-      for (const r of grid) {
-        while (r.cells.length < colCount) r.cells.push('')
-        for (let c = 0; c < colCount; c++)
-          widths[c] = Math.max(widths[c], r.cells[c].length, 3)
-      }
-      const pad = (cell: string, c: number) => cell.padEnd(widths[c], ' ')
-      const renderRow = (r: { cells: string[] }) =>
-        '| ' + r.cells.map((c, i) => pad(c, i)).join(' | ') + ' |'
-
-      const lines: string[] = []
-      lines.push(renderRow(grid[0]))
-      lines.push('| ' + widths.map((w) => ''.padEnd(w, '-')).join(' | ') + ' |')
-      for (let r = 1; r < grid.length; r++) lines.push(renderRow(grid[r]))
-
+      const gfm = serializeTableToGFM(node)
+      if (!gfm) continue
       blocks.push({
         id,
         parent_id: '',
         type: 'TABLE',
         depth: 0,
         raw_text: '',
-        clean_text: lines.join('\n'),
+        clean_text: gfm,
         status: '',
         owner: '',
         start_date: '',

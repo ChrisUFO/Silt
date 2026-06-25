@@ -83,6 +83,11 @@ export function convertToBlock(
   const active = findActiveBlock(editor)
   if (!active) return false
   const node = active.node
+  // Guard: converting a calloutBlock to a prose type would silently destroy
+  // its content (TipTap's setNode falls through to clearNodes when block+
+  // children don't fit inline* content). The user must exit the callout
+  // first (Down arrow) then convert the sibling noteBlock below.
+  if (node.type.name === 'calloutBlock') return false
   const baseAttrs = {
     id: node.attrs.id,
     depth:
@@ -381,15 +386,10 @@ function buildConfigDrivenShortcuts(
     resolveShortcut(configKey, def, hk)
   const map: Record<string, () => boolean> = {}
 
-  // Strikethrough — the Strike extension uses Mod-Shift-s, but the standard
-  // binding is Mod-Shift-x. Register the config-driven binding plus the
-  // fallback (#168).
+  // Strikethrough — config-driven via format_strike (#311). TipTap's Strike
+  // extension registers its own Mod-Shift-s default; this binding overrides
+  // it with the user's config choice (or the standard Mod-Shift-x fallback).
   map[pm('format_strike', 'Mod-Shift-x')] = () => {
-    editor.chain().focus().toggleStrike().run()
-    return true
-  }
-  // Also register Mod-Shift-s as an alias (the Strike extension's default).
-  map['Mod-Shift-s'] = () => {
     editor.chain().focus().toggleStrike().run()
     return true
   }

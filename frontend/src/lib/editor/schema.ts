@@ -476,10 +476,15 @@ export const CALLOUT_VARIANTS: Record<
 export const CalloutBlock = Node.create({
   name: 'calloutBlock',
   group: 'block',
-  // block+ allows multi-paragraph callout bodies (#308). Each `>` line in the
-  // Obsidian callout becomes a paragraph child. Requires ≥1 child (paragraph
-  // is the canonical satisfier); isolating:true keeps the cursor inside.
-  content: 'block+',
+  // paragraph+ restricts callout children to paragraphs only. This matches
+  // Obsidian's callout model (each `>` line is a text paragraph) and prevents
+  // silent data loss: block+ would legally admit codeBlock/table/taskBlock
+  // children, but the serializer (serializeCalloutToText) only handles
+  // paragraphs. With paragraph+, ProseMirror rejects non-paragraph insertions
+  // at the schema level — the slash menu's insertCodeBlock/insertTable simply
+  // fail inside a callout instead of succeeding in the editor but being
+  // silently dropped on save (#308 review fix).
+  content: 'paragraph+',
   defining: true,
   isolating: true,
 
@@ -582,8 +587,28 @@ export const CodeBlock = Node.create({
 //
 // `open: false` default keeps sections collapsed on load (the outliner's "the
 // file is the truth" model — collapse is a view concern, not persisted).
+// The extensions are wrapped with `.extend()` to add `id` and `file_date`
+// attributes — without these, ProseMirror silently drops the attrs on
+// node creation, causing identity instability across save cycles (#310).
 export const SiltDetailsExtensions = [
-  Details.configure({ HTMLAttributes: { 'data-type': 'details' } }),
+  Details.extend({
+    addAttributes() {
+      return {
+        ...this.parent?.(),
+        id: {
+          default: null,
+          parseHTML: (el) => el.getAttribute('data-id') || null,
+          renderHTML: (attrs) => (attrs.id ? { 'data-id': attrs.id } : {})
+        },
+        file_date: {
+          default: '',
+          parseHTML: (el) => el.getAttribute('data-file-date') || '',
+          renderHTML: (attrs) =>
+            attrs.file_date ? { 'data-file-date': attrs.file_date } : {}
+        }
+      }
+    }
+  }).configure({ HTMLAttributes: { 'data-type': 'details' } }),
   DetailsSummary,
   DetailsContent
 ]
@@ -596,7 +621,24 @@ export const SiltDetailsExtensions = [
 // on save. resizable lets the user drag column borders; the table's block
 // identity lives on the LAST row (so the whole table has one id).
 export const SiltTableExtensions = [
-  Table.configure({
+  Table.extend({
+    addAttributes() {
+      return {
+        ...this.parent?.(),
+        id: {
+          default: null,
+          parseHTML: (el) => el.getAttribute('data-id') || null,
+          renderHTML: (attrs) => (attrs.id ? { 'data-id': attrs.id } : {})
+        },
+        file_date: {
+          default: '',
+          parseHTML: (el) => el.getAttribute('data-file-date') || '',
+          renderHTML: (attrs) =>
+            attrs.file_date ? { 'data-file-date': attrs.file_date } : {}
+        }
+      }
+    }
+  }).configure({
     resizable: true,
     allowTableNodeSelection: false,
     HTMLAttributes: { 'data-type': 'table' }

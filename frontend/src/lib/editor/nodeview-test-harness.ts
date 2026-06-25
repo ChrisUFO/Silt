@@ -59,7 +59,8 @@ export function createNodeViewEditor(
     element: target,
     extensions: [
       StarterKit.configure({
-        paragraph: false,
+        // paragraph stays enabled: TipTap's Table extension fills cells with
+        // paragraph nodes, and calloutBlock uses content:'paragraph+'.
         heading: false,
         bulletList: false,
         orderedList: false,
