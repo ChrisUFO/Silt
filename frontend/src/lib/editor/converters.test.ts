@@ -400,6 +400,22 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(doc.content[0]?.type).toBe('noteBlock')
   })
 
+  it('parses a <summary> with HTML attributes (#183)', () => {
+    // External HTML often carries attributes on <summary>; parsing should be
+    // lenient (the save path emits attribute-free <summary>).
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '<details>' }),
+      mkBlock('NOTE', { clean_text: '<summary class="t">Title</summary>' }),
+      mkBlock('NOTE', { clean_text: 'body' }),
+      mkBlock('NOTE', { clean_text: '</details>' })
+    ]
+    const doc = blocksToDoc(blocks)
+    const summary = (doc.content[0]?.content || []).find(
+      (c) => c.type === 'detailsSummary'
+    )
+    expect(summary?.content).toEqual([{ type: 'text', text: 'Title' }])
+  })
+
   it('round-trips a GFM table (#172)', () => {
     const id = '22222222-2222-2222-2222-222222222222'
     const blocks = [
@@ -481,6 +497,35 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
       .filter((c) => c.type === 'tableRow')[1]
       ?.content?.map((c) => (c.content || []).map((n) => n.text).join(''))
     expect(reparsedData).toEqual(['x | y', 'z'])
+  })
+
+  it('round-trips a cell with backslashes (#172)', () => {
+    // Backslashes must be escaped (\\) so a path like C:\x next to a pipe
+    // delimiter can't be misread as an escaped pipe on re-parse.
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '| a | b |' }),
+      mkBlock('NOTE', { clean_text: '| --- | --- |' }),
+      mkBlock('NOTE', { clean_text: '| C:\\path\\x | y\\|z |' })
+    ]
+    const doc = blocksToDoc(blocks)
+    const rows = (doc.content[0]?.content || []).filter(
+      (c) => c.type === 'tableRow'
+    )
+    const dataCells = (rows[1]?.content || []).map((c) =>
+      (c.content || []).map((n) => n.text).join('')
+    )
+    // Cell 1: "C:\path\x"; cell 2: "y|z" (backslash-pipe → pipe).
+    expect(dataCells).toEqual(['C:\\path\\x', 'y|z'])
+    // Emit is byte-stable, and a second parse recovers the same cells.
+    const back = docToBlocks(doc)
+    const back2 = docToBlocks(blocksToDoc(back))
+    expect(back2.map((b) => b.clean_text)).toEqual(
+      back.map((b) => b.clean_text)
+    )
+    const reparsed = (blocksToDoc(back).content[0]?.content || [])
+      .filter((c) => c.type === 'tableRow')[1]
+      ?.content?.map((c) => (c.content || []).map((n) => n.text).join(''))
+    expect(reparsed).toEqual(['C:\\path\\x', 'y|z'])
   })
 
   it('handles empty clean_text (placeholder block)', () => {

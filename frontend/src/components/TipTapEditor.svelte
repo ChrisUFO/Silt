@@ -667,12 +667,13 @@
     } else if (commandId === 'table-custom') {
       const input = window.prompt('Table dimensions (rows × columns), e.g. 4x3')
       const m = input?.match(/^(\d+)\s*[x×]\s*(\d+)$/i)
-      if (m)
-        insertTable(
-          editorInstance as any,
-          parseInt(m[1], 10),
-          parseInt(m[2], 10)
-        )
+      if (m) {
+        // Cap dimensions so a typo (e.g. 9999x9999) can't create ~100M cells
+        // and freeze the editor. 20×20 is a generous upper bound for notes.
+        const rows = Math.min(Math.max(parseInt(m[1], 10), 1), 20)
+        const cols = Math.min(Math.max(parseInt(m[2], 10), 1), 20)
+        insertTable(editorInstance as any, rows, cols)
+      }
     } else if (commandId === 'text-color') {
       openColorPickerPopover('textColor')
     } else if (commandId === 'background-color') {

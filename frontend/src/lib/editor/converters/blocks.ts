@@ -222,8 +222,11 @@ function blockToNode(block: ParsedBlock): NodeJSON {
 
   // A CODE block (#189) carries multi-line fenced content verbatim. Its
   // clean_text keeps internal newlines (the Go parser preserves them); the
-  // codeBlock node stores that text as a single text node.
+  // codeBlock node stores that text as a single text node. CODE uses the raw
+  // clean_text directly — alignment markers are a prose-block concept, and
+  // stripping would corrupt code that happened to end in that pattern.
   if (block.type === 'CODE') {
+    const codeText = rawText
     return {
       type: 'codeBlock',
       attrs: {
@@ -231,7 +234,7 @@ function blockToNode(block: ParsedBlock): NodeJSON {
         language: block.language || '',
         file_date: block.file_date || ''
       },
-      content: text ? [{ type: 'text', text }] : []
+      content: codeText ? [{ type: 'text', text: codeText }] : []
     }
   }
 
@@ -312,7 +315,7 @@ function blockToNode(block: ParsedBlock): NodeJSON {
 // `<details>` and `<details open>` both open; the run ends at `</details>`.
 const DETAILS_OPEN_RE = /^<details(?:\s+[^>]*)?>$/i
 const DETAILS_CLOSE_RE = /^<\/details>$/i
-const DETAILS_SUMMARY_RE = /^<summary>([\s\S]*?)<\/summary>$/i
+const DETAILS_SUMMARY_RE = /^<summary(?:\s[^>]*)?>([\s\S]*?)<\/summary>$/i
 
 // ---- GFM table parsing (#172) --------------------------------------------
 // A table is a run of pipe-prefixed NOTE blocks: a header row, a `| --- |`
@@ -328,14 +331,25 @@ function parseGfmRow(line: string): string[] {
   let s = line.trim()
   if (s.startsWith('|')) s = s.slice(1)
   if (s.endsWith('|')) s = s.slice(0, -1)
-  // Split on `|` not preceded by `\`.
+  // Walk the string handling GFM cell escapes. `\\` → `\` and `\|` → `|`
+  // (the escapes escapeGfmCell emits); a bare `|` is a cell delimiter. `\\`
+  // is checked before `\|` so an escaped backslash adjacent to a pipe
+  // (`\\|` on disk) parses as `\` + delimiter, not an escaped pipe.
   const cells: string[] = []
   let cur = ''
   for (let i = 0; i < s.length; i++) {
     const ch = s[i]
-    if (ch === '\\' && s[i + 1] === '|') {
-      cur += '|'
-      i++
+    if (ch === '\\') {
+      const next = s[i + 1]
+      if (next === '\\') {
+        cur += '\\'
+        i++
+      } else if (next === '|') {
+        cur += '|'
+        i++
+      } else {
+        cur += ch
+      }
     } else if (ch === '|') {
       cells.push(cur.trim())
       cur = ''
@@ -347,9 +361,12 @@ function parseGfmRow(line: string): string[] {
   return cells
 }
 
-// Escape a cell value for GFM: literal `|` → `\|`, newline → space.
+// Escape a cell value for GFM. Backslashes are escaped first (`\` → `\\`),
+// then pipes (`|` → `\|`), so a literal backslash before a delimiter can't be
+// misread as an escaped pipe on re-parse. Newlines collapse to spaces (a cell
+// is a single line).
 function escapeGfmCell(s: string): string {
-  return s.replace(/\\\|/g, '\\|').replace(/\|/g, '\\|').replace(/\n/g, ' ')
+  return s.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, ' ')
 }
 
 // Test whether a NOTE block's clean_text is a GFM table row.
