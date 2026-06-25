@@ -51,7 +51,11 @@ const KEY_ALIASES: Record<string, string> = {
 /** Parse a "Ctrl+Shift+P"-style binding. Returns null for empty/invalid input. */
 export function parseHotkey(s: string | undefined | null): ParsedHotkey | null {
   if (!s) return null
-  const parts = s.toLowerCase().split('+').map((p) => p.trim()).filter(Boolean)
+  const parts = s
+    .toLowerCase()
+    .split('+')
+    .map((p) => p.trim())
+    .filter(Boolean)
   if (parts.length === 0) return null
 
   let ctrl = false
@@ -90,7 +94,10 @@ export function parseHotkey(s: string | undefined | null): ParsedHotkey | null {
 }
 
 /** True if a KeyboardEvent matches the given binding string. */
-export function matchHotkey(e: KeyboardEvent, binding: string | undefined | null): boolean {
+export function matchHotkey(
+  e: KeyboardEvent,
+  binding: string | undefined | null
+): boolean {
   const h = parseHotkey(binding)
   if (!h) return false
   return (
@@ -100,4 +107,67 @@ export function matchHotkey(e: KeyboardEvent, binding: string | undefined | null
     e.metaKey === h.meta &&
     e.key.toLowerCase() === h.key
   )
+}
+
+// ---- Config → ProseMirror keymap converter (#311) -------------------------
+// TipTap's addKeyboardShortcuts returns a static { 'Mod-Shift-9': handler }
+// map registered at editor-creation time. The config entries in config.yaml
+// use "Ctrl+Shift+9" notation. This converter bridges the two formats so the
+// editor honors user-remapped hotkeys at creation time.
+//
+// Per prosemirror-keymap source (verified from node_modules):
+// - Separator is '-', NOT '+'.
+// - 'Mod' = Cmd on Mac, Ctrl everywhere else.
+// - Modifier order is normalized (input order doesn't matter).
+// - Special keys use KeyboardEvent.key names: ArrowUp, ArrowDown, etc.
+// - Letters must be lowercase (uppercase implies Shift).
+// - Punctuation keys (., /, ,) are single-character key names.
+
+// Map arrow/direction names from config notation to KeyboardEvent.key names.
+const PM_KEY_NORMALIZE: Record<string, string> = {
+  up: 'ArrowUp',
+  down: 'ArrowDown',
+  left: 'ArrowLeft',
+  right: 'ArrowRight',
+  space: ' ',
+  esc: 'Escape',
+  del: 'Delete'
+}
+
+/**
+ * Convert a config-style binding ("Ctrl+Shift+9") to a ProseMirror keymap
+ * binding string ("Mod-Shift-9"). Returns '' for empty/invalid input.
+ */
+export function configKeyToProseMirrorKey(
+  binding: string | undefined | null
+): string {
+  if (!binding) return ''
+  const parsed = parseHotkey(binding)
+  if (!parsed || !parsed.key) return ''
+
+  const mods: string[] = []
+  // Mod first (matches the codebase convention: Mod-Alt-1, Mod-Shift-9).
+  // PM normalizes modifier order on its end anyway, so this is cosmetic.
+  if (parsed.ctrl || parsed.meta) mods.push('Mod')
+  if (parsed.alt) mods.push('Alt')
+  if (parsed.shift) mods.push('Shift')
+
+  const key = PM_KEY_NORMALIZE[parsed.key] ?? parsed.key
+  return [...mods, key].join('-')
+}
+
+/**
+ * Resolve a keyboard shortcut from config, falling back to a default
+ * ProseMirror key string. Reads hotkeys[configKey], converts via
+ * configKeyToProseMirrorKey, and returns the result. Falls back to
+ * defaultPmKey if the config entry is absent, empty, or unparseable.
+ */
+export function resolveShortcut(
+  configKey: string,
+  defaultPmKey: string,
+  hotkeys: Record<string, string>
+): string {
+  const configBinding = hotkeys[configKey]
+  const converted = configKeyToProseMirrorKey(configBinding)
+  return converted || defaultPmKey
 }

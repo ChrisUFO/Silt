@@ -3,6 +3,8 @@ import type { Editor } from '@tiptap/core'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { TextSelection } from '@tiptap/pm/state'
 import { freshId } from './uniqueIdPlugin'
+import { resolveShortcut } from '../../settings/hotkeys'
+import { settings } from '../../settings/store.svelte'
 
 // SiltBlockKeymaps — outliner keyboard semantics for the TipTap editor.
 //
@@ -365,6 +367,90 @@ export function insertTable(editor: Editor, rows = 3, cols = 3): boolean {
   return true
 }
 
+// Build the config-driven editor shortcut map (#311). Reads config.hotkeys
+// at editor-creation time and converts each binding to the ProseMirror keymap
+// format via resolveShortcut. Falls back to hardcoded defaults when the config
+// entry is absent or empty. Covers all editor-scoped remappable shortcuts:
+// heading levels, alignment, quote/details toggles, table row/col inserts,
+// and inline format marks.
+function buildConfigDrivenShortcuts(
+  editor: Editor
+): Record<string, () => boolean> {
+  const hk = settings.config?.hotkeys ?? {}
+  const pm = (configKey: string, def: string) =>
+    resolveShortcut(configKey, def, hk)
+  const map: Record<string, () => boolean> = {}
+
+  // Strikethrough — the Strike extension uses Mod-Shift-s, but the standard
+  // binding is Mod-Shift-x. Register the config-driven binding plus the
+  // fallback (#168).
+  map[pm('format_strike', 'Mod-Shift-x')] = () => {
+    editor.chain().focus().toggleStrike().run()
+    return true
+  }
+  // Also register Mod-Shift-s as an alias (the Strike extension's default).
+  map['Mod-Shift-s'] = () => {
+    editor.chain().focus().toggleStrike().run()
+    return true
+  }
+
+  // Link — dispatches a custom event so TipTapEditor can show its inline
+  // URL input (#168). If already linked, removes.
+  map[pm('format_link', 'Mod-k')] = () => {
+    const { selection } = editor.state
+    if (selection.empty) return false
+    if (editor.isActive('link')) {
+      editor.chain().focus().unsetLink().run()
+    } else {
+      window.dispatchEvent(new CustomEvent('silt:open-link-input'))
+    }
+    return true
+  }
+
+  // Heading level shortcuts (#169).
+  map[pm('set_h1', 'Mod-Alt-1')] = () =>
+    convertToBlock(editor, 'headerBlock', 1)
+  map[pm('set_h2', 'Mod-Alt-2')] = () =>
+    convertToBlock(editor, 'headerBlock', 2)
+  map[pm('set_h3', 'Mod-Alt-3')] = () =>
+    convertToBlock(editor, 'headerBlock', 3)
+  map[pm('set_note', 'Mod-Alt-0')] = () => convertToBlock(editor, 'noteBlock')
+  map[pm('set_task', 'Mod-Alt-4')] = () => convertToBlock(editor, 'taskBlock')
+
+  // Text alignment shortcuts (#173).
+  map[pm('align_left', 'Mod-Shift-l')] = () => setBlockAlign(editor, 'left')
+  map[pm('align_center', 'Mod-Shift-e')] = () => setBlockAlign(editor, 'center')
+  map[pm('align_right', 'Mod-Shift-r')] = () => setBlockAlign(editor, 'right')
+  map[pm('align_justify', 'Mod-Shift-j')] = () =>
+    setBlockAlign(editor, 'justify')
+
+  // Blockquote toggle (#188).
+  map[pm('toggle_quote', 'Mod-Shift-9')] = () => toggleBlockQuote(editor)
+
+  // Foldable details toggle (#183).
+  map[pm('toggle_details', 'Mod-Shift-.')] = () => toggleDetails(editor)
+
+  // Table row/column insert shortcuts (#172).
+  map[pm('table_insert_row_above', 'Mod-Shift-ArrowUp')] = () =>
+    editor.can().addRowBefore?.()
+      ? (editor.chain().focus().addRowBefore().run(), true)
+      : false
+  map[pm('table_insert_row_below', 'Mod-Shift-ArrowDown')] = () =>
+    editor.can().addRowAfter?.()
+      ? (editor.chain().focus().addRowAfter().run(), true)
+      : false
+  map[pm('table_insert_col_left', 'Mod-Shift-ArrowLeft')] = () =>
+    editor.can().addColumnBefore?.()
+      ? (editor.chain().focus().addColumnBefore().run(), true)
+      : false
+  map[pm('table_insert_col_right', 'Mod-Shift-ArrowRight')] = () =>
+    editor.can().addColumnAfter?.()
+      ? (editor.chain().focus().addColumnAfter().run(), true)
+      : false
+
+  return map
+}
+
 export const SiltBlockKeymaps = Extension.create({
   name: 'siltBlockKeymaps',
 
@@ -553,68 +639,18 @@ export const SiltBlockKeymaps = Extension.create({
         return false
       },
 
-      // Strikethrough — the Strike extension uses Mod-Shift-s, but the
-      // standard binding is Mod-Shift-x. Register both (#168).
-      'Mod-Shift-x': () => {
-        this.editor.chain().focus().toggleStrike().run()
-        return true
-      },
-
-      // Link — no built-in shortcut. Dispatches a custom event so TipTapEditor
-      // can show its inline URL input (#168). If already linked, removes.
-      'Mod-k': () => {
-        const { selection } = this.editor.state
-        if (selection.empty) return false
-        if (this.editor.isActive('link')) {
-          this.editor.chain().focus().unsetLink().run()
-        } else {
-          window.dispatchEvent(new CustomEvent('silt:open-link-input'))
-        }
-        return true
-      },
-
-      // Heading level shortcuts (#169). Mod-Alt-1/2/3 → H1/H2/H3,
-      // Mod-Alt-0 → Note (strip heading/task), Mod-Alt-4 → Task.
-      'Mod-Alt-1': () => convertToBlock(this.editor, 'headerBlock', 1),
-      'Mod-Alt-2': () => convertToBlock(this.editor, 'headerBlock', 2),
-      'Mod-Alt-3': () => convertToBlock(this.editor, 'headerBlock', 3),
-      'Mod-Alt-0': () => convertToBlock(this.editor, 'noteBlock'),
-      'Mod-Alt-4': () => convertToBlock(this.editor, 'taskBlock'),
-
-      // Text alignment shortcuts (#173). Mod-Shift-L/E/R/J for left/center/
-      // right/justify. No-op for TASK blocks (alignment not supported on tasks).
-      'Mod-Shift-l': () => setBlockAlign(this.editor, 'left'),
-      'Mod-Shift-e': () => setBlockAlign(this.editor, 'center'),
-      'Mod-Shift-r': () => setBlockAlign(this.editor, 'right'),
-      'Mod-Shift-j': () => setBlockAlign(this.editor, 'justify'),
-
-      // Blockquote toggle (#188). Mod-Shift-9 is the standard blockquote
-      // binding. No-op on TASK/HEADER blocks (quote is a NOTE marker).
-      'Mod-Shift-9': () => toggleBlockQuote(this.editor),
-
-      // Foldable details toggle (#183). Bound to Mod-Shift-. rather than Mod-.,
-      // which is claimed by the Superscript mark extension (SiltInlineMarkExtensions
-      // is registered before this keymap, so Superscript would shadow a Mod-.
-      // binding). Mod-Shift-. flips the `open` attr on the enclosing <details>.
-      'Mod-Shift-.': () => toggleDetails(this.editor),
-
-      // Table row/column insert shortcuts (#172). No-op outside a table.
-      'Mod-Shift-Up': () =>
-        this.editor.can().addRowBefore?.()
-          ? (this.editor.chain().focus().addRowBefore().run(), true)
-          : false,
-      'Mod-Shift-Down': () =>
-        this.editor.can().addRowAfter?.()
-          ? (this.editor.chain().focus().addRowAfter().run(), true)
-          : false,
-      'Mod-Shift-Left': () =>
-        this.editor.can().addColumnBefore?.()
-          ? (this.editor.chain().focus().addColumnBefore().run(), true)
-          : false,
-      'Mod-Shift-Right': () =>
-        this.editor.can().addColumnAfter?.()
-          ? (this.editor.chain().focus().addColumnAfter().run(), true)
-          : false
+      // ---- Config-driven shortcuts (#311) --------------------------------
+      // Each editor-scoped shortcut reads its binding from config.hotkeys at
+      // editor-creation time (when addKeyboardShortcuts is evaluated). The
+      // ProseMirror keymap format uses '-' separators and 'Mod' for Cmd/Ctrl
+      // (per prosemirror-keymap source). resolveShortcut converts the config
+      // notation and falls back to the hardcoded default if the config entry
+      // is absent/empty.
+      //
+      // LIVE remapping (config change without page navigation) requires
+      // re-creating the keymap extension — a documented follow-up. The schema
+      // and keymap are immutable at editor-creation time by ProseMirror design.
+      ...buildConfigDrivenShortcuts(this.editor)
     }
   }
 })
