@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
+import { TrailingNode } from '@tiptap/extensions'
 import {
   SiltBlockExtensions,
   SiltInlineMarkExtensions,
@@ -113,7 +114,11 @@ function makeEditorWithNewBlocks() {
       ...SiltTableExtensions,
       EmbedNode,
       BlockReferenceNode,
-      UniqueBlockIds
+      UniqueBlockIds,
+      TrailingNode.configure({
+        node: 'noteBlock',
+        notAfter: ['taskBlock', 'headerBlock', 'calloutBlock']
+      })
     ]
   })
 }
@@ -642,7 +647,9 @@ describe('doc JSON accepted by a real TipTap editor', () => {
     ]
     editor.commands.setContent(blocksToDoc(blocks))
     const back = docToBlocks(editor.getJSON() as DocJSON)
-    expect(back.map((b) => b.clean_text)).toEqual([
+    // A trailing noteBlock is appended after the (cursor-trapping) details node
+    // so the user can click below it; the details run itself is preserved intact.
+    expect(back.slice(0, 4).map((b) => b.clean_text)).toEqual([
       '<details>',
       '<summary>Title</summary>',
       'body text',

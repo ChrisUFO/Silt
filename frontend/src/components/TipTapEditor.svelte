@@ -4,7 +4,7 @@
   import type { Editor } from 'svelte-tiptap'
   import StarterKit from '@tiptap/starter-kit'
   import Placeholder from '@tiptap/extension-placeholder'
-  import { CharacterCount, Focus } from '@tiptap/extensions'
+  import { CharacterCount, Focus, TrailingNode } from '@tiptap/extensions'
   import Typography from '@tiptap/extension-typography'
   import { AutosaveManager } from '../lib/editor/useAutosave'
   import { FocusLockManager } from '../lib/editor/useFocusLock'
@@ -381,8 +381,10 @@
       // paragraph nodes (tableCell content is 'block+'), and its row/column
       // commands hard-depend on schema.nodes.paragraph. A stray top-level
       // paragraph self-heals — docToBlocks maps any unknown block to NOTE.
-      // trailingNode stays disabled so no auto-trailing-paragraph is appended;
-      // Silt constructs every top-level block as a noteBlock/taskBlock/etc.
+      // StarterKit's trailingNode stays disabled (it appends a paragraph);
+      // a noteBlock-based TrailingNode is added separately below so an opaque
+      // block (table/code/details/embed) that traps the cursor always has an
+      // editable line after it the user can click into and type below.
       heading: false,
       bulletList: false,
       orderedList: false,
@@ -399,6 +401,13 @@
     ...SiltDetailsExtensions,
     ...SiltTableExtensions,
     UniqueBlockIds,
+    // Append an empty noteBlock after a cursor-trapping block (table/codeBlock/
+    // details/embedNode/embedBlock) so there is always a clickable line below it.
+    // `notAfter` skips the prose blocks the user can already press Enter from.
+    TrailingNode.configure({
+      node: 'noteBlock',
+      notAfter: ['taskBlock', 'headerBlock', 'calloutBlock']
+    }),
     TaskMetaSuggest.configure({
       onChange: onMetaChange,
       onNavigate: onMetaNavigate,

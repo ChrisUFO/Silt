@@ -12,6 +12,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
+import { TrailingNode } from '@tiptap/extensions'
 import {
   SiltBlockExtensions,
   SiltInlineMarkExtensions,
@@ -58,7 +59,11 @@ function makeFullEditor(initial?: ParsedBlock[]): Editor {
       ...SiltTableExtensions,
       EmbedNode,
       BlockReferenceNode,
-      UniqueBlockIds
+      UniqueBlockIds,
+      TrailingNode.configure({
+        node: 'noteBlock',
+        notAfter: ['taskBlock', 'headerBlock', 'calloutBlock']
+      })
     ],
     content: initial ? blocksToDoc(initial) : undefined
   })
@@ -149,7 +154,9 @@ describe('block creation scan (#188 / #180 / #189 / #183 / #172)', () => {
     )
     expect(saved[0]).toBe('<details>')
     expect(saved[1]).toMatch(/^<summary>.*<\/summary>$/)
-    expect(saved[saved.length - 1]).toBe('</details>')
+    // The details run is intact; a trailing noteBlock may follow it (so the
+    // user can click below), so </details> is not necessarily the last line.
+    expect(saved).toContain('</details>')
   })
 
   it('insertTable creates an editable grid that saves as GFM (#172)', () => {
@@ -220,5 +227,52 @@ describe('block creation scan (#188 / #180 / #189 / #183 / #172)', () => {
     ]) {
       expect(ids.has(id), `missing slash command ${id}`).toBe(true)
     }
+  })
+
+  it('a cursor-trapping block always has an editable line after it (#172/#183/#189)', () => {
+    // The whole point of the trailing noteBlock: after a table/code/details
+    // block the user can click below and type. Without it, an opaque last block
+    // leaves nowhere to place the cursor.
+    const opaque: Array<{ create: (e: Editor) => boolean; type: string }> = [
+      { create: (e) => insertTable(e, 2, 2), type: 'table' },
+      { create: (e) => insertCodeBlock(e, 'go'), type: 'codeBlock' },
+      { create: (e) => insertDetails(e), type: 'details' }
+    ]
+    for (const c of opaque) {
+      const editor = track(makeFullEditor())
+      focusFirstBlock(editor)
+      expect(c.create(editor)).toBe(true)
+      const doc = editor.getJSON() as DocJSON
+      const last = doc.content[doc.content.length - 1]
+      expect(last?.type, `${c.type} should be followed by a noteBlock`).toBe(
+        'noteBlock'
+      )
+    }
+  })
+
+  it('prose blocks the user can Enter from do NOT get a trailing line', () => {
+    // noteBlock/taskBlock/headerBlock/calloutBlock already let the user press
+    // Enter to create the next block, so no auto-trailing line is appended.
+    const editor = track(
+      makeFullEditor([
+        {
+          id: 'aaaaaaaa-1111-1111-1111-111111111111',
+          parent_id: '',
+          type: 'NOTE',
+          depth: 0,
+          raw_text: '',
+          clean_text: 'just a note',
+          status: '',
+          owner: '',
+          start_date: '',
+          due_date: '',
+          priority: 3,
+          line_number: 1
+        }
+      ])
+    )
+    const doc = editor.getJSON() as DocJSON
+    expect(doc.content).toHaveLength(1)
+    expect(doc.content[0]?.type).toBe('noteBlock')
   })
 })
