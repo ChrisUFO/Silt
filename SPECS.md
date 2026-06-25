@@ -699,7 +699,7 @@ commands `/h1` `/h2` `/h3` `/note` `/task`.
 Per-page Edit (WYSIWYG) ↔ Source (raw markdown) toggle via Ctrl+E or the
 Edit/Source radio in the page chrome. Source view is read-only.
 
-### Block types (#188, #180, #189, #183, #172)
+### Block types (#188, #180, #189, #183, #172, #310, #308)
 
 Silt round-trips the standard markdown block-level vocabulary. Each block type
 is a first-class editor node, so the outliner's block operations (delete,
@@ -709,18 +709,21 @@ are standard syntax, interchangeable with Obsidian / Joplin / GitHub / VS Code.
 | Block | On-disk syntax | Notes |
 |---|---|---|
 | Quote / blockquote (#188) | `> quoted text` | A `>` prefix is a note marker (parallel to `- `). Nested `>> ` quotes render deeper borders. `/quote` or Ctrl+Shift+9 toggles. |
-| Callout (#180) | `> [!variant] message` | Obsidian admonition syntax. Seven variants: `note`, `info`, `tip`, `warning`, `danger`, `success`, `quote` — each with a material icon + theme-token accent. `/callout` family. |
+| Callout (#180/#308) | `> [!variant] message` + `>` body lines | Obsidian admonition syntax. Seven variants with material icon + accent. Multi-paragraph bodies: consecutive `>` lines form one managed `CALLOUT` block. Bare `>` is a paragraph break. `/callout` family. |
 | Code block (#189) | ` ```lang … ``` ` (GFM fence) | Multi-line; internal newlines are preserved (a managed `CODE` block). Shiki syntax highlighting (theme-aware), language selector, copy button. `/code-block`. |
-| Foldable details (#183) | `<details><summary>…</summary>…</details>` | Native HTML `<details>`; collapse state is ephemeral (not persisted). `/details` or Ctrl+Shift+. toggles. |
-| GFM table (#172) | `| a | b |` pipe syntax | Editable grid with Tab/arrow nav, column resize, and a 7-operation contextual toolbar. Block identity on the last row. |
+| Foldable details (#183/#310) | `<details><summary>…</summary>…</details>` | Native HTML `<details>`; one managed `DETAILS` block. Collapse state is ephemeral. `/details` or Ctrl+Shift+. toggles. |
+| GFM table (#172/#310) | `| a | b |` pipe syntax | Editable grid with Tab/arrow nav, column resize, and a 7-operation contextual toolbar. One managed `TABLE` block — the block identity is on a trailing line after the last row. |
 
 **Multi-line blocks.** The Go parser reads files line-by-line and `renderBlock`
-collapses `\n`→space for prose blocks (TASK/NOTE/HEADER). Two exceptions retain
-newlines: fenced **code blocks** are a managed `CODE` region whose `clean_text`
-keeps internal newlines (the block id lives on its own line after the closing
-fence, so the fence stays strictly GFM); **tables**, **details**, **quotes**,
-and **callouts** are stored as one NOTE block per line and regrouped by the
-frontend converter on load. Literal pipes in table cells are escaped as `\|`.
+collapses `\n`→space for prose blocks (TASK/NOTE/HEADER). All multi-line block
+types use the **unified region-block model** (#310): each multi-line region —
+fenced code (`CODE`), GFM table (`TABLE`), `<details>` HTML (`DETAILS`), and
+Obsidian callout (`CALLOUT`) — is accumulated into ONE managed `ParsedBlock`
+whose `clean_text` retains internal newlines. The block identity comment lives
+on its own dedicated trailing line after the region content, so the on-disk
+format stays strictly GFM/HTML/Obsidian syntax (interoperable with Obsidian,
+GitHub, VS Code). The frontend converter is a clean 1:1 map — no regrouping.
+Literal pipes in table cells are escaped as `\|`.
 
 9.1 Configuration Schema (config.yaml)
 

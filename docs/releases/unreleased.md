@@ -1,3 +1,9 @@
+# Unified Multi-Line Block Model
+
+- Tables, foldable details, and callouts are now single managed blocks end-to-end — one block ID, one search result, one move/delete/duplicate target — matching how code blocks already worked.
+- Multi-paragraph callout bodies: consecutive `>` lines inside a callout are preserved as separate paragraphs (bare `>` for paragraph breaks), matching Obsidian's callout syntax.
+- Editor keymaps now honor Settings → Hotkeys remappings at editor-creation time (previously the config entries were display-only and the editor used hardcoded bindings).
+
 # New Editor Block Types
 
 - Mark any block as a quote with `/quote` or `Ctrl+Shift+9`; nested quotes render with a deeper border.

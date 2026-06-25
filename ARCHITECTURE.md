@@ -775,20 +775,21 @@ UUID `id` attr and a per-block `file_date`. A `UniqueBlockIds` extension
 (`appendTransaction`) mints fresh UUIDs for pasted/duplicated blocks to prevent
 `blocks`-table PK collisions.
 
-**Multi-line block model (Sprint 14).** The Go parser reads files line-by-line
-and `renderBlock` collapses `\n`→space for the prose types (TASK/NOTE/HEADER).
-Two strategies extend this without breaking the line-oriented round-trip
-guarantee: (1) fenced code is a managed `CODE` region — the parser's
-`accumulateCodeRegion` collects a ``` ``` run into ONE `ParsedBlock` whose
-`clean_text` retains internal newlines, and `renderBlock` preserves them (the
-block id lives on its own line after the closing fence, so the fence stays
-strictly GFM and interop with Obsidian/GitHub/VS Code is byte-exact); (2)
-tables, `<details>`, quotes, and callouts are stored as one NOTE per line and
-regrouped by the frontend converter's index-based scanner (`blocksToDoc`).
-Nested ``` ``` fences use a length-aware closer (GFM: closer backtick count ≥
-opener). The `blocks` SQLite table needs no schema change — `CODE` is just
-another `type` value and `clean_content` carries the (possibly multi-line) text
-that FTS5 indexes.
+**Multi-line block model (unified, #310/#308).** The Go parser reads files
+line-by-line and `renderBlock` collapses `\n`→space for the prose types
+(TASK/NOTE/HEADER). All multi-line block types use ONE unified strategy: the
+parser's `accumulateRegion` detects region openers — fenced code (```),
+GFM table runs (header + separator), `<details>` HTML, and Obsidian callouts
+(`> [!variant]` + consecutive `>` lines) — and accumulates each into ONE
+`ParsedBlock` (type CODE/TABLE/DETAILS/CALLOUT) whose `clean_text` retains
+internal newlines. `renderBlock` emits them verbatim (no `\n`→space collapse)
+with the block identity comment on its own dedicated trailing line, so the
+on-disk format stays strictly GFM/HTML/Obsidian syntax (byte-exact interop
+with Obsidian / GitHub / VS Code). The frontend converter (`blocksToDoc`) is
+a clean 1:1 map (`blocks.map(blockToNode)`) — the multi-block regrouping layer
+that previously faked single-entity semantics for tables/details/callouts is
+deleted. Each multi-line block is one `blocks`-table row, one UUID, one
+searchable FTS5 document, and one SDK mutation target.
 
 NodeView components (`TaskBlockView`, `NoteBlockView`, `HeaderBlockView`) render the Svelte UI for each block type — checkbox cycle for tasks, drag handles, meta badges. The slash menu (`/` at block start) surfaces commands to change block types.
 
