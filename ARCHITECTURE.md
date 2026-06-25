@@ -605,6 +605,29 @@ func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[s
 func (a *App) GetAppVersion() string
 
 
+// In-app update check + self-upgrade (#312). backend/updates owns the HTTP,
+// semver, download, and SHA256 logic; these are thin Wails-bound wrappers.
+// CheckForUpdates issues one unauthenticated GET to GitHub's
+// /releases/latest (no token embedded — AC7), semver-compares (the leading
+// `v` is stripped; backend/semver is the single source of truth shared with
+// plugin min-version enforcement), and stamps settings.json LastUpdateCheck.
+// DownloadUpdate re-fetches the release, downloads the platform asset
+// (streaming update:download:progress events), and verifies it against the
+// published SHA256SUMS before returning the local path — it NEVER returns a
+// path for an unverified asset, and a URL not in the release's asset list is
+// rejected (defense against a stale/coerced frontend). InstallUpdate launches
+// the verified installer (Windows NSIS detached; Linux AppImage $APPIMAGE
+// in-place swap + relaunch) so the caller can quit. Get/SetUpdateSettings
+// persist the auto-check toggle in user-global settings.json (AutoCheckUpdates
+// *bool, default-on; LastUpdateCheck RFC3339) — NOT SQLite (not reproducible)
+// and NOT vault config.yaml (must be known before a vault opens).
+func (a *App) CheckForUpdates() (updates.UpdateInfo, error)
+func (a *App) DownloadUpdate(assetURL string) (string, error)
+func (a *App) InstallUpdate(localPath string) error
+func (a *App) GetUpdateSettings() (UpdateSettingsResult, error)
+func (a *App) SetUpdateSettings(autoCheck bool) error
+
+
 // Open-tab persistence (#142). GetOpenTabs returns the persisted pinned-tab
 // set + active tab, pruned against ListNavigation (stale tabs for deleted
 // pages are silently dropped). SetOpenTabs atomically persists the pinned set
