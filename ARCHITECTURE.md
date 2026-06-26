@@ -830,7 +830,12 @@ the Sprint 14 block primitives — `calloutBlock` (Obsidian `> [!variant]`),
 `quote` attr (a `> ` blockquote marker, parallel to `bullet`). Each carries a
 UUID `id` attr and a per-block `file_date`. A `UniqueBlockIds` extension
 (`appendTransaction`) mints fresh UUIDs for pasted/duplicated blocks to prevent
-`blocks`-table PK collisions.
+`blocks`-table PK collisions. `calloutBlock` and `detailsContent` use
+`content: 'block+'` so a callout or foldable section can nest task lists, code
+blocks, tables, and other callouts; this is safe (no silent drop) because the
+converter serializer has an explicit branch for every allowed block type — a
+plain `>` body line parses back to a paragraph so legacy multi-paragraph
+callouts round-trip byte-for-byte.
 
 **Multi-line block model (unified, #310/#308).** The Go parser reads files
 line-by-line and `renderBlock` collapses `\n`→space for the prose types

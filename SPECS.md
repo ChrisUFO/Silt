@@ -709,10 +709,10 @@ are standard syntax, interchangeable with Obsidian / Joplin / GitHub / VS Code.
 | Block | On-disk syntax | Notes |
 |---|---|---|
 | Quote / blockquote (#188) | `> quoted text` | A `>` prefix is a note marker (parallel to `- `). Nested `>> ` quotes render deeper borders. `/quote` or Ctrl+Shift+9 toggles. |
-| Callout (#180/#308) | `> [!variant] message` + `>` body lines | Obsidian admonition syntax. Seven variants with material icon + accent. Multi-paragraph bodies: consecutive `>` lines form one managed `CALLOUT` block. Bare `>` is a paragraph break. `/callout` family. |
+| Callout (#180/#308/#290) | `> [!variant] message` + `>` body lines | Obsidian admonition syntax. Seven variants with material icon + accent. The body is `block+`: consecutive `>` lines form one managed `CALLOUT` block, and each body line may carry a block construct (task list, fenced code, GFM table, nested callout) — every body line is `>`-prefixed on disk, so multi-line children get `>` on each line and nested callouts become `>>`. Bare `>` is a paragraph break. `/callout` family. |
 | Code block (#189) | ` ```lang … ``` ` (GFM fence) | Multi-line; internal newlines are preserved (a managed `CODE` block). Shiki syntax highlighting (theme-aware), language selector, copy button. `/code-block`. |
 | Foldable details (#183/#310) | `<details><summary>…</summary>…</details>` | Native HTML `<details>`; one managed `DETAILS` block. Collapse state is ephemeral. `/details` or Ctrl+Shift+. toggles. |
-| GFM table (#172/#310) | `| a | b |` pipe syntax | Editable grid with Tab/arrow nav, column resize, and a 7-operation contextual toolbar. One managed `TABLE` block — the block identity is on a trailing line after the last row. |
+| GFM table (#172/#310) | `| a | b |` pipe syntax | Editable grid with Tab/arrow nav, column resize, zebra + hover theming, and a 6-operation contextual toolbar (merge is omitted — GFM can't represent spans). One managed `TABLE` block — the block identity is on a trailing line after the last row. |
 
 **Multi-line blocks.** The Go parser reads files line-by-line and `renderBlock`
 collapses `\n`→space for prose blocks (TASK/NOTE/HEADER). All multi-line block
