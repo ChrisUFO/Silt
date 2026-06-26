@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Editor } from '@tiptap/core'
+  import { nearestEnabledIndex } from '../../lib/editor/rovingTabindex'
 
   // Contextual toolbar for GFM tables (#172). Renders below the format toolbar
   // when the cursor is inside a table cell. Six row/column operations map to
@@ -100,36 +101,36 @@
   let rovingIdx = $state(0)
   let toolbarEl: HTMLElement | null = $state(null)
 
-  function enabledStep(
-    btns: ArrayLike<HTMLButtonElement>,
-    from: number,
-    delta: number
-  ): number {
-    const count = btns.length
-    let idx = from
-    for (let k = 0; k < count; k++) {
-      idx = (idx + delta + count) % count
-      if (!btns[idx].disabled) return idx
+  // Re-clamp the roving focus when button enabled-states change: if the
+  // button holding tabindex 0 becomes disabled (e.g. table shrinks to one
+  // row so "Delete row" greys out), move the Tab-stop to the nearest
+  // enabled button so keyboard users never land on an inert control.
+  $effect(() => {
+    const currentOps = ops
+    if (rovingIdx >= currentOps.length || !currentOps[rovingIdx].can()) {
+      const disabled = currentOps.map((op) => !op.can())
+      const next = nearestEnabledIndex(disabled, rovingIdx, 1)
+      if (next !== rovingIdx) rovingIdx = next
     }
-    return from
-  }
+  })
 
   function handleKeydown(e: KeyboardEvent): void {
     const btns = toolbarEl?.querySelectorAll<HTMLButtonElement>('[data-tb]')
     if (!btns || btns.length === 0) return
+    const disabled = Array.from(btns, (b) => b.disabled)
     let next = rovingIdx
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
       e.preventDefault()
-      next = enabledStep(btns, rovingIdx, 1)
+      next = nearestEnabledIndex(disabled, rovingIdx, 1)
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
       e.preventDefault()
-      next = enabledStep(btns, rovingIdx, -1)
+      next = nearestEnabledIndex(disabled, rovingIdx, -1)
     } else if (e.key === 'Home') {
       e.preventDefault()
-      next = enabledStep(btns, -1, 1)
+      next = nearestEnabledIndex(disabled, -1, 1)
     } else if (e.key === 'End') {
       e.preventDefault()
-      next = enabledStep(btns, btns.length, -1)
+      next = nearestEnabledIndex(disabled, disabled.length, -1)
     } else if (e.key === 'Escape') {
       e.preventDefault()
       editor.chain().focus().run()
