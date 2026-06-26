@@ -62,15 +62,14 @@ func TestDownload_Non2xxErrors(t *testing.T) {
 
 // TestDownloadAndVerify_UsesLongDownloadTimeoutNotCheckTimeout is the
 // regression test for the merge-blocking bug where the download reused the
-// 15s check-timeout client. It injects a Client whose HTTPClient has a 1s
-// timeout (simulating the short check client) pointed at a server that
-// delivers the asset over ~400ms (longer than a naive reuse would tolerate
-// once scaled, and provably past the injected 1s only when the download path
-// swaps in its own longer-timeout client). If DownloadAndVerify reused the
-// injected client, the body read would exceed 1s... but to keep the test
-// fast and deterministic we instead assert the constructed download client's
-// observable behavior: the download SUCCEEDS even though the injected client
-// would time out, proving the long-timeout client is in use.
+// 15s check-timeout client. It injects a Client whose HTTPClient has a 500ms
+// timeout (simulating a short client that is NOT the download client) and
+// serves the asset over ~800ms. The 500ms margin gives the instant localhost
+// /releases/latest metadata GET enormous headroom (so a loaded CI runner can't
+// spuriously time it out), while the 800ms streamed asset body still exceeds
+// the 500ms client — so if DownloadAndVerify wrongly reused the injected
+// client for the body, the read would fail mid-stream. The download succeeding
+// proves the long-timeout (downloadTimeout) client is the one in use.
 func TestDownloadAndVerify_UsesLongDownloadTimeoutNotCheckTimeout(t *testing.T) {
 	asset := []byte("installer-bytes")
 	assetSHA := sha256.Sum256(asset)
@@ -84,11 +83,12 @@ func TestDownloadAndVerify_UsesLongDownloadTimeoutNotCheckTimeout(t *testing.T) 
 			]}`, srv.URL, len(asset), srv.URL)
 			_, _ = w.Write([]byte(rel))
 		case r.URL.Path == "/a.exe":
-			// Deliver the real asset bytes slowly (~400ms total) so that a
-			// 200ms-timeout client reused for the body read would fail
-			// mid-stream, forcing DownloadAndVerify to swap in its own
-			// downloadTimeout client. The bytes must equal `asset` so the
-			// SHA256 matches; we just pace them out.
+			// Deliver the real asset bytes slowly (~800ms total). 800ms
+			// comfortably exceeds the 500ms injected client, so a reused
+			// 500ms client would time out mid-body — forcing
+			// DownloadAndVerify to swap in its own downloadTimeout client.
+			// The bytes must equal `asset` so the SHA256 matches; we just
+			// pace them out.
 			flusher, _ := w.(http.Flusher)
 			chunks := 8
 			step := (len(asset) + chunks - 1) / chunks
@@ -105,7 +105,7 @@ func TestDownloadAndVerify_UsesLongDownloadTimeoutNotCheckTimeout(t *testing.T) 
 				if flusher != nil {
 					flusher.Flush()
 				}
-				time.Sleep(50 * time.Millisecond)
+				time.Sleep(100 * time.Millisecond)
 			}
 		case r.URL.Path == "/SHA256SUMS":
 			_, _ = w.Write([]byte(fmt.Sprintf("%s  a.exe\n", hex.EncodeToString(assetSHA[:]))))
@@ -115,12 +115,13 @@ func TestDownloadAndVerify_UsesLongDownloadTimeoutNotCheckTimeout(t *testing.T) 
 	}))
 	defer srv.Close()
 
-	// Inject a 200ms-timeout client — long enough for the instant /releases
-	// latest metadata GET, but short enough that reusing it for the 400ms
-	// chunked asset body would fail. Reuse the test server's transport so the
-	// requests still reach httptest. If DownloadAndVerify correctly swaps in
-	// its own downloadTimeout client, the download succeeds.
-	shortClient := &http.Client{Transport: srv.Client().Transport, Timeout: 200 * time.Millisecond}
+	// Inject a 500ms-timeout client — generous for the instant localhost
+	// /releases/latest metadata GET (so a loaded runner can't spuriously fail
+	// the metadata fetch), but short enough that reusing it for the 800ms
+	// chunked asset body would fail mid-stream. Reuse the test server's
+	// transport so the requests still reach httptest. If DownloadAndVerify
+	// correctly swaps in its own downloadTimeout client, the download succeeds.
+	shortClient := &http.Client{Transport: srv.Client().Transport, Timeout: 500 * time.Millisecond}
 	c := &Client{HTTPClient: shortClient, APIBase: srv.URL, Repo: "Chelydra-Labs/Silt", AppVersion: "0.4.0"}
 
 	done := make(chan struct{})
