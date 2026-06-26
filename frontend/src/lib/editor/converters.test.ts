@@ -397,6 +397,25 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(docToBlocks(doc)[0].clean_text).toBe(text)
   })
 
+  it('two sibling nested callouts parse as separate children (#290)', () => {
+    const text = [
+      '> [!note] outer',
+      '> > [!tip] first inner',
+      '> > first body',
+      '> > [!warning] second inner',
+      '> > second body'
+    ].join('\n')
+    const doc = blocksToDoc([mkBlock('CALLOUT', { clean_text: text })])
+    const node = doc.content[0]
+    const calloutChildren = (node?.content || []).filter(
+      (c) => c.type === 'calloutBlock'
+    )
+    expect(calloutChildren).toHaveLength(2)
+    expect(calloutChildren[0]?.attrs?.variant).toBe('tip')
+    expect(calloutChildren[1]?.attrs?.variant).toBe('warning')
+    expect(docToBlocks(doc)[0].clean_text).toBe(text)
+  })
+
   it('callout containing a header round-trips (#290)', () => {
     const text = '> [!note] Section\n> ## Subheading\n> body'
     const doc = blocksToDoc([mkBlock('CALLOUT', { clean_text: text })])

@@ -566,7 +566,12 @@ function detailsBodyLinesToNodes(lines: string[]): NodeJSON[] {
     // Callout → accumulate `>` lines → CALLOUT synthetic block.
     if (/^>\s*\[!/i.test(trimmed)) {
       let j = i + 1
-      while (j < lines.length && /^>/.test(lines[j].trim())) j++
+      while (
+        j < lines.length &&
+        /^>/.test(lines[j].trim()) &&
+        !/^>\s*\[!/i.test(lines[j].trim())
+      )
+        j++
       const calloutText = lines.slice(i, j).join('\n')
       nodes.push(
         blockToNode(
@@ -811,7 +816,12 @@ function calloutBodyLinesToNodes(lines: string[]): NodeJSON[] {
     // serializer re-prefixes them into `>>`.
     if (CALLOUT_MARKER_RE.test(trimmed)) {
       let j = i + 1
-      while (j < lines.length && /^\s*>/.test(lines[j])) j++
+      while (
+        j < lines.length &&
+        /^\s*>/.test(lines[j]) &&
+        !CALLOUT_MARKER_RE.test(lines[j].trim())
+      )
+        j++
       const nestedText = lines.slice(i, j).join('\n')
       nodes.push(parseCalloutText(nestedText, '', ''))
       i = j
