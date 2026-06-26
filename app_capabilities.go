@@ -5,8 +5,8 @@ import (
 	"log"
 	"silt/backend/parser"
 	"silt/backend/plugins"
+	"silt/backend/semver"
 	"silt/backend/vault"
-	"strconv"
 	"strings"
 )
 
@@ -200,7 +200,7 @@ func enforceMinVersion(minSiltVersion string) error {
 	if minSiltVersion == "" {
 		return nil
 	}
-	if versionLessThan(appVersion, minSiltVersion) {
+	if semver.LessThan(appVersion, minSiltVersion) {
 		return fmt.Errorf("plugin requires Silt %s or later (current: %s)", minSiltVersion, appVersion)
 	}
 	return nil
@@ -243,22 +243,6 @@ func enforcePublisherTrust(author string) error {
 		}
 	}
 	return fmt.Errorf("plugin author %q is not in the trusted-publishers list (add it via AddTrustedPublisher to install)", author)
-}
-
-func versionLessThan(a, b string) bool {
-	ap := strings.Split(a, ".")
-	bp := strings.Split(b, ".")
-	for i := 0; i < len(ap) && i < len(bp); i++ {
-		ai, _ := strconv.Atoi(ap[i])
-		bi, _ := strconv.Atoi(bp[i])
-		if ai < bi {
-			return true
-		}
-		if ai > bi {
-			return false
-		}
-	}
-	return len(ap) < len(bp) // shorter = older if all segments equal so far
 }
 
 func manifestToParser(m plugins.Manifest) parser.PluginManifest {

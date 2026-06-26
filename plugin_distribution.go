@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"silt/backend/plugins"
+	"silt/backend/semver"
 	"silt/backend/vault"
 	"strings"
 )
@@ -54,7 +55,7 @@ func (a *App) CheckPluginUpdate(pluginID, currentVersion, updateUrl string) (Plu
 	}
 	info.LatestVersion = manifest.Version
 	info.DownloadURL = manifest.URL
-	info.UpdateAvailable = versionLessThan(currentVersion, manifest.Version)
+	info.UpdateAvailable = semver.LessThan(currentVersion, manifest.Version)
 	return info, nil
 }
 
@@ -84,33 +85,29 @@ func (a *App) AddTrustedPublisher(publisher string) error {
 	if publisher == "" {
 		return fmt.Errorf("publisher is required")
 	}
-	settings, err := vault.LoadSettings()
-	if err != nil {
-		return err
-	}
-	for _, p := range settings.TrustedPublishers {
-		if p == publisher {
-			return nil
+	_, err := vault.UpdateSettings(func(s *vault.AppSettings) {
+		for _, p := range s.TrustedPublishers {
+			if p == publisher {
+				return // already present — idempotent no-op modify
+			}
 		}
-	}
-	settings.TrustedPublishers = append(settings.TrustedPublishers, publisher)
-	return vault.SaveSettings(settings)
+		s.TrustedPublishers = append(s.TrustedPublishers, publisher)
+	})
+	return err
 }
 
 // RemoveTrustedPublisher removes a publisher from the trusted list (#111).
 func (a *App) RemoveTrustedPublisher(publisher string) error {
-	settings, err := vault.LoadSettings()
-	if err != nil {
-		return err
-	}
-	out := make([]string, 0, len(settings.TrustedPublishers))
-	for _, p := range settings.TrustedPublishers {
-		if p != publisher {
-			out = append(out, p)
+	_, err := vault.UpdateSettings(func(s *vault.AppSettings) {
+		out := make([]string, 0, len(s.TrustedPublishers))
+		for _, p := range s.TrustedPublishers {
+			if p != publisher {
+				out = append(out, p)
+			}
 		}
-	}
-	settings.TrustedPublishers = out
-	return vault.SaveSettings(settings)
+		s.TrustedPublishers = out
+	})
+	return err
 }
 
 // PluginReadPluginAsset reads a file from the plugin's OWN install directory

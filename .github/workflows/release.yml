@@ -414,6 +414,78 @@ jobs:
               "$artifact"
           done
 
+      # --- SHA256SUMS (#312) ----------------------------------------------
+      # Publishes a sha256sum-compatible checksums file covering the executable
+      # binary assets only (*.exe, *.deb, *.AppImage). The in-app updater
+      # downloads this alongside its chosen asset and verifies the asset's
+      # SHA256 against it before executing — the lightweight first-line
+      # integrity check (complementary to the cosign/SignPath signatures, which
+      # remain a separate, stronger trust path). nullglob keeps the glob a
+      # no-op if a given extension has no asset this release.
+      - name: Generate SHA256SUMS for binary assets
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          # Match on exact extensions so sigs (.sig/.pem), SBOM (.spdx.json),
+          # and SHA256SUMS itself are never included — those are not executable
+          # binaries and are verified by their own trust path.
+          rm -f release-assets/SHA256SUMS
+          (cd release-assets && sha256sum -- *.exe *.deb *.AppImage > SHA256SUMS)
+          echo "Generated release-assets/SHA256SUMS:"
+          cat release-assets/SHA256SUMS
+
+      # Deterministic backstop for the create-pr skill's soft 'always overwrite'
+      # rule: fails the release if any bullet from the previous published release
+      # reappears verbatim in docs/releases/unreleased.md (the regression where a
+      # PR prepended its section onto the prior notes instead of overwriting).
+      - name: Guard against accumulated release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          NOTES_FILE="docs/releases/unreleased.md"
+          # Stub/missing notes → the create step falls back to --generate-notes,
+          # so there is nothing to accumulate.
+          if [ ! -f "$NOTES_FILE" ] || grep -q "Next release notes go here" "$NOTES_FILE"; then
+            echo "No curated notes; skipping accumulation guard."
+            exit 0
+          fi
+          # The current tag isn't published yet, so the newest existing release
+          # is the previous one. gh release list only returns published releases,
+          # guaranteeing PREV_TAG has a body to compare against.
+          PREV_TAG=$(gh release list --repo "${{ github.repository }}" \
+                       --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || echo "")
+          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$CURRENT_TAG" ]; then
+            echo "No previous release found; skipping accumulation guard."
+            exit 0
+          fi
+          echo "Checking $CURRENT_TAG notes for content carried over from $PREV_TAG."
+          TMP_BULLETS="$(mktemp)"
+          gh release view "$PREV_TAG" --repo "${{ github.repository }}" \
+            --json body --jq .body \
+            | grep -E '^[[:space:]]*[-*][[:space:]]+' \
+            | sed -E 's/^[[:space:]]*[-*][[:space:]]+//' \
+            | awk 'length($0) >= 10' \
+            | sort -u > "$TMP_BULLETS" || true
+          if [ ! -s "$TMP_BULLETS" ]; then
+            echo "Previous release $PREV_TAG has no parseable bullets; skipping."
+            rm -f "$TMP_BULLETS"
+            exit 0
+          fi
+          # Fixed-string match so em dashes / parens / backticks are literal, not
+          # regex. length >= 10 above drops placeholder stubs from consideration.
+          OVERLAPS=$(grep -F -f "$TMP_BULLETS" "$NOTES_FILE" || true)
+          rm -f "$TMP_BULLETS"
+          if [ -n "$OVERLAPS" ]; then
+            echo "::error::docs/releases/unreleased.md reuses bullets that already shipped in $PREV_TAG."
+            echo "::error::The create-pr skill must OVERWRITE the file each PR — not append. Overlapping lines:"
+            printf '%s\n' "$OVERLAPS" | sed 's/^/    | /'
+            echo "::error::Rewrite the notes to describe only this PR's changes, then re-trigger the release."
+            exit 1
+          fi
+          echo "Notes are clean — no overlap with $PREV_TAG."
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

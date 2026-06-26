@@ -48,6 +48,10 @@
   import Onboarding from './components/Onboarding.svelte'
   import { pushNotification } from './notifications/store.svelte'
   import {
+    initStartupUpdateCheck,
+    disposeUpdateStore
+  } from './updates/store.svelte'
+  import {
     openPage as openPageState,
     closeTab as closeTabState,
     promotePreview as promotePreviewState,
@@ -397,6 +401,11 @@
     const disposeThemes = initThemes()
     const disposeTemplates = initTemplates()
 
+    // Throttled startup update check (#312): one quiet GitHub Releases lookup
+    // per 24h. Silent on failure (AC5); raises a toast only when an update is
+    // available (AC2). Runs independently of any vault being open.
+    void initStartupUpdateCheck()
+
     // Hot-reload the plugin registry when an external config.yaml edit
     // changes plugins.disabled (e.g. the user hand-edits the file as
     // documented in docs/PLUGIN_DEVELOPMENT.md). Diff against the last
@@ -644,6 +653,7 @@
       disposeEditorTokens()
       disposeThemes()
       disposeTemplates()
+      disposeUpdateStore()
       // Flush any pending tab-state persistence so the user's last tab
       // change survives a component unmount / app close (#142 hardening).
       if (persistTabsTimer) {

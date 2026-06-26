@@ -143,13 +143,10 @@ func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
 	// (t.ID) rather than the requested id: if the caller requested the
 	// embedded default and the file vanished mid-request, settings stays
 	// consistent with what is rendered.
-	settings, err := vault.LoadSettings()
-	if err != nil {
-		return ActiveThemeResult{}, fmt.Errorf("failed to load settings: %w", err)
-	}
-	settings.ActiveTheme = t.ID
-	settings.ThemeMode = mode
-	if err := vault.SaveSettings(settings); err != nil {
+	if _, err := vault.UpdateSettings(func(s *vault.AppSettings) {
+		s.ActiveTheme = t.ID
+		s.ThemeMode = mode
+	}); err != nil {
 		return ActiveThemeResult{}, fmt.Errorf("failed to persist theme selection: %w", err)
 	}
 

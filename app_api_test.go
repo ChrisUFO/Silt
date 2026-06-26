@@ -1137,24 +1137,6 @@ func TestCreatePage_SectionlessThenListed(t *testing.T) {
 	}
 }
 
-func TestVersionLessThan(t *testing.T) {
-	cases := []struct {
-		a, b string
-		want bool
-	}{
-		{"0.1.0", "0.2.0", true},
-		{"0.2.0", "0.1.0", false},
-		{"1.0.0", "1.0.0", false},
-		{"0.1.0", "1.0.0", true},
-		{"0.10.0", "0.9.0", false},
-	}
-	for _, c := range cases {
-		if got := versionLessThan(c.a, c.b); got != c.want {
-			t.Errorf("versionLessThan(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
-		}
-	}
-}
-
 func TestEnforceMinVersion(t *testing.T) {
 	if err := enforceMinVersion(""); err != nil {
 		t.Errorf("expected nil for empty minSiltVersion, got %v", err)

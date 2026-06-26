@@ -3,14 +3,28 @@ package vault
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"silt/backend/parser"
 	"silt/backend/safeio"
 	"silt/backend/themes"
 )
+
+// settingsWriteMu serializes every settings.json write. LoadSettings/SaveSettings
+// are a read-modify-write: without serialization, two concurrent writers (e.g.
+// a theme switch racing an update-check toggle, or a vault move racing a
+// trusted-publisher add) both load the same state, both modify, and the later
+// save silently clobbers the earlier one's field. The mutex makes every write
+// atomic w.r.t. other writes. Readers (LoadSettings) stay lock-free — atomic
+// file I/O already guarantees they see either the old or new file in full.
+//
+// It is safe against deadlock with App-level locks (configMu, vaultMu) because
+// the load/save path does only file I/O and never acquires an App lock.
+var settingsWriteMu sync.Mutex
 
 // maxSettingsJSONBytes bounds settings.json before it is parsed. A hostile
 // co-tenant file cannot drive unbounded allocation ahead of the strict
@@ -43,6 +57,32 @@ type AppSettings struct {
 	// signed plugins install without a warning (#111 distribution v2). Empty
 	// means all unsigned plugins install with a warning prompt.
 	TrustedPublishers []string `json:"trusted_publishers,omitempty"`
+
+	// AutoCheckUpdates gates the startup update check (#312). It is a pointer
+	// so an absent field in an older settings.json resolves to the default-on
+	// behavior (nil → true) via AutoCheckUpdatesEnabled(); a user who turns it
+	// off persists an explicit false. User-global, pre-vault state: the check
+	// fires before any vault is open, so it cannot live in vault config.yaml.
+	AutoCheckUpdates *bool `json:"auto_check_updates,omitempty"`
+
+	// LastUpdateCheck records the last automatic/manual update check as an
+	// RFC3339 timestamp (#312). Empty means never checked. It is a string (not
+	// time.Time) because encoding/json's omitempty does not fire for a zero
+	// time.Time struct, which would persist a junk "0001-01-01..." value.
+	// Reproductible? No — but it is user-global app state, not vault content,
+	// so it is outside the §0 rule-4 reproducibility contract that governs
+	// SQLite. settings.json is its own (non-SQLite) source of truth.
+	LastUpdateCheck string `json:"last_update_check,omitempty"`
+}
+
+// AutoCheckUpdatesEnabled reports whether the startup update check should run,
+// resolving the pointer's default-on semantics (nil/absent → true). The single
+// read path so callers never repeat the nil check.
+func (s AppSettings) AutoCheckUpdatesEnabled() bool {
+	if s.AutoCheckUpdates == nil {
+		return true
+	}
+	return *s.AutoCheckUpdates
 }
 
 // ValidThemeMode reports whether mode is a recognized ThemeMode value.
@@ -64,6 +104,13 @@ func (s AppSettings) withDefaults() AppSettings {
 	}
 	if !ValidThemeMode(s.ThemeMode) {
 		s.ThemeMode = "dark"
+	}
+	// Normalize the update toggle so a written settings.json is self-
+	// describing (explicit true/false rather than null/absent on save).
+	// LoadSettings returns the same resolved value to every caller.
+	if s.AutoCheckUpdates == nil {
+		t := true
+		s.AutoCheckUpdates = &t
 	}
 	return s
 }
@@ -148,7 +195,20 @@ func LoadSettings() (*AppSettings, error) {
 	return &settings, nil
 }
 
+// SaveSettings atomically persists settings (including the F20 fingerprint
+// refresh). It acquires settingsWriteMu so it serializes against other writers
+// (UpdateSettings and other SaveSettings calls); blind saves that don't need a
+// read first (initial seed, rollback restore) can call it directly.
 func SaveSettings(settings *AppSettings) error {
+	settingsWriteMu.Lock()
+	defer settingsWriteMu.Unlock()
+	return saveSettingsLocked(settings)
+}
+
+// saveSettingsLocked is SaveSettings without the mutex; the caller MUST hold
+// settingsWriteMu (UpdateSettings uses it to keep its Load→Modify→Save under a
+// single lock acquisition).
+func saveSettingsLocked(settings *AppSettings) error {
 	if settings == nil {
 		return fmt.Errorf("settings must not be nil")
 	}
@@ -180,6 +240,33 @@ func SaveSettings(settings *AppSettings) error {
 	// (non-Silt) edits to settings.json do. WriteFileAtomic produces 0o600
 	// perms (os.CreateTemp default), satisfying the F7 perm-pairing rule.
 	return writeSettingsFingerprint(&normalized)
+}
+
+// UpdateSettings runs a transactional read-modify-write of settings.json: it
+// loads the current settings under settingsWriteMu, applies fn (which mutates
+// the settings in place), and saves — all before releasing the lock, so no
+// concurrent writer can interleave and clobber fn's change. Callers that only
+// need a blind save (initial seed, rollback restore) should use SaveSettings
+// directly. A fingerprint-mismatch on load is tolerated (the settings are still
+// returned and usable); any other load error aborts the transaction.
+//
+// Returns the persisted settings (post-fn, post-withDefaults) so callers that
+// need the canonicalized result don't have to re-load.
+func UpdateSettings(fn func(*AppSettings)) (*AppSettings, error) {
+	settingsWriteMu.Lock()
+	defer settingsWriteMu.Unlock()
+	settings, err := LoadSettings()
+	if err != nil && !errors.Is(err, ErrSettingsFingerprintMismatch) {
+		return nil, fmt.Errorf("load settings: %w", err)
+	}
+	if settings == nil {
+		settings = &AppSettings{}
+	}
+	fn(settings)
+	if err := saveSettingsLocked(settings); err != nil {
+		return nil, fmt.Errorf("save settings: %w", err)
+	}
+	return settings, nil
 }
 
 func ScaffoldVault(vaultPath string) error {

@@ -773,9 +773,9 @@ func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult,
 			return fmt.Errorf("move vault: snapshot settings: %w", err)
 		}
 		a.teardownVaultServices()
-		newSettings := *prior
-		newSettings.VaultPath = dest
-		if err := vault.SaveSettings(&newSettings); err != nil {
+		if _, err := vault.UpdateSettings(func(s *vault.AppSettings) {
+			s.VaultPath = dest
+		}); err != nil {
 			_ = a.rollbackMove(src, prior)
 			return fmt.Errorf("move vault: save settings: %w", err)
 		}
@@ -884,12 +884,9 @@ func (a *App) SwitchVault(path string) error {
 		prior, _ := vault.LoadSettings()
 		a.teardownVaultServices()
 
-		settings := prior
-		if settings == nil {
-			settings = &vault.AppSettings{}
-		}
-		settings.VaultPath = abs
-		if err := vault.SaveSettings(settings); err != nil {
+		if _, err := vault.UpdateSettings(func(s *vault.AppSettings) {
+			s.VaultPath = abs
+		}); err != nil {
 			if prior != nil {
 				_ = a.rollbackMove(activePath, prior)
 			}

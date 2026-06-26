@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"silt/backend/themes"
@@ -568,6 +570,102 @@ func TestLoadSettings_RejectsOversize(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceeds the") {
 		t.Errorf("error %q must mention the byte cap", err.Error())
+	}
+}
+
+// TestUpdateSettings_ConcurrentWritersNoLostUpdate is the regression test for
+// the settings.json read-modify-write race. Two goroutines each append a
+// distinct marker to TrustedPublishers many times via UpdateSettings. Without
+// the settingsWriteMu serialization, the racy Load→Modify→Save would let the
+// later writer clobber the earlier (lost appends); with it, every append lands.
+// Run under -race to also catch any lock misuse.
+func TestUpdateSettings_ConcurrentWritersNoLostUpdate(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	const perWriter = 40
+	var wg sync.WaitGroup
+	for w := 0; w < 2; w++ {
+		w := w
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			marker := string(rune('A' + w)) // "A" or "B"
+			for i := 0; i < perWriter; i++ {
+				label := marker + "-" + strconv.Itoa(i)
+				if _, err := UpdateSettings(func(s *AppSettings) {
+					s.TrustedPublishers = append(s.TrustedPublishers, label)
+				}); err != nil {
+					t.Errorf("UpdateSettings: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	loaded, err := LoadSettings()
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+	want := 2 * perWriter
+	if got := len(loaded.TrustedPublishers); got != want {
+		t.Errorf("TrustedPublishers count = %d, want %d (a write was lost — the RMW race is back)", got, want)
+	}
+	// Both writers must be represented.
+	haveA, haveB := false, false
+	for _, p := range loaded.TrustedPublishers {
+		if strings.HasPrefix(p, "A-") {
+			haveA = true
+		}
+		if strings.HasPrefix(p, "B-") {
+			haveB = true
+		}
+	}
+	if !haveA || !haveB {
+		t.Errorf("expected both writers represented; haveA=%v haveB=%v", haveA, haveB)
+	}
+}
+
+// TestUpdateSettings_PreservesOtherFields confirms a targeted UpdateSettings
+// modify does not clobber fields another writer changed (the core invariant).
+func TestUpdateSettings_PreservesOtherFields(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	// Seed with a theme + a trusted publisher.
+	off := false
+	if _, err := UpdateSettings(func(s *AppSettings) {
+		s.ActiveTheme = "terra_noir"
+		s.ThemeMode = "light"
+		s.TrustedPublishers = []string{"founder"}
+		s.AutoCheckUpdates = &off
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// A second, independent modify (toggle auto-check on) must NOT wipe the
+	// theme or the trusted publisher.
+	on := true
+	if _, err := UpdateSettings(func(s *AppSettings) {
+		s.AutoCheckUpdates = &on
+	}); err != nil {
+		t.Fatalf("toggle: %v", err)
+	}
+	loaded, err := LoadSettings()
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+	if loaded.ActiveTheme != "terra_noir" || loaded.ThemeMode != "light" {
+		t.Errorf("theme clobbered by toggle: %+v", loaded)
+	}
+	if len(loaded.TrustedPublishers) != 1 || loaded.TrustedPublishers[0] != "founder" {
+		t.Errorf("trusted publishers clobbered by toggle: %v", loaded.TrustedPublishers)
+	}
+	if loaded.AutoCheckUpdates == nil || *loaded.AutoCheckUpdates != true {
+		t.Errorf("toggle did not land: %v", loaded.AutoCheckUpdates)
 	}
 }
 

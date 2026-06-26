@@ -1,1 +1,11 @@
 frontend/package-lock.json merge=union
+
+# Pin Go toolchain files to LF in both the repo and the working tree. Go
+# tooling (gofmt, go mod, wails generate) expects LF; without this, Windows
+# editors/tools that rewrite a file with CRLF leave a phantom "modified"
+# status under core.autocrlf=true even though git diff is empty. All tracked
+# *.go/*.mod/*.sum files are already stored as LF, so this is preventive —
+# it enforces the existing state rather than renormalizing anything.
+*.go  text eol=lf
+*.mod text eol=lf
+*.sum text eol=lf
