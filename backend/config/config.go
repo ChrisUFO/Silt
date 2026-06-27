@@ -533,13 +533,18 @@ func normalize(cfg SystemConfig) SystemConfig {
 	}
 	// Per-tab ViewMode (#195): only "source" is a meaningful override; every
 	// other value (including a hand-edited garbage string) collapses to "" so
-	// the frontend reads the Edit default. Kept defensive rather than strict
-	// — TabRef entries are pruned against ListNavigation upstream, so an
-	// unknown value must never abort the whole config load.
+	// the frontend reads the Edit default. Applied to both OpenTabs and the
+	// ActiveTab pointer — both persist view_mode, so a corrupted value on
+	// either must not survive normalize. Kept defensive rather than strict —
+	// TabRef entries are pruned against ListNavigation upstream, so an unknown
+	// value must never abort the whole config load.
 	for i := range cfg.UI.OpenTabs {
 		if cfg.UI.OpenTabs[i].ViewMode != "source" {
 			cfg.UI.OpenTabs[i].ViewMode = ""
 		}
+	}
+	if cfg.UI.ActiveTab != nil && cfg.UI.ActiveTab.ViewMode != "source" {
+		cfg.UI.ActiveTab.ViewMode = ""
 	}
 	// MaxOpenTabs: 0 (legacy config without the key) → 8 (the default).
 	// Negative or absurdly-small values also fall back. An upper bound of

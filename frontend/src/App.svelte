@@ -459,10 +459,39 @@
         }
         // Re-hydrate tabs if the external ui.open_tabs block changed
         // (user hand-edited config.yaml or another process wrote it).
+        // tabSetKey is intentionally locator-only: a view-mode change must
+        // NOT trigger a full re-hydrate (that would rebuild tabs and remount
+        // editors on every in-app toggle, since the frontend's own
+        // persistTabs write also fires config:changed).
         const nextTabsKey = tabSetKey(cfg?.ui?.open_tabs)
         if (nextTabsKey !== prevOpenTabsKey) {
           prevOpenTabsKey = nextTabsKey
           void loadPersistedTabs()
+        }
+        // Reconcile per-tab view_mode from an external config.yaml edit
+        // in place — no re-hydrate, no editor remount. The frontend's own
+        // writes match the in-memory state, so they produce no diff here;
+        // only an external hand-edit (or another process) flips a mode.
+        const externalTabs = cfg?.ui?.open_tabs ?? []
+        if (externalTabs.length > 0) {
+          for (const ref of externalTabs) {
+            const tab = openTabs.find(
+              (t) =>
+                t.notebook === ref.notebook &&
+                t.section === (ref.section ?? '') &&
+                t.page === ref.page
+            )
+            if (!tab) continue
+            const mode = ref.view_mode === 'source' ? 'source' : 'edit'
+            if (tab.viewMode !== mode) {
+              openTabs = setTabViewModeState(
+                { tabs: openTabs, activeId: activeTabId },
+                tab.id,
+                mode
+              ).tabs
+              // Do NOT schedulePersistTabs — this change is already on disk.
+            }
+          }
         }
       }
     )

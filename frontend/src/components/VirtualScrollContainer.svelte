@@ -61,6 +61,12 @@
   let showFormatToolbar = $derived(
     settings.config?.ui?.show_format_toolbar !== false
   )
+  // The view-mode hotkey is per-vault remappable; read it live so the toggle's
+  // tooltip + aria-keyshortcuts never go stale after a remap (the binding in
+  // config.yaml is already in display form, e.g. "Ctrl+Shift+V").
+  let viewModeHotkey = $derived(
+    settings.config?.hotkeys?.toggle_view_mode || 'Ctrl+Shift+V'
+  )
 
   let blocks = $state<ParsedBlock[]>([])
   let loading = $state(false)
@@ -405,18 +411,18 @@
 
     <div class="w-px h-4 bg-border-muted mx-0.5"></div>
 
-    <!-- View Mode Toggle -->
+    <!-- View Mode Toggle — a toggle button: stable accessible name + aria-pressed
+         conveys state (the canonical pattern), and the title carries the
+         contextual action + the live (remappable) hotkey for sighted users. -->
     <button
       onclick={() => onToggleViewMode?.()}
       class="h-8 w-8 flex items-center justify-center rounded-full transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover text-text-muted"
       title={viewMode === 'edit'
-        ? 'View Markdown Source (Ctrl+Shift+V)'
-        : 'View Rich Text (Ctrl+Shift+V)'}
-      aria-label={viewMode === 'edit'
-        ? 'View Markdown Source'
-        : 'View Rich Text'}
+        ? `View Markdown Source (${viewModeHotkey})`
+        : `View Rich Text (${viewModeHotkey})`}
+      aria-label="Toggle source view"
       aria-pressed={viewMode === 'source'}
-      aria-keyshortcuts="Ctrl+Shift+V"
+      aria-keyshortcuts={viewModeHotkey}
     >
       <span class="material-symbols-outlined text-[18px]">
         {viewMode === 'edit' ? 'code' : 'menu_book'}

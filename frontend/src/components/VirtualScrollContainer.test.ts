@@ -15,7 +15,8 @@ const mocks = vi.hoisted(() => ({
   settings: {
     config: {
       ui: { show_format_toolbar: true },
-      editor: { focus_mode: false }
+      editor: { focus_mode: false },
+      hotkeys: { toggle_view_mode: 'Ctrl+Shift+V' } as Record<string, string>
     }
   },
   toggleFocusMode: vi.fn(() => Promise.resolve(true)),
@@ -64,6 +65,8 @@ describe('VirtualScrollContainer editor chrome', () => {
     mocks.toggleFormatToolbar.mockClear()
     mocks.onToggleViewMode.mockClear()
     mocks.settings.config.ui.show_format_toolbar = true
+    // Reset the hotkey (one test remaps it) so test order can't bleed.
+    mocks.settings.config.hotkeys = { toggle_view_mode: 'Ctrl+Shift+V' }
   })
   afterEach(() => cleanup())
 
@@ -80,11 +83,13 @@ describe('VirtualScrollContainer editor chrome', () => {
     // Source view: the read-only markdown projection renders in place of the
     // editor (#171/#194).
     expect(screen.getByTestId('markdown-source-stub')).toBeInTheDocument()
-    // The toggle's accessible name reflects the contextual action (switch back
-    // to rich text), not a generic label (#194/#178 polish).
-    expect(
-      screen.getByRole('button', { name: 'View Rich Text' })
-    ).toHaveAttribute('title', 'View Rich Text (Ctrl+Shift+V)')
+    // The toggle is a toggle button: a STABLE accessible name + aria-pressed
+    // conveys state (no dynamic-label/pressed redundancy). The title carries
+    // the contextual action + the live (remappable) hotkey.
+    const toggle = screen.getByRole('button', { name: 'Toggle source view' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(toggle).toHaveAttribute('title', 'View Rich Text (Ctrl+Shift+V)')
+    expect(toggle).toHaveAttribute('aria-keyshortcuts', 'Ctrl+Shift+V')
   })
 
   it('mounts TipTapEditor in edit mode but tears it down in source mode (#178)', () => {
@@ -122,16 +127,25 @@ describe('VirtualScrollContainer editor chrome', () => {
     // The view-mode button fires the onToggleViewMode callback (#195) — App
     // owns the per-tab state now, not a module store.
     await fireEvent.click(
-      screen.getByRole('button', { name: 'View Markdown Source' })
+      screen.getByRole('button', { name: 'Toggle source view' })
     )
     expect(mocks.onToggleViewMode).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads the view-mode hotkey live from settings (no stale shortcut text)', () => {
+    // Remap the hotkey; the tooltip + aria-keyshortcuts must follow.
+    mocks.settings.config.hotkeys = { toggle_view_mode: 'Ctrl+E' }
+    render(VirtualScrollContainer, { props: baseProps() })
+    const toggle = screen.getByRole('button', { name: 'Toggle source view' })
+    expect(toggle).toHaveAttribute('aria-keyshortcuts', 'Ctrl+E')
+    expect(toggle.getAttribute('title')).toContain('(Ctrl+E)')
   })
 
   it('announces the view-mode button state via aria-pressed', () => {
     render(VirtualScrollContainer, {
       props: { ...baseProps(), viewMode: 'source' }
     })
-    const btn = screen.getByRole('button', { name: 'View Rich Text' })
+    const btn = screen.getByRole('button', { name: 'Toggle source view' })
     expect(btn).toHaveAttribute('aria-pressed', 'true')
     expect(btn).toHaveAttribute('aria-keyshortcuts', 'Ctrl+Shift+V')
   })

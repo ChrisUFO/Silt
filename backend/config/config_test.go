@@ -906,12 +906,16 @@ func TestTabRef_ViewMode_RoundTrip(t *testing.T) {
 // also reads non-"source" as Edit, but normalize keeps config.yaml clean so a
 // corrupted entry can't persist a bogus string.
 func TestNormalize_TabRefViewModeSanitize(t *testing.T) {
-	cfg := normalize(SystemConfig{UI: UIConfig{OpenTabs: []TabRef{
-		{Notebook: "A", Page: "p", ViewMode: "source"},
-		{Notebook: "B", Page: "p", ViewMode: ""},
-		{Notebook: "C", Page: "p", ViewMode: "edit"},
-		{Notebook: "D", Page: "p", ViewMode: "garbage"},
-	}}})
+	active := TabRef{Notebook: "A", Page: "p", ViewMode: "garbage"}
+	cfg := normalize(SystemConfig{UI: UIConfig{
+		OpenTabs: []TabRef{
+			{Notebook: "A", Page: "p", ViewMode: "source"},
+			{Notebook: "B", Page: "p", ViewMode: ""},
+			{Notebook: "C", Page: "p", ViewMode: "edit"},
+			{Notebook: "D", Page: "p", ViewMode: "garbage"},
+		},
+		ActiveTab: &active,
+	}})
 	got := cfg.UI.OpenTabs
 	if got[0].ViewMode != "source" {
 		t.Errorf("source should survive, got %q", got[0].ViewMode)
@@ -924,6 +928,20 @@ func TestNormalize_TabRefViewModeSanitize(t *testing.T) {
 	}
 	if got[3].ViewMode != "" {
 		t.Errorf("garbage should collapse to empty, got %q", got[3].ViewMode)
+	}
+	// The ActiveTab pointer is sanitized too — it persists view_mode, so a
+	// hand-edited garbage value must not survive normalize.
+	if cfg.UI.ActiveTab == nil || cfg.UI.ActiveTab.ViewMode != "" {
+		t.Errorf("ActiveTab garbage should collapse to empty, got %+v", cfg.UI.ActiveTab)
+	}
+
+	// A source ActiveTab survives; a nil ActiveTab is left alone.
+	src := TabRef{Notebook: "A", Page: "p", ViewMode: "source"}
+	if got := normalize(SystemConfig{UI: UIConfig{ActiveTab: &src}}).UI.ActiveTab; got == nil || got.ViewMode != "source" {
+		t.Errorf("ActiveTab source should survive, got %+v", got)
+	}
+	if got := normalize(SystemConfig{}).UI.ActiveTab; got != nil {
+		t.Errorf("nil ActiveTab should stay nil, got %+v", got)
 	}
 }
 

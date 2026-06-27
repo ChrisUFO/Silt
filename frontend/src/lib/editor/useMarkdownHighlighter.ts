@@ -106,7 +106,10 @@ export function tokensToShikiTheme(
 // useShiki.ts cache shape. Single-user/local, so the cache is capped to
 // avoid unbounded growth across a long session.
 const highlightCache = new Map<string, string>()
-const HIGHLIGHT_CACHE_CAP = 32
+// 2× the max_open_tabs hard cap (32) so every open Source tab keeps a cached
+// entry across a dark/light/system theme cycle without evicting a neighbor.
+// Single-user/local; 64 × a typical doc highlight is negligible memory.
+const HIGHLIGHT_CACHE_CAP = 64
 
 function themeSignature(theme: SourceShikiTheme): string {
   // The fields that affect Shiki's output. tokenColors is the bulk; for the

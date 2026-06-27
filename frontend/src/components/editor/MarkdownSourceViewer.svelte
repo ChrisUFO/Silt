@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte'
   import type { ParsedBlock } from '../../lib/editor/types'
   import { themeState } from '../../theme/store.svelte'
   import {
@@ -102,31 +103,30 @@
   })
 
   // Copy feedback: a transient status announced to assistive tech so the
-  // button isn't a silent action. Cleared after a short delay.
+  // button isn't a silent action. Cleared after a short delay. The timer is
+  // cleared on unmount so toggling back to Edit (which unmounts this viewer)
+  // mid-countdown doesn't leave a pending callback writing to a destroyed
+  // component (a Svelte 5 dev-mode warning — this PR removes console warnings,
+  // so don't reintroduce one here).
   let copyStatus = $state<{ kind: 'ok' | 'err'; msg: string } | null>(null)
   let copyStatusTimer: ReturnType<typeof setTimeout> | null = null
+  function setCopyStatus(kind: 'ok' | 'err', msg: string): void {
+    copyStatus = { kind, msg }
+    if (copyStatusTimer) clearTimeout(copyStatusTimer)
+    copyStatusTimer = setTimeout(() => {
+      copyStatus = null
+      copyStatusTimer = null
+    }, 2500)
+  }
+  onDestroy(() => {
+    if (copyStatusTimer) clearTimeout(copyStatusTimer)
+  })
   async function copyAsMarkdown(): Promise<void> {
-    const ok = (msg: string): void => {
-      copyStatus = { kind: 'ok', msg }
-      if (copyStatusTimer) clearTimeout(copyStatusTimer)
-      copyStatusTimer = setTimeout(() => {
-        copyStatus = null
-        copyStatusTimer = null
-      }, 2500)
-    }
-    const fail = (msg: string): void => {
-      copyStatus = { kind: 'err', msg }
-      if (copyStatusTimer) clearTimeout(copyStatusTimer)
-      copyStatusTimer = setTimeout(() => {
-        copyStatus = null
-        copyStatusTimer = null
-      }, 2500)
-    }
     try {
       await navigator.clipboard.writeText(markdown)
-      ok('Copied markdown to clipboard.')
+      setCopyStatus('ok', 'Copied markdown to clipboard.')
     } catch {
-      fail('Failed to copy — clipboard unavailable.')
+      setCopyStatus('err', 'Failed to copy — clipboard unavailable.')
     }
   }
 </script>
