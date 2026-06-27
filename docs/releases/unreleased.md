@@ -1,5 +1,6 @@
-# Editor Polish: Rich Callouts & Table Refinements
+# Source View: Toggle to Raw Markdown
 
-- Callouts can now hold richer content: nest task lists, fenced code blocks, tables, and even other callouts inside a callout, matching what foldable sections already supported. Everything inside a callout is preserved in your markdown files exactly as written, so plain multi-paragraph callouts stay unchanged.
-- Tables now alternate row shading and highlight the row under your cursor, making longer tables easier to scan.
-- The table actions toolbar is fully keyboard-navigable — move between its buttons with the arrow keys and dismiss it with Escape.
+- Drop any page to its raw markdown with a per-page toggle (Ctrl+Shift+V) and switch back just as fast. Each page remembers whether you last left it in the editor or the source view, even after restarting.
+- The raw-markdown view is syntax-highlighted to match your theme, so bold, italic, links, code, and headings are easy to scan at a glance.
+- The source-view toggle now works reliably while you're typing in the editor.
+- Pages you're viewing as raw markdown no longer keep a full editor loaded in memory, so juggling many open tabs stays light.
