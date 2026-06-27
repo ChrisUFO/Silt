@@ -40,6 +40,14 @@ export interface PageRef {
 }
 
 /**
+ * Per-page editor view: the TipTap WYSIWYG editor ('edit') or the read-only
+ * raw-markdown projection ('source'). Lives on TabEntry so each tab's mode is
+ * independent and survives navigation within a session (#195), and persists on
+ * TabRef (config.yaml) for cross-session stickiness.
+ */
+export type ViewMode = 'edit' | 'source'
+
+/**
  * A single open tab. `id` is the stable slot id; `preview` distinguishes the
  * transient preview tab from dedicated pinned tabs.
  */
@@ -50,6 +58,8 @@ export interface TabEntry extends PageRef {
   blockTarget?: { fileDate?: string; blockId?: string }
   /** Monotonic timestamp for MRU ordering (higher = more recent). */
   lastActivatedAt: number
+  /** Editor view for this tab (#195). Always set at tab creation. */
+  viewMode: ViewMode
   /** True when the tab's editor has unsaved edits pending (#167). Runtime
    *  only — not persisted (auto-save means dirty state is sub-second). */
   dirty?: boolean
@@ -74,6 +84,10 @@ export interface OpenPageOptions {
   maxOpenTabs?: number
   /** Optional scroll-to-block target for the opened tab. */
   blockTarget?: { fileDate?: string; blockId?: string }
+  /** View mode a freshly-opened tab starts in (#195). Defaults to 'edit';
+   *  usually the per-vault `editor.default_view_mode`. Only applied to NEW
+   *  tabs and preview-slot reuse — an existing tab's mode is preserved. */
+  defaultViewMode?: ViewMode
 }
 
 export interface TabsState {
@@ -124,7 +138,12 @@ export function openPage(
   mode: OpenPageMode,
   opts: OpenPageOptions = {}
 ): TabsState {
-  const { enablePreviewTabs = true, maxOpenTabs = 8, blockTarget } = opts
+  const {
+    enablePreviewTabs = true,
+    maxOpenTabs = 8,
+    blockTarget,
+    defaultViewMode = 'edit'
+  } = opts
 
   // activate-only: no tab change at all (navigate-to-block on current page).
   if (mode === 'activate-only') {
@@ -190,6 +209,10 @@ export function openPage(
               page: ref.page,
               blockTarget,
               lastActivatedAt: now,
+              // A reused preview slot now shows a different page, so reset to
+              // the default view mode rather than inheriting the previous
+              // page's mode (view mode is per-page, #195).
+              viewMode: defaultViewMode,
               // Reset save state — the new page starts clean (#167).
               dirty: false,
               saveError: null
@@ -199,7 +222,15 @@ export function openPage(
       return { tabs, activeId: existingPreview.id }
     }
     // No preview slot yet — create one (after eviction if needed).
-    return createTab(state, ref, true, now, blockTarget, maxOpenTabs)
+    return createTab(
+      state,
+      ref,
+      true,
+      now,
+      blockTarget,
+      maxOpenTabs,
+      defaultViewMode
+    )
   }
 
   // mode === 'pin'
@@ -208,7 +239,15 @@ export function openPage(
   // so if we reach here with a preview match it was skipped. But since we
   // checked `previewSamePage` above and didn't return, there's no same-page
   // preview. So we create a new pinned tab.)
-  return createTab(state, ref, false, now, blockTarget, maxOpenTabs)
+  return createTab(
+    state,
+    ref,
+    false,
+    now,
+    blockTarget,
+    maxOpenTabs,
+    defaultViewMode
+  )
 }
 
 /**
@@ -243,7 +282,8 @@ function createTab(
   preview: boolean,
   now: number,
   blockTarget: OpenPageOptions['blockTarget'],
-  maxOpenTabs: number
+  maxOpenTabs: number,
+  defaultViewMode: ViewMode
 ): TabsState {
   let tabs = [...state.tabs]
 
@@ -264,6 +304,7 @@ function createTab(
     preview,
     blockTarget,
     lastActivatedAt: now,
+    viewMode: defaultViewMode,
     dirty: false,
     saveError: null
   }
@@ -319,6 +360,25 @@ export function promotePreview(state: TabsState, id: string): TabsState {
   if (!tab || !tab.preview) return state
   const tabs = state.tabs.map((t) =>
     t.id === id ? { ...t, preview: false } : t
+  )
+  return { tabs, activeId: state.activeId }
+}
+
+/**
+ * Set a tab's editor view mode (Edit ↔ Source, #195). No-op if the tab is
+ * missing or already in the requested mode. Returns a new state. Pure so the
+ * toggle is exhaustively unit-testable; App.svelte wraps it and schedules a
+ * persistence flush (the mode is persisted on TabRef).
+ */
+export function setTabViewMode(
+  state: TabsState,
+  id: string,
+  mode: ViewMode
+): TabsState {
+  const tab = state.tabs.find((t) => t.id === id)
+  if (!tab || tab.viewMode === mode) return state
+  const tabs = state.tabs.map((t) =>
+    t.id === id ? { ...t, viewMode: mode } : t
   )
   return { tabs, activeId: state.activeId }
 }
@@ -381,9 +441,7 @@ export function mergeReorderedTabs(
   reorderedDisplayed: TabEntry[],
   notebook: string
 ): TabEntry[] {
-  const notebookCount = fullTabs.filter(
-    (t) => t.notebook === notebook
-  ).length
+  const notebookCount = fullTabs.filter((t) => t.notebook === notebook).length
   if (reorderedDisplayed.length !== notebookCount) return fullTabs.slice()
   let displayIdx = 0
   return fullTabs.map((t) =>

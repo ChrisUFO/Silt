@@ -20,6 +20,7 @@ function mkTab(
     page: ref.page,
     preview: opts.preview ?? false,
     lastActivatedAt: opts.lastActivatedAt ?? Date.now(),
+    viewMode: 'edit',
     dirty: opts.dirty,
     saveError: opts.saveError
   }

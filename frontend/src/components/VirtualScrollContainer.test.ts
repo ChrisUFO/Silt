@@ -1,9 +1,9 @@
 // Component coverage for the editor chrome relocated into VirtualScrollContainer
 // (the EditorUtilityBar/FormatToolbar conditional + the floating action buttons).
 // The heavy editor child + utility bar are stubbed (existing *.stub.svelte
-// components) and the IPC/store/viewMode seams are mocked, so this exercises
-// only VSC's own conditional wiring — the contract the deleted EditorUtilityBar
-// tests used to cover.
+// components) and the IPC/store seams are mocked, so this exercises only VSC's
+// own conditional wiring — the contract the deleted EditorUtilityBar tests
+// used to cover.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
@@ -17,10 +17,9 @@ const mocks = vi.hoisted(() => ({
       editor: { focus_mode: false }
     }
   },
-  viewMode: 'edit' as string,
   toggleFocusMode: vi.fn(() => Promise.resolve(true)),
   toggleFormatToolbar: vi.fn(() => Promise.resolve(true)),
-  toggleViewMode: vi.fn()
+  onToggleViewMode: vi.fn()
 }))
 
 vi.mock('../../wailsjs/go/main/App.js', () => ({
@@ -42,34 +41,36 @@ vi.mock('../settings/store.svelte.ts', () => ({
   toggleFocusMode: mocks.toggleFocusMode,
   toggleFormatToolbar: mocks.toggleFormatToolbar
 }))
-vi.mock('../lib/viewMode.svelte', () => ({
-  getViewMode: () => mocks.viewMode,
-  toggleViewMode: mocks.toggleViewMode
-}))
 
 import VirtualScrollContainer from './VirtualScrollContainer.svelte'
+
+// Common props: viewMode is now a required prop owned by App.svelte's
+// TabEntry (#195). onToggleViewMode is the callback the floating button fires.
+const baseProps = () => ({
+  notebook: 'NB',
+  section: '',
+  page: 'PG',
+  viewMode: 'edit' as const,
+  onToggleViewMode: mocks.onToggleViewMode
+})
 
 describe('VirtualScrollContainer editor chrome', () => {
   beforeEach(() => {
     mocks.toggleFocusMode.mockClear()
     mocks.toggleFormatToolbar.mockClear()
-    mocks.toggleViewMode.mockClear()
-    mocks.viewMode = 'edit'
+    mocks.onToggleViewMode.mockClear()
     mocks.settings.config.ui.show_format_toolbar = true
   })
   afterEach(() => cleanup())
 
   it('renders the EditorUtilityBar in edit mode with the toolbar enabled', () => {
-    render(VirtualScrollContainer, {
-      props: { notebook: 'NB', section: '', page: 'PG' }
-    })
+    render(VirtualScrollContainer, { props: baseProps() })
     expect(screen.getByTestId('editor-utility-bar-stub')).toBeInTheDocument()
   })
 
   it('hides the EditorUtilityBar in source view mode', () => {
-    mocks.viewMode = 'source'
     render(VirtualScrollContainer, {
-      props: { notebook: 'NB', section: '', page: 'PG' }
+      props: { ...baseProps(), viewMode: 'source' }
     })
     expect(screen.queryByTestId('editor-utility-bar-stub')).toBeNull()
     // The view-mode toggle reflects the action available (switch back to edit).
@@ -80,16 +81,12 @@ describe('VirtualScrollContainer editor chrome', () => {
 
   it('hides the EditorUtilityBar when show_format_toolbar is false', () => {
     mocks.settings.config.ui.show_format_toolbar = false
-    render(VirtualScrollContainer, {
-      props: { notebook: 'NB', section: '', page: 'PG' }
-    })
+    render(VirtualScrollContainer, { props: baseProps() })
     expect(screen.queryByTestId('editor-utility-bar-stub')).toBeNull()
   })
 
-  it('renders the three floating toggle buttons and dispatches their handlers', async () => {
-    render(VirtualScrollContainer, {
-      props: { notebook: 'NB', section: '', page: 'PG' }
-    })
+  it('renders the floating toggle buttons and dispatches their handlers', async () => {
+    render(VirtualScrollContainer, { props: baseProps() })
     await fireEvent.click(
       screen.getByRole('button', { name: 'Toggle Focus Mode' })
     )
@@ -98,9 +95,20 @@ describe('VirtualScrollContainer editor chrome', () => {
       screen.getByRole('button', { name: 'Toggle Formatting Toolbar' })
     )
     expect(mocks.toggleFormatToolbar).toHaveBeenCalledTimes(1)
-    // The view-mode button is present and announces the current mode.
-    expect(
+    // The view-mode button fires the onToggleViewMode callback (#195) — App
+    // owns the per-tab state now, not a module store.
+    await fireEvent.click(
       screen.getByRole('button', { name: 'Toggle View Mode' })
-    ).toBeInTheDocument()
+    )
+    expect(mocks.onToggleViewMode).toHaveBeenCalledTimes(1)
+  })
+
+  it('announces the view-mode button state via aria-pressed', () => {
+    render(VirtualScrollContainer, {
+      props: { ...baseProps(), viewMode: 'source' }
+    })
+    const btn = screen.getByRole('button', { name: 'Toggle View Mode' })
+    expect(btn).toHaveAttribute('aria-pressed', 'true')
+    expect(btn).toHaveAttribute('aria-keyshortcuts', 'Ctrl+Shift+V')
   })
 })

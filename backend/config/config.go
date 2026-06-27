@@ -91,9 +91,9 @@ type PluginsConfig struct {
 // plugin list; the markdown content (and any co-located <root>/.system/) stays
 // with the notebook root and is the product.
 type LinkedNotebook struct {
-	ID              string `yaml:"id" json:"id"`                               // stable id, e.g. "linked-<short>"; source column = "linked:"+ID
-	RootPath        string `yaml:"root_path" json:"root_path"`                 // absolute path to the external notebook root
-	DisplayName     string `yaml:"display_name" json:"display_name"`           // sidebar label (the notebook "name")
+	ID              string `yaml:"id" json:"id"`                                                 // stable id, e.g. "linked-<short>"; source column = "linked:"+ID
+	RootPath        string `yaml:"root_path" json:"root_path"`                                   // absolute path to the external notebook root
+	DisplayName     string `yaml:"display_name" json:"display_name"`                             // sidebar label (the notebook "name")
 	RootFingerprint string `yaml:"root_fingerprint,omitempty" json:"root_fingerprint,omitempty"` // F3: host-verified trust anchor; see fingerprint.go
 }
 
@@ -146,14 +146,20 @@ type FormattingConfig struct {
 }
 
 // TabRef is a persisted reference to an open tab's page (#142). It is the
-// YAML-serializable form of a frontend TabEntry — only the locator triple is
-// persisted; preview flag, scroll/cursor state, and the like are ephemeral
-// (industry-standard parity: preview tabs are not restored across restarts). The
-// frontend filters to pinned tabs before calling SetOpenTabs.
+// YAML-serializable form of a frontend TabEntry. The locator triple is always
+// persisted; ViewMode records a tab stuck in Source view (#195 — absence means
+// the default, Edit). Preview flag, scroll/cursor state, and the like are
+// ephemeral (industry-standard parity: preview tabs are not restored across
+// restarts). The frontend filters to pinned tabs before calling SetOpenTabs.
 type TabRef struct {
 	Notebook string `yaml:"notebook" json:"notebook"`
 	Section  string `yaml:"section" json:"section"`
 	Page     string `yaml:"page" json:"page"`
+	// ViewMode is the per-tab Edit/Source override (#195). Only "source" is
+	// meaningfully persisted — "" / "edit" both mean the Edit default, so the
+	// frontend writes the field only when the tab is in Source view (keeping
+	// config.yaml lean). normalize() sanitizes any other value to "".
+	ViewMode string `yaml:"view_mode,omitempty" json:"view_mode,omitempty"`
 }
 
 // NavOrder stores explicit ordering for the sidebar navigator tree. Folders on
@@ -524,6 +530,16 @@ func normalize(cfg SystemConfig) SystemConfig {
 	}
 	if cfg.UI.OpenTabs == nil {
 		cfg.UI.OpenTabs = []TabRef{}
+	}
+	// Per-tab ViewMode (#195): only "source" is a meaningful override; every
+	// other value (including a hand-edited garbage string) collapses to "" so
+	// the frontend reads the Edit default. Kept defensive rather than strict
+	// — TabRef entries are pruned against ListNavigation upstream, so an
+	// unknown value must never abort the whole config load.
+	for i := range cfg.UI.OpenTabs {
+		if cfg.UI.OpenTabs[i].ViewMode != "source" {
+			cfg.UI.OpenTabs[i].ViewMode = ""
+		}
 	}
 	// MaxOpenTabs: 0 (legacy config without the key) → 8 (the default).
 	// Negative or absurdly-small values also fall back. An upper bound of

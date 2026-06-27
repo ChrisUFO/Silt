@@ -621,14 +621,14 @@ func TestNormalize_MaxOpenTabsClamp(t *testing.T) {
 	cases := []struct {
 		in, want int
 	}{
-		{0, 8},        // legacy missing key → default
-		{-1, 8},       // invalid negative → default
-		{1, 1},        // minimum valid
-		{8, 8},        // the default itself
-		{20, 20},      // user-configured large value honored
-		{32, 32},      // upper bound
-		{33, 32},      // clamped to upper bound
-		{1000, 32},    // absurdly large → clamped (#142 hardening)
+		{0, 8},     // legacy missing key → default
+		{-1, 8},    // invalid negative → default
+		{1, 1},     // minimum valid
+		{8, 8},     // the default itself
+		{20, 20},   // user-configured large value honored
+		{32, 32},   // upper bound
+		{33, 32},   // clamped to upper bound
+		{1000, 32}, // absurdly large → clamped (#142 hardening)
 	}
 	for _, c := range cases {
 		cfg := normalize(SystemConfig{UI: UIConfig{MaxOpenTabs: c.in}})
@@ -868,5 +868,85 @@ func TestLoad_LegacyConfigMissingShowTabDirtyIndicators(t *testing.T) {
 	}
 	if cfg.UI.ShowTabDirtyIndicators == nil || *cfg.UI.ShowTabDirtyIndicators != true {
 		t.Errorf("legacy show_tab_dirty_indicators should default to *true, got %v", cfg.UI.ShowTabDirtyIndicators)
+	}
+}
+
+// --- #195: per-tab view mode persistence (TabRef.ViewMode) ---
+
+// TestTabRef_ViewMode_RoundTrip confirms a Source-mode tab persists
+// view_mode across Save → Load, while an Edit-mode tab stays the zero value
+// (the frontend writes the field only when Source, keeping config.yaml lean).
+func TestTabRef_ViewMode_RoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	original := Defaults()
+	original.UI.OpenTabs = []TabRef{
+		{Notebook: "Work", Section: "Projects", Page: "Site", ViewMode: "source"},
+		{Notebook: "Work", Section: "", Page: "Top"}, // Edit (default) → omitted on disk
+	}
+	original.UI.ActiveTab = &TabRef{Notebook: "Work", Section: "Projects", Page: "Site", ViewMode: "source"}
+
+	if err := Save(tmp, original); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(loaded.UI.OpenTabs, original.UI.OpenTabs) {
+		t.Errorf("open_tabs view_mode round-trip:\n got  %+v\n want %+v", loaded.UI.OpenTabs, original.UI.OpenTabs)
+	}
+	if loaded.UI.ActiveTab == nil || loaded.UI.ActiveTab.ViewMode != "source" {
+		t.Errorf("active_tab view_mode round-trip: got %+v", loaded.UI.ActiveTab)
+	}
+}
+
+// TestNormalize_TabRefViewModeSanitize confirms normalize collapses any
+// non-"source" value (including hand-edited garbage) to "" (the Edit default),
+// while "source" survives. This is the storage-side defense: the frontend
+// also reads non-"source" as Edit, but normalize keeps config.yaml clean so a
+// corrupted entry can't persist a bogus string.
+func TestNormalize_TabRefViewModeSanitize(t *testing.T) {
+	cfg := normalize(SystemConfig{UI: UIConfig{OpenTabs: []TabRef{
+		{Notebook: "A", Page: "p", ViewMode: "source"},
+		{Notebook: "B", Page: "p", ViewMode: ""},
+		{Notebook: "C", Page: "p", ViewMode: "edit"},
+		{Notebook: "D", Page: "p", ViewMode: "garbage"},
+	}}})
+	got := cfg.UI.OpenTabs
+	if got[0].ViewMode != "source" {
+		t.Errorf("source should survive, got %q", got[0].ViewMode)
+	}
+	if got[1].ViewMode != "" {
+		t.Errorf("empty should stay empty (Edit default), got %q", got[1].ViewMode)
+	}
+	if got[2].ViewMode != "" {
+		t.Errorf("edit should collapse to empty, got %q", got[2].ViewMode)
+	}
+	if got[3].ViewMode != "" {
+		t.Errorf("garbage should collapse to empty, got %q", got[3].ViewMode)
+	}
+}
+
+// TestLoad_LegacyOpenTabsMissingViewMode verifies a config.yaml authored
+// before #195 (open_tabs entries without view_mode) loads cleanly with each
+// entry's ViewMode as the zero value — backward compat.
+func TestLoad_LegacyOpenTabsMissingViewMode(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, ConfigPath(tmp), strings.Join([]string{
+		"ui:",
+		"  open_tabs:",
+		"    - notebook: Work",
+		"      section: Projects",
+		"      page: Site",
+	}, "\n"))
+	cfg, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("legacy config Load: %v", err)
+	}
+	if len(cfg.UI.OpenTabs) != 1 {
+		t.Fatalf("expected 1 open_tabs entry, got %d", len(cfg.UI.OpenTabs))
+	}
+	if cfg.UI.OpenTabs[0].ViewMode != "" {
+		t.Errorf("legacy open_tabs entry view_mode should default to empty (Edit), got %q", cfg.UI.OpenTabs[0].ViewMode)
 	}
 }

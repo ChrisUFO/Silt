@@ -57,11 +57,13 @@
     promotePreview as promotePreviewState,
     cycleTab as cycleTabState,
     reorderTab as reorderTabState,
+    setTabViewMode as setTabViewModeState,
     mergeReorderedTabs,
     generateTabId,
     type TabEntry,
     type PageRef,
-    type OpenPageMode
+    type OpenPageMode,
+    type ViewMode
   } from './lib/tabs'
   import { nextView } from './lib/viewCycle'
 
@@ -116,6 +118,15 @@
 
   // --- Tab management (#142) -----------------------------------------------
 
+  // The per-vault default view mode a freshly-opened tab starts in (#195).
+  // Read live from the settings store so a config.yaml edit takes effect on
+  // the next open without a rebind.
+  let defaultViewMode = $derived(
+    settings.config?.editor?.default_view_mode === 'source'
+      ? ('source' as const)
+      : ('edit' as const)
+  )
+
   // The single entry point for opening a page. All "open a page" callers
   // (sidebar click, search jump, navigate-to-block, refs) funnel through
   // here so the preview/pin logic lives in one place. Wraps the pure state
@@ -131,11 +142,26 @@
       { tabs: openTabs, activeId: activeTabId },
       ref,
       mode,
-      { enablePreviewTabs, maxOpenTabs, blockTarget }
+      { enablePreviewTabs, maxOpenTabs, blockTarget, defaultViewMode }
     )
     openTabs = result.tabs
     activeTabId = result.activeId
     syncActiveFromTab()
+    schedulePersistTabs()
+  }
+
+  // Toggle a tab between Edit and Source view (#195). The mode lives on
+  // TabEntry (single source of truth) and persists to config.yaml on the next
+  // debounced flush. No window-event indirection — App owns the state.
+  function handleToggleViewMode(tabId: string): void {
+    const tab = openTabs.find((t) => t.id === tabId)
+    if (!tab) return
+    const next: ViewMode = tab.viewMode === 'edit' ? 'source' : 'edit'
+    openTabs = setTabViewModeState(
+      { tabs: openTabs, activeId: activeTabId },
+      tabId,
+      next
+    ).tabs
     schedulePersistTabs()
   }
 
@@ -254,13 +280,17 @@
         pinned.map((t) => ({
           notebook: t.notebook,
           section: t.section,
-          page: t.page
+          page: t.page,
+          // Persist the per-tab view mode only when it's Source (#195);
+          // absence on disk means the Edit default, keeping config.yaml lean.
+          view_mode: t.viewMode === 'source' ? 'source' : ''
         })),
         (activePersist
           ? {
               notebook: activePersist.notebook,
               section: activePersist.section,
-              page: activePersist.page
+              page: activePersist.page,
+              view_mode: activePersist.viewMode === 'source' ? 'source' : ''
             }
           : null) as unknown as config.TabRef
       )
@@ -290,7 +320,10 @@
           section: t.section,
           page: t.page,
           preview: false, // persisted tabs are always pinned
-          lastActivatedAt: now - i // stable ordering for MRU
+          lastActivatedAt: now - i, // stable ordering for MRU
+          // Restore the per-tab view mode (#195). Only "source" is persisted;
+          // absence / any other value means the Edit default.
+          viewMode: t.view_mode === 'source' ? 'source' : 'edit'
         }))
         // Restore active tab if it's in the set.
         if (result.active_tab) {
@@ -455,14 +488,16 @@
       const target = e.target as HTMLElement | null
       if (target?.closest('.ProseMirror')) {
         // Skip any hotkey consumed inside the editor (format, heading,
-        // alignment, view-mode toggle) so the global handler doesn't
-        // double-fire (#168, #169, #173, #171).
+        // alignment) so the global handler doesn't double-fire (#168, #169,
+        // #173). toggle_view_mode is intentionally NOT in this list: no
+        // editor-internal keymap handles it, so suppressing it left the view
+        // toggle dead while typing. The global handler now flips the active
+        // tab's mode directly regardless of editor focus (#171/#195).
         for (const [action, binding] of Object.entries(hotkeys)) {
           if (
             (action.startsWith('format_') ||
               action.startsWith('set_') ||
-              action.startsWith('align_') ||
-              action === 'toggle_view_mode') &&
+              action.startsWith('align_')) &&
             matchHotkey(e, binding)
           ) {
             return
@@ -490,7 +525,9 @@
       }
       if (matchHotkey(e, hotkeys.toggle_view_mode)) {
         e.preventDefault()
-        window.dispatchEvent(new CustomEvent('toggle-view-mode'))
+        // Flip the active tab's view mode directly (#195) — no window-event
+        // indirection, App owns the per-tab state.
+        if (activeTabId) handleToggleViewMode(activeTabId)
       }
       if (matchHotkey(e, hotkeys.toggle_format_toolbar)) {
         e.preventDefault()
@@ -1017,6 +1054,8 @@
                     notebook={tab.notebook}
                     section={tab.section}
                     page={tab.page}
+                    viewMode={tab.viewMode}
+                    onToggleViewMode={() => handleToggleViewMode(tab.id)}
                     isActive={tab.id === activeTabId}
                     targetBlockId={tab.id === activeTabId
                       ? searchTargetBlockId
