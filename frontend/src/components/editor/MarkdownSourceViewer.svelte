@@ -39,13 +39,33 @@
 
   // Resolve the effective (mode-resolved) token map + concrete dark/light
   // mode from the theme store. "system" follows prefers-color-scheme.
+  //
+  // The theme store re-injects editor CSS on an OS dark↔light flip but does
+  // NOT change themeState.mode or its token maps, so a $derived that read
+  // only themeState + a one-shot matchMedia() call would miss the flip and
+  // leave the Source view's Shiki colors stale. Track the OS scheme in
+  // $state and keep it in sync with an MQL listener so the highlight
+  // re-derives on a live OS scheme change (#194 AC: re-highlights on theme
+  // mode change — covers the system-mode path).
+  let systemLight = $state(
+    typeof window !== 'undefined' &&
+      !!window.matchMedia?.('(prefers-color-scheme: light)').matches
+  )
+  $effect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mql = window.matchMedia('(prefers-color-scheme: light)')
+    const onChange = (): void => {
+      systemLight = mql.matches
+    }
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  })
   let effectiveMode = $derived<'dark' | 'light'>(
     themeState.mode === 'light'
       ? 'light'
       : themeState.mode === 'dark'
         ? 'dark'
-        : typeof window !== 'undefined' &&
-            window.matchMedia?.('(prefers-color-scheme: light)').matches
+        : systemLight
           ? 'light'
           : 'dark'
   )
@@ -81,11 +101,32 @@
     })()
   })
 
+  // Copy feedback: a transient status announced to assistive tech so the
+  // button isn't a silent action. Cleared after a short delay.
+  let copyStatus = $state<{ kind: 'ok' | 'err'; msg: string } | null>(null)
+  let copyStatusTimer: ReturnType<typeof setTimeout> | null = null
   async function copyAsMarkdown(): Promise<void> {
+    const ok = (msg: string): void => {
+      copyStatus = { kind: 'ok', msg }
+      if (copyStatusTimer) clearTimeout(copyStatusTimer)
+      copyStatusTimer = setTimeout(() => {
+        copyStatus = null
+        copyStatusTimer = null
+      }, 2500)
+    }
+    const fail = (msg: string): void => {
+      copyStatus = { kind: 'err', msg }
+      if (copyStatusTimer) clearTimeout(copyStatusTimer)
+      copyStatusTimer = setTimeout(() => {
+        copyStatus = null
+        copyStatusTimer = null
+      }, 2500)
+    }
     try {
       await navigator.clipboard.writeText(markdown)
+      ok('Copied markdown to clipboard.')
     } catch {
-      // Clipboard may be unavailable
+      fail('Failed to copy — clipboard unavailable.')
     }
   }
 </script>
@@ -94,12 +135,26 @@
   <div class="source-header">
     <span class="file-path" title={filePath}>{filePath}</span>
     <div class="header-actions">
-      <button type="button" class="copy-btn" onclick={copyAsMarkdown}>
+      <button
+        type="button"
+        class="copy-btn"
+        onclick={copyAsMarkdown}
+        aria-label="Copy markdown to clipboard"
+      >
         <span class="material-symbols-outlined" aria-hidden="true"
           >content_copy</span
         >
         Copy as Markdown
       </button>
+      {#if copyStatus}
+        <span
+          class="copy-status"
+          class:copy-status--err={copyStatus.kind === 'err'}
+          role={copyStatus.kind === 'err' ? 'alert' : 'status'}
+          aria-live={copyStatus.kind === 'err' ? 'assertive' : 'polite'}
+          >{copyStatus.msg}</span
+        >
+      {/if}
     </div>
   </div>
   <div
@@ -166,6 +221,16 @@
 
   .copy-btn .material-symbols-outlined {
     font-size: 14px;
+  }
+
+  .copy-status {
+    font-size: 0.7rem;
+    color: var(--color-text-muted, #8b95a3);
+    white-space: nowrap;
+  }
+
+  .copy-status--err {
+    color: var(--color-status-danger, #f87171);
   }
 
   .source-body {

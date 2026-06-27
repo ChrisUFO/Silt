@@ -98,19 +98,59 @@ export function tokensToShikiTheme(
   }
 }
 
+// Module-scoped LRU cache of highlighted output, keyed by (theme signature,
+// code). The Source view re-highlights on every theme/mode change and on
+// every external content edit; the common case is the same document
+// re-rendered after a theme toggle or a cursor-less round-trip, so the cache
+// is load-bearing for theme churn on large documents — mirrors the
+// useShiki.ts cache shape. Single-user/local, so the cache is capped to
+// avoid unbounded growth across a long session.
+const highlightCache = new Map<string, string>()
+const HIGHLIGHT_CACHE_CAP = 32
+
+function themeSignature(theme: SourceShikiTheme): string {
+  // The fields that affect Shiki's output. tokenColors is the bulk; for the
+  // Silt mapper it's a small fixed array, so JSON.stringify is cheap.
+  return `${theme.type}|${theme.fg}|${theme.bg}|${JSON.stringify(theme.tokenColors)}`
+}
+
+function cacheGet(key: string): string | undefined {
+  const v = highlightCache.get(key)
+  if (v !== undefined) {
+    // Move-to-end so LRU eviction drops the least-recently-used.
+    highlightCache.delete(key)
+    highlightCache.set(key, v)
+  }
+  return v
+}
+
+function cacheSet(key: string, html: string): void {
+  if (highlightCache.size >= HIGHLIGHT_CACHE_CAP) {
+    const first = highlightCache.keys().next().value
+    if (first !== undefined) highlightCache.delete(first)
+  }
+  highlightCache.set(key, html)
+}
+
 /**
  * Highlight raw markdown. Returns the highlighted inner HTML (Shiki's token
  * spans, without the wrapping `<pre><code>`) so the caller renders it inside
  * its own `<pre>` and keeps its gutter + styling. Returns null when Shiki
- * fails or is not ready — the caller falls back to plain text.
+ * fails or is not ready — the caller falls back to plain text. Memoised by
+ * (theme, code) so theme churn on a large document doesn't re-tokenize.
  */
 export async function highlightMarkdown(
   code: string,
   theme: SourceShikiTheme
 ): Promise<string | null> {
+  const key = `${themeSignature(theme)}\x00${code}`
+  const hit = cacheGet(key)
+  if (hit !== undefined) return hit
   try {
     const html = await codeToHtml(code, { lang: 'markdown', theme })
-    return extractInner(html)
+    const inner = extractInner(html)
+    cacheSet(key, inner)
+    return inner
   } catch {
     return null
   }
@@ -118,8 +158,20 @@ export async function highlightMarkdown(
 
 // Shiki wraps output as `<pre class="shiki" ...><code>INNER</code></pre>`. Pull
 // out INNER so we render inside the source-viewer's own <pre> (keeps the line
-// gutter + the existing CSS). Any unexpected shape yields '' → plain fallback.
+// gutter + the existing CSS). An empty result is the normal "no match → plain
+// fallback" path; a non-empty Shiki output that DIDN'T match the wrapper is a
+// sign Shiki changed its output shape, so log it once so a future upgrade's
+// silent regression stays diagnosable instead of degrading to plain text
+// invisibly.
 function extractInner(html: string): string {
   const m = html.match(/^<pre\b[^>]*><code>([\s\S]*)<\/code><\/pre>\s*$/)
-  return m ? m[1] : ''
+  if (m) return m[1]
+  if (html.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[silt] Shiki markdown output did not match the expected <pre><code> wrapper; falling back to plain text. Output starts:',
+      html.slice(0, 80)
+    )
+  }
+  return ''
 }

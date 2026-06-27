@@ -152,7 +152,7 @@ describe('MarkdownSourceViewer', () => {
     expect(nums[1].textContent).toBe('2')
   })
 
-  it('copies the reconstructed markdown to the clipboard', async () => {
+  it('copies the reconstructed markdown to the clipboard and confirms via aria-live', async () => {
     mocks.highlight.mockReturnValue(new Promise(() => {}))
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, { clipboard: { writeText } })
@@ -160,11 +160,30 @@ describe('MarkdownSourceViewer', () => {
       props: { blocks: BLOCKS, filePath: 'p.md' }
     })
     await fireEvent.click(
-      screen.getByRole('button', { name: /copy as markdown/i })
+      screen.getByRole('button', { name: /copy markdown/i })
     )
     expect(writeText).toHaveBeenCalledTimes(1)
     expect(writeText.mock.calls[0][0]).toContain('# Heading')
     expect(writeText.mock.calls[0][0]).toContain('**bold**')
+    // Success is announced to assistive tech (not a silent action).
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent(/copied/i)
+    )
+  })
+
+  it('announces a copy failure when the clipboard is unavailable', async () => {
+    mocks.highlight.mockReturnValue(new Promise(() => {}))
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'))
+    Object.assign(navigator, { clipboard: { writeText } })
+    render(MarkdownSourceViewer, {
+      props: { blocks: BLOCKS, filePath: 'p.md' }
+    })
+    await fireEvent.click(
+      screen.getByRole('button', { name: /copy markdown/i })
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(/failed to copy/i)
+    )
   })
 
   it('exposes the source body as a read-only document landmark', () => {
@@ -174,5 +193,54 @@ describe('MarkdownSourceViewer', () => {
     })
     const doc = screen.getByRole('document')
     expect(doc.getAttribute('aria-label')).toBe('Source view of Work/Page.md')
+  })
+
+  it('re-highlights on an OS scheme change while in system mode (#194)', async () => {
+    // jsdom has no matchMedia; install a controllable MQL whose `change`
+    // listeners the component subscribes to. Direct assignment (with restore)
+    // is used because jsdom may not define window.matchMedia, which would
+    // make vi.spyOn throw.
+    const listeners: Array<(e: { matches: boolean }) => void> = []
+    const mql = {
+      matches: false, // start in dark
+      addEventListener: (
+        _ev: string,
+        fn: (e: { matches: boolean }) => void
+      ): void => {
+        listeners.push(fn)
+      },
+      removeEventListener: (
+        _ev: string,
+        fn: (e: { matches: boolean }) => void
+      ): void => {
+        const i = listeners.indexOf(fn)
+        if (i >= 0) listeners.splice(i, 1)
+      }
+    }
+    const origMatchMedia = (window as unknown as { matchMedia?: unknown })
+      .matchMedia
+    Object.assign(window, { matchMedia: () => mql })
+
+    mocks.themeState.mode = 'system'
+    mocks.highlight.mockResolvedValue('<span>x</span>')
+    try {
+      render(MarkdownSourceViewer, {
+        props: { blocks: BLOCKS, filePath: 'p.md' }
+      })
+      await waitFor(() => expect(mocks.highlight).toHaveBeenCalled())
+      // First highlight resolved the dark tokens (effectiveMode = dark).
+      expect(mocks.highlight.mock.calls[0][1].type).toBe('dark')
+
+      // Simulate the OS flipping to light. The component's MQL listener must
+      // bump its reactive systemLight state → effectiveMode → re-highlight.
+      mql.matches = true
+      for (const fn of listeners) fn({ matches: true })
+      await waitFor(() => {
+        const last = mocks.highlight.mock.calls.at(-1)!
+        expect(last[1].type).toBe('light')
+      })
+    } finally {
+      Object.assign(window, { matchMedia: origMatchMedia })
+    }
   })
 })

@@ -80,9 +80,10 @@ describe('VirtualScrollContainer editor chrome', () => {
     // Source view: the read-only markdown projection renders in place of the
     // editor (#171/#194).
     expect(screen.getByTestId('markdown-source-stub')).toBeInTheDocument()
-    // The view-mode toggle reflects the action available (switch back to edit).
+    // The toggle's accessible name reflects the contextual action (switch back
+    // to rich text), not a generic label (#194/#178 polish).
     expect(
-      screen.getByRole('button', { name: 'Toggle View Mode' })
+      screen.getByRole('button', { name: 'View Rich Text' })
     ).toHaveAttribute('title', 'View Rich Text (Ctrl+Shift+V)')
   })
 
@@ -121,7 +122,7 @@ describe('VirtualScrollContainer editor chrome', () => {
     // The view-mode button fires the onToggleViewMode callback (#195) — App
     // owns the per-tab state now, not a module store.
     await fireEvent.click(
-      screen.getByRole('button', { name: 'Toggle View Mode' })
+      screen.getByRole('button', { name: 'View Markdown Source' })
     )
     expect(mocks.onToggleViewMode).toHaveBeenCalledTimes(1)
   })
@@ -130,7 +131,7 @@ describe('VirtualScrollContainer editor chrome', () => {
     render(VirtualScrollContainer, {
       props: { ...baseProps(), viewMode: 'source' }
     })
-    const btn = screen.getByRole('button', { name: 'Toggle View Mode' })
+    const btn = screen.getByRole('button', { name: 'View Rich Text' })
     expect(btn).toHaveAttribute('aria-pressed', 'true')
     expect(btn).toHaveAttribute('aria-keyshortcuts', 'Ctrl+Shift+V')
   })

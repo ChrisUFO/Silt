@@ -412,7 +412,9 @@
       title={viewMode === 'edit'
         ? 'View Markdown Source (Ctrl+Shift+V)'
         : 'View Rich Text (Ctrl+Shift+V)'}
-      aria-label="Toggle View Mode"
+      aria-label={viewMode === 'edit'
+        ? 'View Markdown Source'
+        : 'View Rich Text'}
       aria-pressed={viewMode === 'source'}
       aria-keyshortcuts="Ctrl+Shift+V"
     >

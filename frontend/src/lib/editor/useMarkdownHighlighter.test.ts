@@ -1,9 +1,9 @@
-// Unit coverage for the Silt-token → Shiki-theme mapper (#194). Pure and
-// synchronous, so it needs no jsdom/reactivity — it pins the single place
-// Shiki meets the Silt theme: mode flows through, token colors map to the
-// right scopes, and missing tokens fall back to sane defaults.
+// Unit coverage for the Silt-token → Shiki-theme mapper (#194) and the
+// highlight cache (#194 hardening). The mapper tests are pure/synchronous
+// (no jsdom); the cache test mocks shiki's codeToHtml so it stays deterministic
+// and never depends on WASM/grammar loading.
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { tokensToShikiTheme } from './useMarkdownHighlighter'
 
 const DARK = {
@@ -75,5 +75,72 @@ describe('tokensToShikiTheme (#194 mapper)', () => {
         expect(t.settings.foreground).toMatch(/^#/)
       }
     }
+  })
+})
+
+// The cache test needs highlightMarkdown, which calls shiki's codeToHtml. Mock
+// it so the test never touches WASM/grammar loading and can assert call counts.
+const shikiMock = vi.hoisted(() => ({ codeToHtml: vi.fn() }))
+vi.mock('shiki', () => ({ codeToHtml: shikiMock.codeToHtml }))
+
+describe('highlightMarkdown cache (#194 hardening)', () => {
+  // Use a unique code per test run so the module-scoped cache (shared across
+  // tests in this file) can't hand one test a hit populated by another.
+  let n = 0
+  function uniqueCode(): string {
+    n += 1
+    return `# cached heading ${n}`
+  }
+
+  beforeEach(() => {
+    shikiMock.codeToHtml.mockReset()
+    // Shiki wraps output as <pre><code>INNER</code></pre>; the highlighter
+    // extracts INNER, so the mock returns that wrapper shape.
+    shikiMock.codeToHtml.mockImplementation(
+      (code: string) => `<pre class="shiki"><code>${code}</code></pre>`
+    )
+  })
+
+  it('serves a repeat call from the cache (codeToHtml runs once)', async () => {
+    const { highlightMarkdown } = await import('./useMarkdownHighlighter')
+    const theme = tokensToShikiTheme(DARK, 'dark')
+    const code = uniqueCode()
+
+    await highlightMarkdown(code, theme)
+    await highlightMarkdown(code, theme)
+
+    expect(shikiMock.codeToHtml).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-highlights when the theme changes (cache key includes the theme)', async () => {
+    const { highlightMarkdown } = await import('./useMarkdownHighlighter')
+    const code = uniqueCode()
+
+    await highlightMarkdown(code, tokensToShikiTheme(DARK, 'dark'))
+    await highlightMarkdown(code, tokensToShikiTheme(LIGHT, 'light'))
+
+    // Two distinct themes → two highlights (no stale cache hit).
+    expect(shikiMock.codeToHtml).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns null on a Shiki failure and does not cache it', async () => {
+    const { highlightMarkdown } = await import('./useMarkdownHighlighter')
+    const theme = tokensToShikiTheme(DARK, 'dark')
+    const code = uniqueCode()
+
+    shikiMock.codeToHtml.mockImplementation(() => {
+      throw new Error('grammar load failed')
+    })
+    const first = await highlightMarkdown(code, theme)
+    expect(first).toBeNull()
+
+    // A later successful highlight of the same code still runs (the failure
+    // was not cached as null).
+    shikiMock.codeToHtml.mockImplementation(
+      (c: string) => `<pre class="shiki"><code>${c}</code></pre>`
+    )
+    const second = await highlightMarkdown(code, theme)
+    expect(second).not.toBeNull()
+    expect(shikiMock.codeToHtml).toHaveBeenCalledTimes(2)
   })
 })
