@@ -618,3 +618,40 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 | `frontend/src/components/TipTapEditor.test.ts` (new, 5) | embedNode NodeView for sole {{embed:uuid}}, blockReferenceNode for inline ((uuid)), both in same block, data-node-view-wrapper presence, multiple NoteBlock NodeViews | #127 TipTapEditor smart-graph content via the NodeView pipeline |
 
 `npm test` now runs **336 vitest tests** across **43 files**. `npm run check` reports **0 errors, 0 warnings**.
+
+## Sprint 15 — Source / Rendered View Toggle follow-ups (#194, #195, #178)
+
+Closes the three open follow-ups to the base view toggle (#171, shipped in PR #193) in one branch (`feat/sprint15-view-toggle-followups`): Shiki highlighting in the Source view (#194), per-tab view-mode persistence on `TabEntry` / `TabRef` (#195), and a profiling pass + the editor-teardown memory optimization (#178).
+
+### Automated Tests
+
+Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (frontend, vitest). No Playwright (per `AGENTS.md` — the Wails webview can't run headless in CI).
+
+### Go coverage added
+
+| Package | Tests | What is covered |
+|---|---|---|
+| `backend/config` | `TestTabRef_ViewMode_RoundTrip` (source persists, edit omits), `TestNormalize_TabRefViewModeSanitize` (source survives; ""/edit/garbage → ""), `TestLoad_LegacyOpenTabsMissingViewMode` (pre-#195 config backward-compat) | #195 `TabRef.ViewMode` YAML round-trip + `normalize()` sanitization + legacy backward-compat |
+
+### Frontend coverage added
+
+| File | Tests | What is covered |
+|---|---|---|
+| `frontend/src/lib/tabs.test.ts` (+8, #195) | new-tab seeds `defaultViewMode`; default→edit; existing-tab mode preserved on activate; preview-slot reuse resets to default; promotePreview preserves; cycleTab preserves; `setTabViewMode` flip + same/missing no-op; LRU eviction doesn't leak the evicted tab's mode | #195 `TabEntry.viewMode` state machine |
+| `frontend/src/lib/editor/useMarkdownHighlighter.test.ts` (new, 5, #194) | dark/light type threading; bg/fg/editor.background from tokens; dark vs light accent distinct; typographic fontStyle for bold/italic/strike/heading/quote; fallback defaults for missing tokens | #194 Silt-token → Shiki-theme mapper |
+| `frontend/src/components/editor/MarkdownSourceViewer.svelte.test.ts` (new, 8, #194) | plain-text fallback before resolve; highlighted HTML after resolve; plain-text fallback on error; mode→theme on mount; re-highlight on content change; line-number gutter; Copy as Markdown; read-only `role="document"` landmark | #194 Source viewer (Shiki mocked; integration verified separately) |
+| `frontend/src/components/VirtualScrollContainer.test.ts` (+2, #195/#178) | toggle button `aria-pressed`/`aria-keyshortcuts`; #178 teardown — TipTapEditor mounted in edit, torn down in source (only MarkdownSourceViewer present) | #195 a11y + #178 editor teardown |
+
+### Manual Verification Matrix (`wails dev`)
+
+| # | Scenario | Expected |
+|---|---|---|
+| 1 | Open a page, type + format (bold/italic/link), press `Ctrl+Shift+V` (while editing) | Hotkey flips to Source (it now works editor-focused — was dead before #195); Source shows raw markdown with the `**`/`*`/`[]()` marks visible and **syntax-highlighted** in the active theme's colors |
+| 2 | In Source view, flip dark↔light (Appearance tab or OS) | Source re-highlights to the new mode's token colors |
+| 3 | Set a tab to Source, navigate to another page, come back | The tab is still in Source (per-tab sticky within the session) |
+| 4 | Quit + relaunch | Persisted tabs restore their view mode (a tab stuck in Source reopens in Source) |
+| 5 | Set `editor.default_view_mode: "source"`; open a new page | The new tab opens in Source |
+| 6 | Open the `.md` in VS Code, edit it externally, return to Silt Source view | The Source view reflects the external edit (fsnotify) |
+| 7 | Source view: byte-identity check — `==highlight==`, `<u>`, `<!-- silt-align -->`, `<span style>` color, GFM table pipes, `<!-- id: uuid @ date -->`, `[key:: value]` all visible verbatim | Nothing hidden, added, or re-ordered |
+| 8 | Toggle Edit→Source→Edit on a long page | Scroll/cursor reset to top on return to Edit (documented #178 trade-off); content intact (auto-save flushed on unmount) |
+| 9 | Open 8 tabs, set several to Source | Per `docs/editor-memory-profiling.md`, the Source tabs hold no TipTap editor (DevTools Memory confirms the drop vs. all-edit) |

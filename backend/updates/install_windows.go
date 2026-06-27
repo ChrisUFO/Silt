@@ -4,28 +4,45 @@ package updates
 
 import (
 	"fmt"
-	"os/exec"
-	"syscall"
+
+	"golang.org/x/sys/windows"
 )
 
-// installForCurrentOS launches the verified NSIS installer detached from the
-// Silt process so it survives the app's exit and can replace the locked
-// binary files. The installer is a GUI process that prompts the user through
-// the upgrade. Returns willQuit=true: the caller must quit Silt (via the
-// graceful shutdown path) so the installer's file replacement does not collide
-// with open handles.
+// installForCurrentOS launches the verified NSIS installer so it can replace
+// the running binary. The Silt installer is per-user-only — RequestExecutionLevel
+// user → an asInvoker manifest (build/windows/installer/project.nsi) — so it runs
+// with the launching user's token and never needs elevation.
 //
-// CREATE_NEW_PROCESS_GROUP (0x00000200) decouples the child from the parent's
-// process group, so a Ctrl-C / window-close on Silt does not propagate to the
-// installer mid-upgrade.
+// ShellExecute with a nil verb launches the installer exactly as Explorer would
+// on a double-click and is deliberately kept here even though asInvoker would
+// also let os/exec's CreateProcess succeed: ShellExecute honours whatever
+// execution level the installer ships, so this code never needs to change if the
+// manifest decision is revisited (CreateProcess cannot satisfy a higher manifest
+// and would fail silently again).
+//
+// Returns willQuit=true: the caller must quit Silt (via the graceful shutdown
+// path) so the installer's file replacement does not collide with open handles.
+// ShellExecute launches the installer via the Application Information Service
+// rather than as a direct child, so it is already decoupled from Silt's
+// lifetime — no CREATE_NEW_PROCESS_GROUP / Process.Release is needed.
 func installForCurrentOS(localPath string) (bool, error) {
-	cmd := exec.Command(localPath)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x00000200}
-	if err := cmd.Start(); err != nil {
+	file, err := windows.UTF16PtrFromString(localPath)
+	if err != nil {
 		return false, fmt.Errorf("launch installer: %w", err)
 	}
-	// Release the child so it is not reaped when Silt exits; the installer
-	// runs to completion independently.
-	_ = cmd.Process.Release()
+	if err := windows.ShellExecute(
+		0,                     // hwnd: no owner window
+		nil,                   // verb: nil = default ("open"); manifest drives elevation
+		file,                  // file: the verified installer
+		nil,                   // args
+		nil,                   // cwd
+		windows.SW_SHOWNORMAL, // show the installer window
+	); err != nil {
+		// Any non-nil error means the installer did not launch — the user
+		// declined the UAC prompt, the file vanished, or AIS rejected the
+		// launch. The installer UI is the real feedback channel once it runs,
+		// so we do not try to distinguish decline from other failures here.
+		return false, fmt.Errorf("launch installer: %w", err)
+	}
 	return true, nil
 }

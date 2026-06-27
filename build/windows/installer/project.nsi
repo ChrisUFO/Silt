@@ -2,19 +2,21 @@ Unicode true
 
 ####
 ## Custom Silt NSIS installer template (#install-scope).
-## Overrides Wails' default per-machine-only template with a MultiUser
-## installer that lets the user CHOOSE: "Install for all users" (needs admin)
-## or "Install for just me" (no admin), defaulting to per-user.
+## Per-user-only installer. Silt is a small single-user app, so every install
+## lands in the current user's profile and never needs elevation — this drops
+## the prior MultiUser scope-choice machinery (and the UAC prompt its "Highest"
+## manifest forced for admin users). Each Windows user who wants Silt simply
+## installs their own copy; no admin, no consent dialog.
 ##
 ## This file is automatically used by `wails build --nsis` because it lives at
 ## build/windows/installer/project.nsi, which takes precedence over the Wails
 ## embedded template.
 ####
 
-## Override the execution level BEFORE the tools include so wails_tools.nsh
-## does not force "admin". "Highest" lets NSIS request elevation only when the
-## user picks "all users"; per-user installs run without elevation.
-!define REQUEST_EXECUTION_LEVEL "Highest"
+## Per-user execution level: "user" yields an asInvoker manifest, so the
+## installer runs with the launching user's token and never triggers UAC — for
+## admins or standard users alike.
+!define REQUEST_EXECUTION_LEVEL "user"
 
 ## Include the wails tools (fills in INFO_*, PRODUCT_EXECUTABLE, macros, etc.)
 !include "wails_tools.nsh"
@@ -33,30 +35,14 @@ ManifestDPIAware true
 
 !include "MUI.nsh"
 
-##
-## MultiUser configuration — the install-scope choice dialog.
-## Defaults to CurrentUser (per-user, no admin). The user can switch to
-## AllUsers (per-machine, admin) via the radio buttons on the install-mode
-## page. See https://nsis.sourceforge.io/Docs/MultiUser/Readme.html
-##
-!define MULTIUSER_EXECUTIONLEVEL Highest
-!define MULTIUSER_MUI
-!define MULTIUSER_INSTALLMODE_DEFAULT_CURRENTUSER
-!define MULTIUSER_INSTALLMODE_INSTDIR "${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
-!define MULTIUSER_INSTALLMODE_COMMANDLINE
-!define MULTIUSER_INSTALLMODE_INSTDIR_REGISTRY_KEY   "Software\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
-!define MULTIUSER_INSTALLMODE_UNINSTALL_REGISTRY_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${UNINST_KEY_NAME}"
-!define MULTIUSER_INSTALLMODE_INSTDIR_REGISTRY_VALUENAME "InstallDir"
-!include "MultiUser.nsh"
-
 !define MUI_ICON "..\icon.ico"
 !define MUI_UNICON "..\icon.ico"
 !define MUI_FINISHPAGE_NOAUTOCLOSE
 !define MUI_ABORTWARNING
 
-## Pages: Welcome → Install Mode (the choice) → Directory → Install → Finish
+## Pages: Welcome → Directory → Install → Finish. No scope-choice page: there
+## is only one scope now (current user).
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MULTIUSER_PAGE_INSTALLMODE
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
@@ -67,43 +53,41 @@ ManifestDPIAware true
 
 Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe"
-## InstallDir is set dynamically by MultiUser.nsh based on the chosen scope:
-##   CurrentUser → $LOCALAPPDATA\Programs\<Company>\<Product>
-##   AllUsers    → $PROGRAMFILES64\<Company>\<Product>
+## Fixed per-user install location. This matches the prior MultiUser
+## CurrentUser default, so existing per-user installs upgrade in place.
+InstallDir "$LOCALAPPDATA\Programs\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
 ShowInstDetails show
 
 Function .onInit
-    ## Initialise MultiUser — this reads the registry for a prior install
-    ## scope and sets $InstDir + $MultiUser.InstallMode accordingly.
-    !insertmacro MULTIUSER_INIT
-
     ## Architecture guard (from wails_tools.nsh).
     !insertmacro wails.checkArchitecture
+
+    ## Preserve a prior install directory across upgrades. The current per-user
+    ## format stores InstallDir under the uninstall key; the older MultiUser
+    ## template stored it under Software\<Company>\<Product>. Check both so an
+    ## upgrade from either format lands in the same place; otherwise fall back
+    ## to the InstallDir default above.
+    SetRegView 64
+    ReadRegStr $0 HKCU "${UNINST_KEY}" "InstallDir"
+    ${If} $0 == ""
+        ReadRegStr $0 HKCU "Software\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}" "InstallDir"
+    ${EndIf}
+    ${If} $0 != ""
+        StrCpy $INSTDIR $0
+    ${EndIf}
 FunctionEnd
 
 Section
-    ## Set the shell context (start-menu / desktop shortcuts) to match the
-    ## chosen install scope. The default wails.setShellContext macro checks
-    ## REQUEST_EXECUTION_LEVEL, but with MultiUser the scope is runtime-chosen,
-    ## so we drive it from $MultiUser.InstallMode instead.
-    ${If} $MultiUser.InstallMode == "AllUsers"
-        SetShellVarContext all
-    ${Else}
-        SetShellVarContext current
-    ${EndIf}
+    ## Per-user: shortcuts + registry belong to the current user only.
+    SetShellVarContext current
 
     !insertmacro wails.webview2runtime
 
-    ## If a prior version is installed at this $INSTDIR, silently run its
-    ## uninstaller first for a clean upgrade (no leftover stale files). The
-    ## MultiUser plugin has already detected the prior scope, so we read the
-    ## uninstall string from the matching hive.
+    ## If a prior version is installed, silently run its uninstaller first for
+    ## a clean upgrade (no leftover stale files). The uninstall string lives in
+    ## HKCU now that every install is per-user.
     SetRegView 64
-    ${If} $MultiUser.InstallMode == "AllUsers"
-        ReadRegStr $0 HKLM "${UNINST_KEY}" "UninstallString"
-    ${Else}
-        ReadRegStr $0 HKCU "${UNINST_KEY}" "UninstallString"
-    ${EndIf}
+    ReadRegStr $0 HKCU "${UNINST_KEY}" "UninstallString"
     ${If} $0 != ""
         ExecWait '"$0" /S _?=$INSTDIR'
     ${EndIf}
@@ -118,41 +102,24 @@ Section
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
 
-    ## Write uninstaller + registry entries. The Wails macro hardcodes HKLM,
-    ## which fails for per-user installs. We write to the correct hive based
-    ## on the chosen scope so upgrades + Add/Remove Programs work either way.
+    ## Write uninstaller + per-user registry entries (Add/Remove Programs).
+    ## InstallDir is recorded here so the next upgrade can reuse it.
     WriteUninstaller "$INSTDIR\uninstall.exe"
     SetRegView 64
-    ${If} $MultiUser.InstallMode == "AllUsers"
-        WriteRegStr HKLM "${UNINST_KEY}" "Publisher" "${INFO_COMPANYNAME}"
-        WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "${INFO_PRODUCTNAME}"
-        WriteRegStr HKLM "${UNINST_KEY}" "DisplayVersion" "${INFO_PRODUCTVERSION}"
-        WriteRegStr HKLM "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\${PRODUCT_EXECUTABLE}"
-        WriteRegStr HKLM "${UNINST_KEY}" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
-        WriteRegStr HKLM "${UNINST_KEY}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
-    ${Else}
-        WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "${INFO_COMPANYNAME}"
-        WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${INFO_PRODUCTNAME}"
-        WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${INFO_PRODUCTVERSION}"
-        WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\${PRODUCT_EXECUTABLE}"
-        WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
-        WriteRegStr HKCU "${UNINST_KEY}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
-    ${EndIf}
+    WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "${INFO_COMPANYNAME}"
+    WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${INFO_PRODUCTNAME}"
+    WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${INFO_PRODUCTVERSION}"
+    WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
+    WriteRegStr HKCU "${UNINST_KEY}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
+    WriteRegStr HKCU "${UNINST_KEY}" "InstallDir" "$INSTDIR"
     ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
     IntFmt $0 "0x%08X" $0
-    ${If} $MultiUser.InstallMode == "AllUsers"
-        WriteRegDWORD HKLM "${UNINST_KEY}" "EstimatedSize" "$0"
-    ${Else}
-        WriteRegDWORD HKCU "${UNINST_KEY}" "EstimatedSize" "$0"
-    ${EndIf}
+    WriteRegDWORD HKCU "${UNINST_KEY}" "EstimatedSize" "$0"
 SectionEnd
 
 Section "uninstall"
-    ${If} $MultiUser.InstallMode == "AllUsers"
-        SetShellVarContext all
-    ${Else}
-        SetShellVarContext current
-    ${EndIf}
+    SetShellVarContext current
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}"
     RMDir /r $INSTDIR
@@ -163,17 +130,7 @@ Section "uninstall"
     !insertmacro wails.unassociateFiles
     !insertmacro wails.unassociateCustomProtocols
 
-    ## Delete uninstaller + registry from the correct hive (NOT wails.deleteUninstaller
-    ## which hardcodes HKLM).
     Delete "$INSTDIR\uninstall.exe"
     SetRegView 64
-    ${If} $MultiUser.InstallMode == "AllUsers"
-        DeleteRegKey HKLM "${UNINST_KEY}"
-    ${Else}
-        DeleteRegKey HKCU "${UNINST_KEY}"
-    ${EndIf}
+    DeleteRegKey HKCU "${UNINST_KEY}"
 SectionEnd
-
-Function un.onInit
-    !insertmacro MULTIUSER_UNINIT
-FunctionEnd

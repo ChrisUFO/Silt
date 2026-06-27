@@ -10,7 +10,6 @@
     onUpdate,
     editorInstance,
     activeMarks,
-    viewMode,
     onSaveStateChange
   } = $props()
 </script>

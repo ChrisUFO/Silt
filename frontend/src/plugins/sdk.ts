@@ -1,18 +1,12 @@
 // Silt Plugin SDK — the contract every plugin (first- or third-party) uses.
 // Mirrors SPECS.md §8.2.
 
-// Best-effort warning when a plugin imports the raw Wails binding surface
-// instead of using the SDK (#152). This is a documentation-level signal — a
-// determined plugin can bypass it. The proper fix requires per-plugin isolated
-// webviews. Printed once at module load so it appears in the dev console when
-// a plugin imports wailsjs/go/main/App.js.
-// eslint-disable-next-line no-console
-if (typeof window !== 'undefined' && (window as any).go?.main?.App) {
-  // eslint-disable-next-line no-console
-  console.warn(
-    '[silt] Direct access to window.go.main.App is deprecated. Plugins must use the PluginContext SDK (ctx.*). Raw binding access will break when per-plugin webviews land (#152).'
-  )
-}
+// Plugins must reach the backend through the PluginContext SDK (ctx.*) rather
+// than the raw Wails bindings (wailsjs/go/main/App.js) — the raw surface will
+// break when per-plugin isolated webviews land (#152). This is enforced by code
+// review and the SDK contract, NOT by a runtime probe: a module-load check on
+// window.go.main.App can't tell a plugin's raw import from the SDK bridge's own
+// legitimate use, so it only ever produced a false-positive warning on boot.
 
 export type TaskStatus = 'TODO' | 'DOING' | 'DONE'
 

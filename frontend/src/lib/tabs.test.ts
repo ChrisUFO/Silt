@@ -5,6 +5,7 @@ import {
   promotePreview,
   cycleTab,
   reorderTab,
+  setTabViewMode,
   mergeReorderedTabs,
   mruOrder,
   pickEvictionVictim,
@@ -13,14 +14,20 @@ import {
   generateTabId,
   type TabEntry,
   type PageRef,
-  type TabsState
+  type TabsState,
+  type ViewMode
 } from './tabs'
 
 // Helpers -------------------------------------------------------------
 
 function mkTab(
   ref: PageRef,
-  opts: { preview?: boolean; lastActivatedAt?: number; id?: string } = {}
+  opts: {
+    preview?: boolean
+    lastActivatedAt?: number
+    id?: string
+    viewMode?: ViewMode
+  } = {}
 ): TabEntry {
   return {
     id: opts.id ?? generateTabId(),
@@ -28,7 +35,8 @@ function mkTab(
     section: ref.section,
     page: ref.page,
     preview: opts.preview ?? false,
-    lastActivatedAt: opts.lastActivatedAt ?? Date.now()
+    lastActivatedAt: opts.lastActivatedAt ?? Date.now(),
+    viewMode: opts.viewMode ?? 'edit'
   }
 }
 
@@ -547,13 +555,7 @@ describe('mergeReorderedTabs (#175)', () => {
       mkTab(WA, { id: 'wa' })
     ]
     const merged = mergeReorderedTabs(full, reordered, 'Work')
-    expect(merged.map((t) => t.id)).toEqual([
-      'wc',
-      'pa',
-      'wb',
-      'pb',
-      'wa'
-    ])
+    expect(merged.map((t) => t.id)).toEqual(['wc', 'pa', 'wb', 'pb', 'wa'])
   })
 
   it('preserves all non-displayed tabs exactly', () => {
@@ -610,5 +612,111 @@ describe('mergeReorderedTabs (#175)', () => {
     const merged = mergeReorderedTabs(full, reordered, 'Work')
     expect(merged.map((t) => t.id)).toEqual(['wa', 'pa', 'wb', 'wc'])
     expect(merged).not.toBe(full)
+  })
+})
+
+// --- #195: per-tab view mode -----------------------------------------
+
+describe('view mode (#195 — viewMode on TabEntry)', () => {
+  it('a freshly-created tab seeds viewMode from defaultViewMode', () => {
+    // Default defaultViewMode ('edit').
+    let result = openPage(state([]), PAGE_A, 'preview', {
+      defaultViewMode: 'edit'
+    })
+    expect(result.tabs[0].viewMode).toBe('edit')
+
+    // A vault-wide Source default propagates to new tabs.
+    result = openPage(state([]), PAGE_A, 'preview', {
+      defaultViewMode: 'source'
+    })
+    expect(result.tabs[0].viewMode).toBe('source')
+  })
+
+  it('omitting defaultViewMode defaults a new tab to edit', () => {
+    const result = openPage(state([]), PAGE_A, 'pin')
+    expect(result.tabs[0].viewMode).toBe('edit')
+  })
+
+  it('preserves an existing tab viewMode on activation', () => {
+    // A pinned tab already in Source mode must keep it when re-activated.
+    const tab = mkTab(PAGE_A, { viewMode: 'source', lastActivatedAt: 100 })
+    const other = mkTab(PAGE_B, { lastActivatedAt: 200 })
+    const result = openPage(state([tab, other], other.id), PAGE_A, 'preview', {
+      defaultViewMode: 'edit' // default must NOT override the stored Source mode
+    })
+    const activated = result.tabs.find((t) => t.id === tab.id)!
+    expect(activated.viewMode).toBe('source')
+  })
+
+  it('preview-slot reuse resets viewMode to the default (new page)', () => {
+    // A preview tab is showing PAGE_A in Source; opening PAGE_B in preview
+    // mode reuses the slot and must reset to the default (PAGE_B != PAGE_A).
+    const preview = mkTab(PAGE_A, {
+      preview: true,
+      viewMode: 'source',
+      lastActivatedAt: 100
+    })
+    const result = openPage(state([preview], preview.id), PAGE_B, 'preview', {
+      defaultViewMode: 'edit'
+    })
+    expect(result.tabs).toHaveLength(1)
+    expect(result.tabs[0].page).toBe(PAGE_B.page)
+    expect(result.tabs[0].viewMode).toBe('edit')
+  })
+
+  it('preview→pin promotion preserves the current viewMode', () => {
+    const preview = mkTab(PAGE_A, {
+      preview: true,
+      viewMode: 'source',
+      lastActivatedAt: 100
+    })
+    const promoted = promotePreview(state([preview], preview.id), preview.id)
+    expect(promoted.tabs[0].preview).toBe(false)
+    expect(promoted.tabs[0].viewMode).toBe('source')
+  })
+
+  it('cycleTab preserves viewMode (MRU bump only)', () => {
+    const a = mkTab(PAGE_A, {
+      id: 'a',
+      viewMode: 'source',
+      lastActivatedAt: 300
+    })
+    const b = mkTab(PAGE_B, { id: 'b', viewMode: 'edit', lastActivatedAt: 200 })
+    const result = cycleTab(state([a, b], a.id), -1)
+    const aAfter = result.tabs.find((t) => t.id === 'a')!
+    const bAfter = result.tabs.find((t) => t.id === 'b')!
+    expect(aAfter.viewMode).toBe('source')
+    expect(bAfter.viewMode).toBe('edit')
+  })
+
+  it('setTabViewMode flips the mode and is a no-op for missing/same', () => {
+    const tab = mkTab(PAGE_A, { id: 'a', viewMode: 'edit' })
+    const st = state([tab], 'a')
+
+    const flipped = setTabViewMode(st, 'a', 'source')
+    expect(flipped.tabs[0].viewMode).toBe('source')
+
+    // Same mode → returns the same state reference (no churn).
+    expect(setTabViewMode(flipped, 'a', 'source')).toBe(flipped)
+
+    // Missing tab → no-op, same reference.
+    expect(setTabViewMode(st, 'nope', 'source')).toBe(st)
+  })
+
+  it('LRU eviction does not carry an evicted tab viewMode to the new tab', () => {
+    // Cap of 1: opening a second pinned tab evicts the first. The new tab
+    // gets the defaultViewMode, not the evicted tab's Source mode.
+    const first = openPage(state([]), PAGE_A, 'pin', {
+      maxOpenTabs: 1,
+      defaultViewMode: 'source'
+    })
+    expect(first.tabs[0].viewMode).toBe('source')
+    const second = openPage(first, PAGE_B, 'pin', {
+      maxOpenTabs: 1,
+      defaultViewMode: 'edit'
+    })
+    expect(second.tabs).toHaveLength(1)
+    expect(second.tabs[0].page).toBe(PAGE_B.page)
+    expect(second.tabs[0].viewMode).toBe('edit')
   })
 })

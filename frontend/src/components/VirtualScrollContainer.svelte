@@ -3,10 +3,11 @@
   import { FetchPageBlocks, RenamePage } from '../../wailsjs/go/main/App.js'
   import { EventsOn } from '../../wailsjs/runtime/runtime.js'
   import TipTapEditor from './TipTapEditor.svelte'
+  import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
   import type { ParsedBlock } from '../lib/editor'
   import type { Editor } from 'svelte-tiptap'
+  import type { ViewMode } from '../lib/tabs'
   import EditorUtilityBar from './editor/EditorUtilityBar.svelte'
-  import { getViewMode, toggleViewMode } from '../lib/viewMode.svelte'
   import {
     settings,
     toggleFocusMode,
@@ -17,6 +18,10 @@
     notebook: string
     section: string
     page: string
+    /** Editor view for this tab (#195). Owned by App.svelte's TabEntry. */
+    viewMode: ViewMode
+    /** Toggle this tab's view mode (floating button). */
+    onToggleViewMode?: () => void
     targetBlockId?: string
     targetKey?: string
     onBlockFocus?: (blockId: string, ancestors: string[]) => void
@@ -36,6 +41,8 @@
     notebook,
     section,
     page,
+    viewMode,
+    onToggleViewMode,
     targetBlockId = '',
     targetKey = '',
     onBlockFocus,
@@ -51,29 +58,15 @@
   let editorInstance = $state<Editor | null>(null)
   let activeMarks = $state<Set<string>>(new Set())
 
-  // View mode management
-  let viewMode = $state<'edit' | 'source'>('edit')
-  $effect(() => {
-    viewMode = getViewMode(notebook, section, page)
-  })
   let showFormatToolbar = $derived(
     settings.config?.ui?.show_format_toolbar !== false
   )
-
-  function handleToggleViewMode() {
-    toggleViewMode(notebook, section, page)
-    viewMode = getViewMode(notebook, section, page)
-  }
-
-  // Listen for the toggle-view-mode event (global hotkey). Only the active
-  // tab responds — all displayed tabs are mounted simultaneously (display:none
-  // for inactive tabs), so without this guard the hotkey would flip every tab.
-  $effect(() => {
-    if (!isActive) return
-    const handler = () => handleToggleViewMode()
-    window.addEventListener('toggle-view-mode', handler)
-    return () => window.removeEventListener('toggle-view-mode', handler)
-  })
+  // The view-mode hotkey is per-vault remappable; read it live so the toggle's
+  // tooltip + aria-keyshortcuts never go stale after a remap (the binding in
+  // config.yaml is already in display form, e.g. "Ctrl+Shift+V").
+  let viewModeHotkey = $derived(
+    settings.config?.hotkeys?.toggle_view_mode || 'Ctrl+Shift+V'
+  )
 
   let blocks = $state<ParsedBlock[]>([])
   let loading = $state(false)
@@ -339,20 +332,33 @@
             </button>
           </div>
         {:else}
-          <TipTapEditor
-            {notebook}
-            {section}
-            {page}
-            {blocks}
-            {activeFocusedBlockAncestors}
-            {onBlockFocus}
-            {onBlockBlur}
-            onUpdate={handleBlocksUpdated}
-            bind:editorInstance
-            bind:activeMarks
-            {viewMode}
-            {onSaveStateChange}
-          />
+          {#if viewMode === 'source'}
+            <!-- Source view (#171/#194): a read-only projection. TipTapEditor
+                 is NOT mounted here — Svelte tears the whole editor (ProseMirror
+                 doc + NodeViews + listeners) down on the switch, so a tab held
+                 in Source view pays no editor memory cost (#178). Returning to
+                 Edit remounts it and rebuilds from `blocks` (content is on
+                 disk via auto-save); scroll/cursor reset on the round-trip is
+                 the documented trade-off. -->
+            <MarkdownSourceViewer
+              {blocks}
+              filePath="{notebook}/{section}/{page}.md"
+            />
+          {:else}
+            <TipTapEditor
+              {notebook}
+              {section}
+              {page}
+              {blocks}
+              {activeFocusedBlockAncestors}
+              {onBlockFocus}
+              {onBlockBlur}
+              onUpdate={handleBlocksUpdated}
+              bind:editorInstance
+              bind:activeMarks
+              {onSaveStateChange}
+            />
+          {/if}
         {/if}
 
         {#if loading}
@@ -405,14 +411,18 @@
 
     <div class="w-px h-4 bg-border-muted mx-0.5"></div>
 
-    <!-- View Mode Toggle -->
+    <!-- View Mode Toggle — a toggle button: stable accessible name + aria-pressed
+         conveys state (the canonical pattern), and the title carries the
+         contextual action + the live (remappable) hotkey for sighted users. -->
     <button
-      onclick={handleToggleViewMode}
+      onclick={() => onToggleViewMode?.()}
       class="h-8 w-8 flex items-center justify-center rounded-full transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover text-text-muted"
       title={viewMode === 'edit'
-        ? 'View Markdown Source (Ctrl+Shift+V)'
-        : 'View Rich Text (Ctrl+Shift+V)'}
-      aria-label="Toggle View Mode"
+        ? `View Markdown Source (${viewModeHotkey})`
+        : `View Rich Text (${viewModeHotkey})`}
+      aria-label="Toggle source view"
+      aria-pressed={viewMode === 'source'}
+      aria-keyshortcuts={viewModeHotkey}
     >
       <span class="material-symbols-outlined text-[18px]">
         {viewMode === 'edit' ? 'code' : 'menu_book'}

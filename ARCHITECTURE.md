@@ -862,7 +862,17 @@ NodeView components (`TaskBlockView`, `NoteBlockView`, `HeaderBlockView`) render
 
 The NodeView wrappers (`frontend/src/components/editor/EmbedNodeView.svelte`, `BlockReferenceNodeView.svelte`) re-use the existing read-mode `EmbedPortal.svelte` and `BlockReferenceChip.svelte` components — the same rendering pipeline serves both the read-mode (search snippets, standalone embeds) and the NodeView contexts.
 
-5.2 Drag-and-Drop Kanban Board
+5.2 View Mode — Edit ↔ Source toggle (#171, #194, #195, #178)
+
+Each tab carries a `viewMode: 'edit' | 'source'` on its `TabEntry` (`frontend/src/lib/tabs.ts`) — the single source of truth for which projection a tab shows. `App.svelte` owns the value; the toggle is the floating icon button in `VirtualScrollContainer`'s action bar (`aria-pressed` + `aria-keyshortcuts`) and the `toggle_view_mode` hotkey (default `Ctrl+Shift+V`, per-vault), both routed through `handleToggleViewMode(tabId)` → the pure `setTabViewMode` state-machine action. The hotkey fires regardless of editor focus (there is no editor-internal keymap for it).
+
+**Persistence (#195).** `viewMode` seeds from the per-vault `editor.default_view_mode` when a tab is created, survives navigation within a session, and persists across restarts on `TabRef.view_mode` in the vault `config.yaml` (the per-vault UI tier — never SQLite; §0 rule 4). Only `"source"` is written (absence = Edit); `normalize()` collapses any other value to `""`. `GetOpenTabs`/`SetOpenTabs` round-trip it as part of the existing `TabRef`.
+
+**Source view.** `MarkdownSourceViewer.svelte` renders the reconstructed raw markdown as a read-only `role="document"` `<pre>` with a line-number gutter and "Copy as Markdown". Syntax is highlighted by **Shiki** (#194) via `useMarkdownHighlighter.ts`: a lazy singleton over the markdown grammar, fed by `tokensToShikiTheme` — the single place Shiki meets the Silt theme, mapping the effective `--color-*` token map to a Shiki custom theme. The viewer re-highlights on source / theme-token / mode change (race-guarded async `$effect`) and falls back to plain text until the highlighter resolves and on any error.
+
+**Editor teardown in Source view (#178).** The Edit/Source switch lives in `VirtualScrollContainer`: Source mode renders only `MarkdownSourceViewer` and does **not** mount `TipTapEditor`, so a tab held in Source view pays no editor memory cost (Svelte destroys the ProseMirror editor + NodeViews + listeners on the switch; it rebuilds from `blocks` on return to Edit, since content is on disk via auto-save). The trade-off is a scroll/cursor reset on an Edit→Source→Edit round-trip. Lifecycle safety: `TipTapEditor.onDestroy` flushes the pending save and releases the focus lease, and `hasFirstEdit` is container-scoped so edit-to-pin can't double-fire across a remount. See `docs/editor-memory-profiling.md` for the cost model and the data-gated recommendation.
+
+5.3 Drag-and-Drop Kanban Board
 
 The Kanban board is a first-party plugin (`silt-kanban`, `frontend/src/plugins/first-party/silt-kanban/Kanban.svelte`) that uses the identical `PluginContext` SDK as Agenda and Calendar — no direct `window.go.*` access. It queries tasks via `ctx.sqliteQuery` and shifts status via `ctx.updateBlockState`, preserving the "core feature decoupling" contract (SPECS §8.3).
 

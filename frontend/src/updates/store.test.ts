@@ -133,7 +133,7 @@ describe('updates/store.svelte (#312)', () => {
       expect(notificationsState.items.length).toBe(0)
     })
 
-    it('opens the release URL via BrowserOpenURL when the toast action runs', async () => {
+    it('falls back to opening the release URL when no platform asset exists', async () => {
       mocks.CheckForUpdates.mockResolvedValue({
         hasUpdate: true,
         latestVersion: '0.5.0',
@@ -143,9 +143,33 @@ describe('updates/store.svelte (#312)', () => {
       await startupCheck()
       const action = notificationsState.items[0].action
       expect(action).toBeDefined()
+      expect(action!.label).toBe('View')
       action!.run()
       expect(mocks.BrowserOpenURL).toHaveBeenCalledWith(
         'https://example/release'
+      )
+    })
+
+    it('offers an Install action that runs the install flow when a platform asset exists', async () => {
+      mocks.DownloadUpdate.mockResolvedValue('/tmp/asset.exe')
+      mocks.InstallUpdate.mockResolvedValue({ willQuit: true })
+      mocks.CheckForUpdates.mockResolvedValue({
+        hasUpdate: true,
+        latestVersion: '0.5.0',
+        releaseUrl: 'https://example/release',
+        releaseNotes: '',
+        asset: { browserDownloadUrl: 'https://example/asset.exe' }
+      })
+      await startupCheck()
+      const action = notificationsState.items[0].action
+      expect(action).toBeDefined()
+      expect(action!.label).toBe('Install')
+      action!.run()
+      // downloadAndInstall is async; wait for the first IPC call to land.
+      await vi.waitFor(() =>
+        expect(mocks.DownloadUpdate).toHaveBeenCalledWith(
+          'https://example/asset.exe'
+        )
       )
     })
   })

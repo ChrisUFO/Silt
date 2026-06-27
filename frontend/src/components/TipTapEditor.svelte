@@ -36,7 +36,6 @@
   import CommandPalette from './CommandPalette.svelte'
   import FormattingFirstRunTip from './editor/FormattingFirstRunTip.svelte'
   import SelectionBubble from './editor/SelectionBubble.svelte'
-  import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
   import TableContextToolbar from './editor/TableContextToolbar.svelte'
   import TableSizePicker from './editor/TableSizePicker.svelte'
   import { DEFAULT_COLOR_PALETTE, resolveColor } from '../lib/editor/colors'
@@ -87,7 +86,6 @@
     onUpdate: (updatedBlocks: ParsedBlock[]) => void
     editorInstance?: Editor | null
     activeMarks?: Set<string>
-    viewMode?: 'edit' | 'source'
     /** Emitted when the editor's save state changes (dirty/error → clean).
      *  Used by the tab strip to show per-tab dirty/save-failed indicators
      *  (#167). */
@@ -108,7 +106,6 @@
     onUpdate,
     editorInstance = $bindable(null),
     activeMarks = $bindable(new Set()),
-    viewMode = 'edit',
     onSaveStateChange
   }: Props = $props()
   let editorReady = $state(false)
@@ -978,311 +975,300 @@
   class:focus-mode={focusModeEnabled}
   oncontextmenu={handleContextMenu}
 >
-  {#if viewMode === 'source'}
-    <MarkdownSourceViewer {blocks} filePath="{notebook}/{section}/{page}.md" />
-  {:else}
-    {#if editorReady}
-      <FormattingFirstRunTip
-        dismissed={formatTipDismissed}
-        onDismiss={dismissFormatTip}
-      />
-      <SelectionBubble
-        editor={editorInstance}
-        {activeMarks}
-        {selectionEmpty}
-        {selectionCoords}
-      />
-      {#if cursorInTable && editorInstance}
-        <TableContextToolbar editor={editorInstance} />
-      {/if}
-      {#if editorStore}
-        <EditorContent editor={$editorStore} />
-      {/if}
+  {#if editorReady}
+    <FormattingFirstRunTip
+      dismissed={formatTipDismissed}
+      onDismiss={dismissFormatTip}
+    />
+    <SelectionBubble
+      editor={editorInstance}
+      {activeMarks}
+      {selectionEmpty}
+      {selectionCoords}
+    />
+    {#if cursorInTable && editorInstance}
+      <TableContextToolbar editor={editorInstance} />
     {/if}
-
-    {#if contextMenu}
-      <div class="fixed inset-0 z-[180]">
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          class="absolute inset-0 cursor-default"
-          onclick={() => (contextMenu = null)}
-          oncontextmenu={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            contextMenu = null
-          }}
-        ></div>
-        <div
-          bind:this={contextMenuEl}
-          class="fixed context-menu-card"
-          style="left: {contextMenu.x}px; top: {contextMenu.y}px"
-          role="menu"
-          tabindex="-1"
-          aria-label="Editor actions"
-          oncontextmenu={(e) => e.preventDefault()}
-          onkeydown={handleMenuKeyDown}
-        >
-          <button
-            type="button"
-            class="context-menu-item"
-            role="menuitem"
-            onclick={handleCut}
-            disabled={selectionEmpty}
-          >
-            <span class="material-symbols-outlined text-[16px]"
-              >content_cut</span
-            >
-            Cut
-          </button>
-          <button
-            type="button"
-            class="context-menu-item"
-            role="menuitem"
-            onclick={handleCopy}
-            disabled={selectionEmpty}
-          >
-            <span class="material-symbols-outlined text-[16px]"
-              >content_copy</span
-            >
-            Copy
-          </button>
-          <button
-            type="button"
-            class="context-menu-item"
-            role="menuitem"
-            onclick={handlePaste}
-          >
-            <span class="material-symbols-outlined text-[16px]"
-              >content_paste</span
-            >
-            Paste
-          </button>
-
-          <div class="context-menu-separator"></div>
-
-          <button
-            type="button"
-            class="context-menu-item"
-            role="menuitem"
-            onclick={handleCopyAsMarkdown}
-          >
-            <span class="material-symbols-outlined text-[16px]">markdown</span>
-            Copy as Markdown
-          </button>
-          <button
-            type="button"
-            class="context-menu-item"
-            role="menuitem"
-            onclick={handleCopyAsPlainText}
-          >
-            <span class="material-symbols-outlined text-[16px]">notes</span>
-            Copy as Plain Text
-          </button>
-
-          {#if contextMenu.activeBlockId}
-            <div class="context-menu-separator"></div>
-            <button
-              type="button"
-              class="context-menu-item"
-              role="menuitem"
-              onclick={handleCopyBlockReference}
-            >
-              <span class="material-symbols-outlined text-[16px]">link</span>
-              Copy Block Reference
-            </button>
-            <button
-              type="button"
-              class="context-menu-item"
-              role="menuitem"
-              onclick={handleCopyBlockEmbed}
-            >
-              <span class="material-symbols-outlined text-[16px]"
-                >integration_instructions</span
-              >
-              Copy Block Embed
-            </button>
-
-            <div class="context-menu-separator"></div>
-            <button
-              type="button"
-              class="context-menu-item"
-              role="menuitem"
-              onclick={handleDuplicateBlock}
-            >
-              <span class="material-symbols-outlined text-[16px]"
-                >difference</span
-              >
-              Duplicate Block
-            </button>
-            <button
-              type="button"
-              class="context-menu-item text-status-danger"
-              role="menuitem"
-              onclick={handleDeleteBlock}
-              disabled={isLastBlock}
-            >
-              <span class="material-symbols-outlined text-[16px]">delete</span>
-              Delete Block
-            </button>
-          {/if}
-
-          <div class="context-menu-separator"></div>
-          <button
-            type="button"
-            class="context-menu-item"
-            role="menuitem"
-            onclick={handleClearFormatting}
-          >
-            <span class="material-symbols-outlined text-[16px]"
-              >format_clear</span
-            >
-            Clear Formatting
-          </button>
-        </div>
-      </div>
+    {#if editorStore}
+      <EditorContent editor={$editorStore} />
     {/if}
+  {/if}
 
-    {#if unsavedChanges || lastSaveError}
-      <div
-        class="unsaved-indicator {lastSaveError ? 'error' : ''}"
-        role={lastSaveError ? 'alert' : 'status'}
-        aria-live={lastSaveError ? 'assertive' : 'polite'}
-      >
-        {#if lastSaveError}
-          <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
-            >error</span
-          >
-          <span>Save failed — edits not persisted</span>
-        {:else}
-          <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
-            >schedule</span
-          >
-          <span>Unsaved changes</span>
-        {/if}
-      </div>
-    {/if}
-    {#if showWordCount && wordCount > 0}
-      <div class="word-count" role="status" aria-live="off">
-        {wordCount}
-        {wordCount === 1 ? 'word' : 'words'}
-      </div>
-    {/if}
-    {#if showSlashMenu}
-      {@const coords = slashCoords()}
-      {#if coords}
-        <CommandPalette
-          style="position: fixed; left: {coords.left}px; top: {coords.top}px;"
-          query={slashQuery}
-          onSelect={handleSlashSelect}
-          onClose={() => {
-            showSlashMenu = false
-            slashMenuDismissed = true
-          }}
-        />
-      {/if}
-    {/if}
-    {#if metaPopup}
-      {@const c = metaPopupCoords()}
-      {#if c}
-        <div class="meta-suggest" style="left:{c.left}px; top:{c.top}px">
-          {#each metaPopup.items as item, i}
-            <button
-              type="button"
-              class="meta-suggest-item"
-              class:selected={i === metaPopup.selected}
-              role="option"
-              aria-selected={i === metaPopup.selected}
-              onclick={() => onMetaPick(item.key)}
-            >
-              <span class="meta-suggest-key">{item.key}</span>
-              <span class="meta-suggest-desc">{item.description}</span>
-            </button>
-          {/each}
-        </div>
-      {/if}
-    {/if}
-    {#if showLinkInput && linkInputCoords}
-      <div
-        class="link-input-popover"
-        style="left:{linkInputCoords.left}px; top:{linkInputCoords.top}px"
-        role="dialog"
-        aria-label="Insert link URL"
-      >
-        <input
-          type="url"
-          class="link-input"
-          placeholder="https://"
-          bind:value={linkInputValue}
-          onkeydown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              applyLinkInput()
-            } else if (e.key === 'Escape') {
-              e.preventDefault()
-              cancelLinkInput()
-            }
-          }}
-          onblur={applyLinkInput}
-        />
-      </div>
-    {/if}
-    {#if showColorPicker && colorPickerCoords}
+  {#if contextMenu}
+    <div class="fixed inset-0 z-[180]">
       <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        class="color-picker-popover"
-        style="left:{colorPickerCoords.left}px; top:{colorPickerCoords.top}px"
+        class="absolute inset-0 cursor-default"
+        onclick={() => (contextMenu = null)}
+        oncontextmenu={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          contextMenu = null
+        }}
+      ></div>
+      <div
+        bind:this={contextMenuEl}
+        class="fixed context-menu-card"
+        style="left: {contextMenu.x}px; top: {contextMenu.y}px"
         role="menu"
         tabindex="-1"
-        aria-label={colorPickerMarkType === 'textColor'
-          ? 'Text color'
-          : 'Background color'}
-        onclick={(e) => e.stopPropagation()}
+        aria-label="Editor actions"
+        oncontextmenu={(e) => e.preventDefault()}
+        onkeydown={handleMenuKeyDown}
       >
         <button
           type="button"
-          class="cp-swatch cp-reset"
-          onclick={() => applyColorFromPopover(null)}
-          aria-label="No color"
+          class="context-menu-item"
+          role="menuitem"
+          onclick={handleCut}
+          disabled={selectionEmpty}
         >
-          <span
-            class="material-symbols-outlined"
-            style="font-size:16px"
-            aria-hidden="true">format_color_reset</span
-          >
+          <span class="material-symbols-outlined text-[16px]">content_cut</span>
+          Cut
         </button>
-        {#each DEFAULT_COLOR_PALETTE as entry (entry.id)}
+        <button
+          type="button"
+          class="context-menu-item"
+          role="menuitem"
+          onclick={handleCopy}
+          disabled={selectionEmpty}
+        >
+          <span class="material-symbols-outlined text-[16px]">content_copy</span
+          >
+          Copy
+        </button>
+        <button
+          type="button"
+          class="context-menu-item"
+          role="menuitem"
+          onclick={handlePaste}
+        >
+          <span class="material-symbols-outlined text-[16px]"
+            >content_paste</span
+          >
+          Paste
+        </button>
+
+        <div class="context-menu-separator"></div>
+
+        <button
+          type="button"
+          class="context-menu-item"
+          role="menuitem"
+          onclick={handleCopyAsMarkdown}
+        >
+          <span class="material-symbols-outlined text-[16px]">markdown</span>
+          Copy as Markdown
+        </button>
+        <button
+          type="button"
+          class="context-menu-item"
+          role="menuitem"
+          onclick={handleCopyAsPlainText}
+        >
+          <span class="material-symbols-outlined text-[16px]">notes</span>
+          Copy as Plain Text
+        </button>
+
+        {#if contextMenu.activeBlockId}
+          <div class="context-menu-separator"></div>
           <button
             type="button"
-            class="cp-swatch"
-            style="background-color: {resolveColor(entry, isDark)}"
-            aria-label={entry.label}
+            class="context-menu-item"
             role="menuitem"
-            onclick={() => applyColorFromPopover(resolveColor(entry, isDark))}
+            onclick={handleCopyBlockReference}
           >
+            <span class="material-symbols-outlined text-[16px]">link</span>
+            Copy Block Reference
           </button>
-        {/each}
-        <label class="cp-custom-row">
-          <input
-            type="color"
-            class="cp-custom-input"
-            onchange={(e) =>
-              applyColorFromPopover(
-                (e.currentTarget as HTMLInputElement).value
-              )}
-            aria-label="Custom color"
-          />
-        </label>
+          <button
+            type="button"
+            class="context-menu-item"
+            role="menuitem"
+            onclick={handleCopyBlockEmbed}
+          >
+            <span class="material-symbols-outlined text-[16px]"
+              >integration_instructions</span
+            >
+            Copy Block Embed
+          </button>
+
+          <div class="context-menu-separator"></div>
+          <button
+            type="button"
+            class="context-menu-item"
+            role="menuitem"
+            onclick={handleDuplicateBlock}
+          >
+            <span class="material-symbols-outlined text-[16px]">difference</span
+            >
+            Duplicate Block
+          </button>
+          <button
+            type="button"
+            class="context-menu-item text-status-danger"
+            role="menuitem"
+            onclick={handleDeleteBlock}
+            disabled={isLastBlock}
+          >
+            <span class="material-symbols-outlined text-[16px]">delete</span>
+            Delete Block
+          </button>
+        {/if}
+
+        <div class="context-menu-separator"></div>
+        <button
+          type="button"
+          class="context-menu-item"
+          role="menuitem"
+          onclick={handleClearFormatting}
+        >
+          <span class="material-symbols-outlined text-[16px]">format_clear</span
+          >
+          Clear Formatting
+        </button>
       </div>
-    {/if}
-    {#if showTableSizePicker && tableSizeCoords}
-      <TableSizePicker
-        left={tableSizeCoords.left}
-        top={tableSizeCoords.top}
-        onConfirm={confirmTableSize}
-        onCancel={cancelTableSize}
+    </div>
+  {/if}
+
+  {#if unsavedChanges || lastSaveError}
+    <div
+      class="unsaved-indicator {lastSaveError ? 'error' : ''}"
+      role={lastSaveError ? 'alert' : 'status'}
+      aria-live={lastSaveError ? 'assertive' : 'polite'}
+    >
+      {#if lastSaveError}
+        <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
+          >error</span
+        >
+        <span>Save failed — edits not persisted</span>
+      {:else}
+        <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
+          >schedule</span
+        >
+        <span>Unsaved changes</span>
+      {/if}
+    </div>
+  {/if}
+  {#if showWordCount && wordCount > 0}
+    <div class="word-count" role="status" aria-live="off">
+      {wordCount}
+      {wordCount === 1 ? 'word' : 'words'}
+    </div>
+  {/if}
+  {#if showSlashMenu}
+    {@const coords = slashCoords()}
+    {#if coords}
+      <CommandPalette
+        style="position: fixed; left: {coords.left}px; top: {coords.top}px;"
+        query={slashQuery}
+        onSelect={handleSlashSelect}
+        onClose={() => {
+          showSlashMenu = false
+          slashMenuDismissed = true
+        }}
       />
     {/if}
+  {/if}
+  {#if metaPopup}
+    {@const c = metaPopupCoords()}
+    {#if c}
+      <div class="meta-suggest" style="left:{c.left}px; top:{c.top}px">
+        {#each metaPopup.items as item, i}
+          <button
+            type="button"
+            class="meta-suggest-item"
+            class:selected={i === metaPopup.selected}
+            role="option"
+            aria-selected={i === metaPopup.selected}
+            onclick={() => onMetaPick(item.key)}
+          >
+            <span class="meta-suggest-key">{item.key}</span>
+            <span class="meta-suggest-desc">{item.description}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
+  {/if}
+  {#if showLinkInput && linkInputCoords}
+    <div
+      class="link-input-popover"
+      style="left:{linkInputCoords.left}px; top:{linkInputCoords.top}px"
+      role="dialog"
+      aria-label="Insert link URL"
+    >
+      <input
+        type="url"
+        class="link-input"
+        placeholder="https://"
+        bind:value={linkInputValue}
+        onkeydown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            applyLinkInput()
+          } else if (e.key === 'Escape') {
+            e.preventDefault()
+            cancelLinkInput()
+          }
+        }}
+        onblur={applyLinkInput}
+      />
+    </div>
+  {/if}
+  {#if showColorPicker && colorPickerCoords}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div
+      class="color-picker-popover"
+      style="left:{colorPickerCoords.left}px; top:{colorPickerCoords.top}px"
+      role="menu"
+      tabindex="-1"
+      aria-label={colorPickerMarkType === 'textColor'
+        ? 'Text color'
+        : 'Background color'}
+      onclick={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        class="cp-swatch cp-reset"
+        onclick={() => applyColorFromPopover(null)}
+        aria-label="No color"
+      >
+        <span
+          class="material-symbols-outlined"
+          style="font-size:16px"
+          aria-hidden="true">format_color_reset</span
+        >
+      </button>
+      {#each DEFAULT_COLOR_PALETTE as entry (entry.id)}
+        <button
+          type="button"
+          class="cp-swatch"
+          style="background-color: {resolveColor(entry, isDark)}"
+          aria-label={entry.label}
+          role="menuitem"
+          onclick={() => applyColorFromPopover(resolveColor(entry, isDark))}
+        >
+        </button>
+      {/each}
+      <label class="cp-custom-row">
+        <input
+          type="color"
+          class="cp-custom-input"
+          onchange={(e) =>
+            applyColorFromPopover((e.currentTarget as HTMLInputElement).value)}
+          aria-label="Custom color"
+        />
+      </label>
+    </div>
+  {/if}
+  {#if showTableSizePicker && tableSizeCoords}
+    <TableSizePicker
+      left={tableSizeCoords.left}
+      top={tableSizeCoords.top}
+      onConfirm={confirmTableSize}
+      onCancel={cancelTableSize}
+    />
   {/if}
 </div>
 

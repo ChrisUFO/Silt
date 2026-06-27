@@ -158,16 +158,29 @@ export async function startupCheck(): Promise<void> {
   // after the toast) shows the available update without a manual re-check.
   applyCheckResult(r)
   if (!r.hasUpdate) return
-  const url = r.releaseUrl
+  // When a platform asset exists, the toast's action installs directly
+  // (download → verify → launch installer) so a single click upgrades the
+  // app instead of detouring to GitHub. With no asset for this platform
+  // (e.g. an OS with no build leg), fall back to opening the release page so
+  // the user can fetch it manually.
+  const assetUrl = r.asset?.browserDownloadUrl ?? ''
+  const releaseUrl = r.releaseUrl
   pushNotification({
     kind: 'info',
     message: `Silt ${r.latestVersion} is available.`,
-    action: {
-      label: 'View',
-      run: () => {
-        if (url) BrowserOpenURL(url)
-      }
-    },
+    action: assetUrl
+      ? {
+          label: 'Install',
+          run: () => {
+            void downloadAndInstall(assetUrl)
+          }
+        }
+      : {
+          label: 'View',
+          run: () => {
+            if (releaseUrl) BrowserOpenURL(releaseUrl)
+          }
+        },
     autoDismissMs: 15_000
   })
 }
@@ -200,6 +213,10 @@ export async function downloadAndInstall(assetUrl: string): Promise<void> {
       })
     }
   } catch (e) {
+    // The raw backend reason (e.g. "launch installer: <os error>") must reach
+    // the console — friendlyInstallError otherwise hides the real cause behind
+    // a generic string and the failure becomes undebuggable from the UI.
+    console.error('downloadAndInstall failed:', e)
     updateState.status = 'error'
     updateState.downloadProgress = null
     updateState.error = friendlyInstallError(e)
@@ -252,7 +269,14 @@ function friendlyInstallError(e: unknown): string {
     return 'The download failed its integrity check and was discarded.'
   if (/not in the latest release/i.test(msg))
     return 'The update is no longer the latest release. Re-check for updates.'
-  return 'The update could not be installed.'
+  if (/launch installer/i.test(msg))
+    return (
+      "Couldn't start the installer — click Install update again, or download " +
+      'it from the release page.'
+    )
+  // Unknown cause: surface the backend message instead of hiding it, so the
+  // failure is actionable from the UI rather than a dead-end.
+  return `The update could not be installed: ${msg}`
 }
 
 /**
