@@ -22,6 +22,7 @@
 
 import { Node, Mark, mergeAttributes, InputRule } from '@tiptap/core'
 import { newlineInCode } from '@tiptap/pm/commands'
+import { TextSelection } from '@tiptap/pm/state'
 import Highlight from '@tiptap/extension-highlight'
 import {
   Details,
@@ -757,6 +758,53 @@ export const InlineMathNode = Node.create({
     return [
       'span',
       mergeAttributes({ 'data-type': 'math-inline' }, HTMLAttributes)
+    ]
+  },
+
+  addInputRules() {
+    return [
+      // Inline `$...$` auto-trigger (#328): on the closing `$`, convert the
+      // run into an inlineMathNode atom. Two regex guards kill the currency /
+      // stray-`$` false positives that this kind of rule would otherwise
+      // create — both are load-bearing:
+      //
+      //   1. Content `[^\s$]+` — no whitespace, no `$`. A space inside the
+      //      pair breaks the match, so a currency run like `cost $5 and $3$`
+      //      can never span the gap to swallow both amounts; the `[^\s$]+`
+      //      run stops at the first space.
+      //   2. Lookbehind `(?<![\p{L}\p{N}])` — the opening `$` must NOT follow
+      //      a letter or digit. Rejects `a$b$c` (letter before the `$` ⇒ not a
+      //      token boundary) and `5$ cash` (digit before). BOL passes.
+      //
+      // A lookbehind (not a capture group) keeps the boundary char OUT of
+      // match[0]: TipTap sizes the replacement range from match[0].length, so
+      // a captured prefix would delete the preceding space/punctuation.
+      //
+      // Trade-off: math containing literal spaces (e.g. `$\int_0^1 x\,dx$`)
+      // does NOT trip this rule — use the `/math` slash command for those.
+      // Block `$$...$$` is intentionally not handled here either (block-node-
+      // mid-paragraph + delimiter round-trip issues; `/math` covers block).
+      new InputRule({
+        find: /(?<![\p{L}\p{N}])\$([^\s$]+)\$$/u,
+        handler: (({
+          state,
+          range,
+          match
+        }: Parameters<NonNullable<InputRule['handler']>>[0]) => {
+          const node = state.schema.nodes.inlineMathNode.create({
+            latex: match[1]
+          })
+          if (!node) return null
+          const tr = state.tr.replaceRangeWith(range.from, range.to, node)
+          // Drop the cursor just past the inserted atom so typing continues
+          // after the chip, not inside (it's atomic — there's no inside).
+          tr.setSelection(
+            new TextSelection(tr.doc.resolve(range.from + node.nodeSize))
+          )
+          tr.scrollIntoView()
+          return tr
+        }) as unknown as InputRule['handler']
+      })
     ]
   }
 })
