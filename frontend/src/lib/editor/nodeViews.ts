@@ -5,6 +5,9 @@ import {
   HeaderBlock,
   EmbedNode,
   BlockReferenceNode,
+  MentionNode,
+  InlineMathNode,
+  BlockMathNode,
   EmbedBlockNode,
   CalloutBlock,
   CodeBlock
@@ -14,6 +17,8 @@ import NoteBlockView from '../../components/editor/NoteBlockView.svelte'
 import HeaderBlockView from '../../components/editor/HeaderBlockView.svelte'
 import EmbedNodeView from '../../components/editor/EmbedNodeView.svelte'
 import BlockReferenceNodeView from '../../components/editor/BlockReferenceNodeView.svelte'
+import MentionNodeView from '../../components/editor/MentionNodeView.svelte'
+import MathNodeView from '../../components/editor/MathNodeView.svelte'
 import EmbedBlockNodeView from '../../components/editor/EmbedBlockNodeView.svelte'
 import CalloutBlockView from '../../components/editor/CalloutBlockView.svelte'
 import CodeBlockView from '../../components/editor/CodeBlockView.svelte'
@@ -47,6 +52,25 @@ export const SiltBlockExtensionsWithNodeViews = [
   BlockReferenceNode.extend({
     addNodeView() {
       return SvelteNodeViewRenderer(BlockReferenceNodeView)
+    }
+  }),
+  // @-mention chip (#184). Inline atomic node rendering @[name] as a
+  // non-editable chip; the suggestion list comes from DistinctOwners.
+  MentionNode.extend({
+    addNodeView() {
+      return SvelteNodeViewRenderer(MentionNodeView)
+    }
+  }),
+  // KaTeX math (#191). One NodeView serves inline ($...$) and block ($$...$$);
+  // displayMode follows the node type.
+  InlineMathNode.extend({
+    addNodeView() {
+      return SvelteNodeViewRenderer(MathNodeView)
+    }
+  }),
+  BlockMathNode.extend({
+    addNodeView() {
+      return SvelteNodeViewRenderer(MathNodeView)
     }
   }),
   // Generic plugin-extensible embed block (#110). The default NodeView renders

@@ -639,6 +639,138 @@ body {
 .silt-code-copy .material-symbols-outlined {
   font-size: 16px;
 }
+/* Mermaid source/preview toggle (#190). */
+.silt-code-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted, #888);
+  cursor: pointer;
+  opacity: 0.7;
+}
+.silt-code-toggle:hover {
+  opacity: 1;
+}
+.silt-code-toggle:focus-visible,
+.silt-code-copy:focus-visible {
+  outline: 2px solid var(--color-accent-primary-start, #4f7cff);
+  outline-offset: 2px;
+}
+.silt-code-toggle .material-symbols-outlined {
+  font-size: 16px;
+}
+.silt-code-toggle[aria-pressed='true'] {
+  color: var(--color-accent-primary-start, #4f7cff);
+  opacity: 1;
+}
+/* Mermaid diagram view (#190). */
+.silt-mermaid-hidden {
+  display: none !important;
+}
+.silt-mermaid-svg {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+  background: var(--color-surface, #1e1e22);
+  border-radius: 6px;
+  overflow: auto;
+}
+.silt-mermaid-svg svg {
+  max-width: 100%;
+  height: auto;
+}
+.silt-mermaid-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--color-error-bg, rgba(239, 68, 68, 0.12));
+  border: 1px solid var(--color-error-border, rgba(239, 68, 68, 0.4));
+  color: var(--color-error, #ef4444);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.85em;
+}
+.silt-mermaid-error .material-symbols-outlined {
+  font-size: 18px;
+  flex: none;
+}
+.silt-mermaid-error pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.silt-mermaid-empty {
+  display: block;
+  width: 100%;
+  padding: 0.75em 1em;
+  border: 1px dashed var(--color-border-muted, #444);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted, #888);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.9em;
+  text-align: center;
+}
+.silt-mermaid-empty:hover {
+  border-color: var(--color-accent-primary-start, #4f7cff);
+  color: var(--color-accent-primary-start, #4f7cff);
+}
+.silt-mermaid-pending {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 1em;
+  color: var(--color-text-muted, #888);
+  font-size: 0.85em;
+}
+.silt-mermaid-pending .material-symbols-outlined {
+  font-size: 18px;
+}
+.silt-spin {
+  animation: silt-spin 1s linear infinite;
+}
+@keyframes silt-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* Drag-to-reorder handle (#181). Positioned over the hovered block by the
+   DragHandle extension (floating-ui) — appearance only (visibility is managed
+   by the extension). */
+.silt-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 24px;
+  border-radius: 5px;
+  color: var(--color-text-muted, #888);
+  cursor: grab;
+  background: var(--color-surface, #1e1e22);
+  border: 1px solid var(--color-border-muted, #33333a);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+.silt-drag-handle:active {
+  cursor: grabbing;
+}
+.silt-drag-handle .material-symbols-outlined {
+  font-size: 16px;
+}
+/* Drop-zone indicator for block drag/drop (#181) — accent the ProseMirror
+   drop cursor so the landing position is obvious. */
+.ProseMirror-dropcursor {
+  background: var(--color-accent-primary-start, #4f7cff);
+  width: 2px;
+}
 .silt-code-body {
   position: relative;
   margin: 0;

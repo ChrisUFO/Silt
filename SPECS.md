@@ -711,8 +711,32 @@ absence means the Edit default). A freshly-opened tab starts in
 `editor.default_view_mode`. Switching a tab to Source **unmounts its
 TipTapEditor** (the editor is destroyed and rebuilt from the on-disk file on
 return to Edit), so a tab held in Source view pays no editor memory cost
-(#178); the trade-off is a scroll/cursor reset on an Edit→Source→Edit
-round-trip.
+(#178); the Edit scroll offset is restored across the round-trip (#319),
+cursor position is a tracked follow-up.
+
+### Rich blocks & editor interactions (#190, #191, #184, #181, #319)
+
+**Inline math (`$...$`) and block math (`$$...$$`) — #191.** LaTeX rendered
+with **KaTeX**. Inline math is an atomic inline node; a block equation is a
+NOTE whose entire body is `$$...$$` (rendered centered). Both round-trip the
+raw LaTeX verbatim. Currency guards keep `5$ cash` / `$5` literal (opening `$`
+not followed by space, closing `$` not preceded by space). A per-vault
+`ui.formatting.math_enabled` toggle (default true) controls the `/math` slash
+command; existing math in files always renders.
+
+**Mermaid diagrams — #190.** A fenced code block whose info string is
+`mermaid` renders a live SVG diagram (```mermaid) instead of syntax-highlighted
+text. The raw source is preserved verbatim; only the view differs. Invalid
+source shows a readable inline error (never a blank box). Edit-source /
+show-diagram toggle; copy button.
+
+**@-mention (`@[name]`) — #184.** Typing `@` opens a typeahead of known task
+owners (the distinct-owner set from the index). Selecting one inserts an atomic
+mention chip. The `@[name]` token round-trips through `clean_text`; the
+suggestion source is a read-only projection — no mention state is stored.
+
+**Block drag handle — #181.** A drag grip reorders top-level blocks by direct
+manipulation; `Alt+ArrowUp/Down` moves the active block by keyboard.
 
 ### Block types (#188, #180, #189, #183, #172, #310, #308)
 
@@ -841,6 +865,7 @@ ui:
   formatting:
     typography_enabled: true   # smart quotes, em-dashes
     color_enabled: true        # text/background color pickers
+    math_enabled: true         # LaTeX math ($...$ / $$...$$) + /math command (#191)
 
 # Explicit navigation ordering for drag-to-reorder (#68, #177). Section/page
 # keys use the format `${notebook}/${section}` (empty section for root pages).

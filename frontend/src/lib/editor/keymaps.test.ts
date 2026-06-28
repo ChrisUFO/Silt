@@ -9,7 +9,7 @@ import {
   SiltBlockKeymaps
 } from './index'
 import { EmbedNode, BlockReferenceNode } from './schema'
-import { setBlockAlign } from './keymaps'
+import { setBlockAlign, moveActiveBlock } from './keymaps'
 import type { DocJSON } from './types'
 
 // Mirror the makeEditor() pattern from converters.test.ts — a real TipTap
@@ -210,6 +210,63 @@ describe('Enter handler — new block bullet after non-note blocks (#258)', () =
     const newBlock = editor.state.doc.child(1)
     expect(newBlock.type.name).toBe('noteBlock')
     expect(newBlock.attrs.bullet).toBe('')
+    editor.destroy()
+  })
+})
+
+describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
+  function multiBlockDoc(texts: string[]): DocJSON {
+    return {
+      type: 'doc',
+      content: texts.map((t, i) => ({
+        type: 'noteBlock',
+        attrs: { id: `b${i}`, depth: 0, bullet: '- ' },
+        content: [{ type: 'text', text: t }]
+      }))
+    }
+  }
+  const textsOf = (e: Editor) => {
+    const kids = (e.getJSON().content ?? []) as Array<{
+      content?: Array<{ text?: string }>
+    }>
+    return kids.map((n) => n.content?.[0]?.text ?? '')
+  }
+
+  it('moves the active block down (swaps with the next block)', () => {
+    const editor = makeEditor()
+    editor.commands.setContent(multiBlockDoc(['a', 'b', 'c']))
+    // Block 1 ('b') content sits at pos 4 (block 0 nodeSize 3, content offset 1).
+    editor.commands.setTextSelection(4)
+    expect(moveActiveBlock(editor, 1)).toBe(true)
+    expect(textsOf(editor)).toEqual(['a', 'c', 'b'])
+    editor.destroy()
+  })
+
+  it('moves the active block up (swaps with the previous block)', () => {
+    const editor = makeEditor()
+    editor.commands.setContent(multiBlockDoc(['a', 'b', 'c']))
+    editor.commands.setTextSelection(4) // 'b'
+    expect(moveActiveBlock(editor, -1)).toBe(true)
+    expect(textsOf(editor)).toEqual(['b', 'a', 'c'])
+    editor.destroy()
+  })
+
+  it('no-ops at the top (cannot move the first block up)', () => {
+    const editor = makeEditor()
+    editor.commands.setContent(multiBlockDoc(['a', 'b']))
+    editor.commands.setTextSelection(1) // 'a'
+    expect(moveActiveBlock(editor, -1)).toBe(false)
+    expect(textsOf(editor)).toEqual(['a', 'b'])
+    editor.destroy()
+  })
+
+  it('no-ops at the bottom (cannot move the last block down)', () => {
+    const editor = makeEditor()
+    editor.commands.setContent(multiBlockDoc(['a', 'b']))
+    // 'b' content at pos 4.
+    editor.commands.setTextSelection(4)
+    expect(moveActiveBlock(editor, 1)).toBe(false)
+    expect(textsOf(editor)).toEqual(['a', 'b'])
     editor.destroy()
   })
 })

@@ -24,6 +24,10 @@ import {
   parseEmbedBlockMarker,
   tokenizeInline
 } from './converters'
+import {
+  legacyTokenizeInline,
+  serializeInlineContent
+} from './converters/serialize'
 import type { ParsedBlock, DocJSON } from './types'
 
 // Helper: build a ParsedBlock with sensible defaults for a given type.
@@ -1613,6 +1617,93 @@ describe('tokenize / validate pipeline (#198)', () => {
     if (refs[0].kind === 'blockReference') {
       expect(refs[0].uuid).toBe(UUID)
     }
+  })
+
+  it('emits a MentionToken for @[name] (#184)', () => {
+    const tokens = tokenizeInline('ping @[Ada Lovelace] now')
+    const mentions = tokens.filter((t) => t.kind === 'mention')
+    expect(mentions).toHaveLength(1)
+    if (mentions[0].kind === 'mention') {
+      expect(mentions[0].name).toBe('Ada Lovelace')
+    }
+  })
+
+  it('does not tokenize an email-style foo@bar as a mention (#184)', () => {
+    const tokens = tokenizeInline('email me at foo@bar.com please')
+    expect(tokens.filter((t) => t.kind === 'mention')).toHaveLength(0)
+    const text = tokens
+      .filter((t) => t.kind === 'text')
+      .map((t) => (t as { text: string }).text)
+      .join('')
+    expect(text).toContain('foo@bar.com')
+  })
+
+  it('round-trips @[name] through tokenize + serialize (#184)', () => {
+    const src = 'assign @[Alice] and @[Bob] here'
+    const nodes = legacyTokenizeInline(src)
+    const mentions = nodes.filter((n) => n.type === 'mentionNode')
+    expect(mentions).toHaveLength(2)
+    expect(serializeInlineContent(nodes)).toBe(src)
+  })
+
+  it('round-trips inline $...$ math through tokenize + serialize (#191)', () => {
+    const src = 'energy is $E=mc^2$ here'
+    const nodes = legacyTokenizeInline(src)
+    const math = nodes.filter((n) => n.type === 'inlineMathNode')
+    expect(math).toHaveLength(1)
+    expect((math[0].attrs as { latex: string }).latex).toBe('E=mc^2')
+    expect(serializeInlineContent(nodes)).toBe(src)
+  })
+
+  it('does not tokenize currency-style $5 as math (#191)', () => {
+    const nodes = legacyTokenizeInline('cost $5 today')
+    expect(nodes.filter((n) => n.type === 'inlineMathNode')).toHaveLength(0)
+  })
+
+  it('does not tokenize decimal/comma currency amounts as math (#191)', () => {
+    // Single-$ amounts in prose have no closing delimiter, so they never enter
+    // math mode — pin that so a future guard tweak can't regress it.
+    for (const src of ['cost $5.00 today', 'total $12.99', 'over $1,000 now']) {
+      const nodes = legacyTokenizeInline(src)
+      expect(nodes.filter((n) => n.type === 'inlineMathNode')).toHaveLength(0)
+    }
+  })
+
+  it('does not split mid-paragraph $$...$$ as inline math (#191)', () => {
+    // Block math is block-level; when it appears mid-paragraph it cannot become
+    // a blockMathNode (schema violation), so it must stay literal verbatim text
+    // — NOT degrade into stray `$` + inline-math(`x^2`) + `$`. The `(?<!\$)`
+    // / `(?!\$)` edges on the inline regex reject any `$` adjacent to another
+    // `$`, so `$$x^2$$` never starts an inline match.
+    const src = 'intro $$x^2$$ end'
+    const nodes = legacyTokenizeInline(src)
+    expect(nodes.filter((n) => n.type === 'inlineMathNode')).toHaveLength(0)
+    expect(serializeInlineContent(nodes)).toBe(src)
+  })
+
+  it('round-trips a $$...$$ block equation via blocksToDoc/docToBlocks (#191)', () => {
+    const blocks = [mkBlock('NOTE', { clean_text: '$$\\int_0^1 x\\,dx$$' })]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content![0].type).toBe('blockMathNode')
+    expect((doc.content![0].attrs as { latex: string }).latex).toBe(
+      '\\int_0^1 x\\,dx'
+    )
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toBe('$$\\int_0^1 x\\,dx$$')
+  })
+
+  it('does not tokenize $...$ inside an inline code span (#191 hardening)', () => {
+    const src = 'use `$x$` literally'
+    const nodes = legacyTokenizeInline(src)
+    expect(nodes.filter((n) => n.type === 'inlineMathNode')).toHaveLength(0)
+    expect(serializeInlineContent(nodes)).toBe(src)
+  })
+
+  it('does not tokenize @[name] inside an inline code span (#184 hardening)', () => {
+    const src = 'literal `@[alice]` here'
+    const nodes = legacyTokenizeInline(src)
+    expect(nodes.filter((n) => n.type === 'mentionNode')).toHaveLength(0)
+    expect(serializeInlineContent(nodes)).toBe(src)
   })
 
   it('validate drops links with disallowed schemes (javascript:)', () => {

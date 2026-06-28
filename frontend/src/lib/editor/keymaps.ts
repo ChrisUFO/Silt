@@ -120,6 +120,13 @@ function currentBlockInfo(editor: Editor) {
     node,
     pos: pos.before(depth),
     depth: node.attrs.depth || 0,
+    // index is the child index within the block's PARENT at its tree depth —
+    // NOT necessarily the top-level doc index. For a block nested inside a
+    // callout (tree depth 2), this is the index within the callout. Callers
+    // that need the top-level child index (moveActiveBlock / Tab / ArrowUp /
+    // ArrowDown / Backspace) re-derive it from `info.pos` against `doc`
+    // children; that loop also doubles as a nested-block guard (a nested
+    // block's pos never matches a top-level child start, so it returns -1).
     index: pos.index(depth)
   }
 }
@@ -147,6 +154,57 @@ function focusBlockAt(editor: Editor, blockIndex: number): void {
     TextSelection.create(editor.state.doc, endPos, endPos)
   )
   editor.view.dispatch(tr)
+}
+
+// Move the active top-level block up (-1) or down (+1), swapping it with its
+// neighbor (#181 — keyboard complement to the drag handle). No-ops at the
+// document edges or when the active block is not top-level (nested blocks are
+// not reorderable this way; Tab/Shift-Tab still indent them).
+export function moveActiveBlock(editor: Editor, direction: 1 | -1): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const active = findActiveBlock(editor)
+  if (!active) return false
+  // Explicit top-level guard: only ProseMirror tree-depth-1 blocks are
+  // reorderable (active.depth is the TREE depth from findActiveBlock — NOT
+  // node.attrs.depth, which is the indent level, which would wrongly reject
+  // legitimately-indented top-level blocks). Reordering a block nested inside a
+  // callout/details would corrupt the doc structure.
+  if (active.depth !== 1) return false
+  const info = currentBlockInfo(editor)
+  if (!info) return false
+  const { doc, tr } = editor.state
+  let idx = -1
+  let posIdx = 0
+  let acc = 0
+  for (let i = 0; i < doc.childCount; i++) {
+    if (acc === info.pos) {
+      idx = i
+      posIdx = acc
+      break
+    }
+    acc += doc.child(i).nodeSize
+  }
+  if (idx < 0) return false
+  const swap = direction === -1 ? idx - 1 : idx + 1
+  if (swap < 0 || swap >= doc.childCount) return false
+  const node = doc.child(idx)
+  const size = node.nodeSize
+  let newTr = tr.delete(posIdx, posIdx + size)
+  if (direction === -1) {
+    // Up: the previous block's start is unaffected by deleting the block after it.
+    let posPrev = 0
+    let a = 0
+    for (let i = 0; i < swap; i++) a += doc.child(i).nodeSize
+    posPrev = a
+    newTr = newTr.insert(posPrev, node)
+  } else {
+    // Down: after the deletion the next block sits at posIdx; insert after it.
+    const nextSize = doc.child(swap).nodeSize
+    newTr = newTr.insert(posIdx + nextSize, node)
+  }
+  editor.view.dispatch(newTr)
+  focusBlockAt(editor, swap)
+  return true
 }
 
 // Set the alignment attr on the current block (#173). No-op for TASK blocks
@@ -252,6 +310,35 @@ export function insertCodeBlock(editor: Editor, language = ''): boolean {
     return true
   }
   editor.commands.insertContent(codeNode)
+  editor.commands.focus()
+  return true
+}
+
+// Insert a centered block equation ($$...$$) at the current selection (#191).
+// Replaces the current block when it is an empty note/header, otherwise inserts
+// below. The latex is set on insert; the NodeView offers click-to-edit.
+export function insertBlockMath(editor: Editor, latex = ''): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const mathNode = editor.state.schema.nodes.blockMathNode?.create({
+    id: freshId(),
+    latex
+  })
+  if (!mathNode) return false
+  const active = findActiveBlock(editor)
+  const isEmptyNote =
+    active &&
+    (active.node.type.name === 'noteBlock' ||
+      active.node.type.name === 'headerBlock') &&
+    (active.node.content.size === 0 || active.node.textContent.trim() === '')
+  if (active && isEmptyNote) {
+    const pos = editor.state.selection.$from.before(active.depth)
+    editor.view.dispatch(
+      editor.state.tr.replaceWith(pos, pos + active.node.nodeSize, mathNode)
+    )
+    editor.commands.focus()
+    return true
+  }
+  editor.commands.insertContent(mathNode)
   editor.commands.focus()
   return true
 }
@@ -681,6 +768,12 @@ export const SiltBlockKeymaps = Extension.create({
         }
         return false
       },
+
+      // Alt+ArrowUp/Down reorders the active block (#181) — the keyboard
+      // complement to the drag handle. No Mod prefix, to avoid colliding with
+      // the Mod-Shift-Arrow table row/column bindings.
+      'Alt-ArrowUp': () => moveActiveBlock(this.editor, -1),
+      'Alt-ArrowDown': () => moveActiveBlock(this.editor, 1),
 
       // ---- Config-driven shortcuts (#311) --------------------------------
       // Each editor-scoped shortcut reads its binding from config.hotkeys at

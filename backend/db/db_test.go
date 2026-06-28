@@ -134,9 +134,9 @@ func TestIndexFileBlocks_PinnedProjection(t *testing.T) {
 	}
 
 	cases := []struct {
-		id       string
-		valid    bool
-		intVal   int64 // only meaningful when valid
+		id     string
+		valid  bool
+		intVal int64 // only meaningful when valid
 	}{
 		{"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", true, 1},
 		{"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", true, 0},
@@ -439,7 +439,7 @@ func TestClearFileBlocks_CascadesToTasksAndTags(t *testing.T) {
 
 	for _, table := range []string{"blocks", "tasks", "tags"} {
 		var c int
-		if err := dm.db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&c); err != nil {
+		if err := dm.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&c); err != nil {
 			t.Fatalf("count %s: %v", table, err)
 		}
 		if c != 0 {
@@ -453,33 +453,33 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 
 	blocks := []parser.ParsedBlock{
 		{
-			ID:        "11111111-1111-1111-1111-111111111111",
-			Type:      parser.BlockTask,
-			RawText:   "- [x] ship [priority:: 1] [owner:: Alice] #work/project <!-- id: 11111111-1111-1111-1111-111111111111 -->",
-			CleanText: "ship",
-			Status:    "DONE",
-			Owner:     "Alice",
-			Priority:  1,
+			ID:         "11111111-1111-1111-1111-111111111111",
+			Type:       parser.BlockTask,
+			RawText:    "- [x] ship [priority:: 1] [owner:: Alice] #work/project <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			CleanText:  "ship",
+			Status:     "DONE",
+			Owner:      "Alice",
+			Priority:   1,
 			LineNumber: 1,
 		},
 		{
-			ID:        "22222222-2222-2222-2222-222222222222",
-			Type:      parser.BlockTask,
-			RawText:   "- [/] fix [priority:: 2] [owner:: Bob] #work/project <!-- id: 22222222-2222-2222-2222-222222222222 -->",
-			CleanText: "fix",
-			Status:    "DOING",
-			Owner:     "Bob",
-			Priority:  2,
+			ID:         "22222222-2222-2222-2222-222222222222",
+			Type:       parser.BlockTask,
+			RawText:    "- [/] fix [priority:: 2] [owner:: Bob] #work/project <!-- id: 22222222-2222-2222-2222-222222222222 -->",
+			CleanText:  "fix",
+			Status:     "DOING",
+			Owner:      "Bob",
+			Priority:   2,
 			LineNumber: 1,
 		},
 		{
-			ID:        "33333333-3333-3333-3333-333333333333",
-			Type:      parser.BlockTask,
-			RawText:   "- [ ] research [priority:: 3] [owner:: Alice] #work/project <!-- id: 33333333-3333-3333-3333-333333333333 -->",
-			CleanText: "research",
-			Status:    "TODO",
-			Owner:     "Alice",
-			Priority:  3,
+			ID:         "33333333-3333-3333-3333-333333333333",
+			Type:       parser.BlockTask,
+			RawText:    "- [ ] research [priority:: 3] [owner:: Alice] #work/project <!-- id: 33333333-3333-3333-3333-333333333333 -->",
+			CleanText:  "research",
+			Status:     "TODO",
+			Owner:      "Alice",
+			Priority:   3,
 			LineNumber: 1,
 		},
 	}
@@ -672,23 +672,23 @@ func TestQueryTasksWithFilters_PopulatesTags(t *testing.T) {
 
 	blocks := []parser.ParsedBlock{
 		{
-			ID:        "11111111-1111-1111-1111-111111111111",
-			Type:      parser.BlockTask,
-			RawText:   "- [x] ship [owner:: Alice] #work/project #release <!-- id: 11111111-1111-1111-1111-111111111111 -->",
-			CleanText: "ship",
-			Status:    "DONE",
-			Owner:     "Alice",
-			Priority:  1,
+			ID:         "11111111-1111-1111-1111-111111111111",
+			Type:       parser.BlockTask,
+			RawText:    "- [x] ship [owner:: Alice] #work/project #release <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			CleanText:  "ship",
+			Status:     "DONE",
+			Owner:      "Alice",
+			Priority:   1,
 			LineNumber: 1,
 		},
 		{
-			ID:        "22222222-2222-2222-2222-222222222222",
-			Type:      parser.BlockTask,
-			RawText:   "- [ ] research [owner:: Bob] #work/project <!-- id: 22222222-2222-2222-2222-222222222222 -->",
-			CleanText: "research",
-			Status:    "TODO",
-			Owner:     "Bob",
-			Priority:  3,
+			ID:         "22222222-2222-2222-2222-222222222222",
+			Type:       parser.BlockTask,
+			RawText:    "- [ ] research [owner:: Bob] #work/project <!-- id: 22222222-2222-2222-2222-222222222222 -->",
+			CleanText:  "research",
+			Status:     "TODO",
+			Owner:      "Bob",
+			Priority:   3,
 			LineNumber: 2,
 		},
 	}
@@ -894,27 +894,27 @@ func TestQueryTagHierarchy_DistinctCountsAtOrBeneath(t *testing.T) {
 	// Block C: tagged with a child of a child of the parent.
 	blocks := []parser.ParsedBlock{
 		{
-			ID:        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-			Type:      parser.BlockNote,
-			RawText:   "#work alpha <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->",
-			CleanText: "alpha",
-			Depth:     0,
+			ID:         "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			Type:       parser.BlockNote,
+			RawText:    "#work alpha <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->",
+			CleanText:  "alpha",
+			Depth:      0,
 			LineNumber: 1,
 		},
 		{
-			ID:        "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-			Type:      parser.BlockNote,
-			RawText:   "#work and #work/project beta <!-- id: bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->",
-			CleanText: "and beta",
-			Depth:     0,
+			ID:         "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+			Type:       parser.BlockNote,
+			RawText:    "#work and #work/project beta <!-- id: bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->",
+			CleanText:  "and beta",
+			Depth:      0,
 			LineNumber: 2,
 		},
 		{
-			ID:        "cccccccc-cccc-cccc-cccc-cccccccccccc",
-			Type:      parser.BlockNote,
-			RawText:   "#work/project/milestone-one gamma <!-- id: cccccccc-cccc-cccc-cccc-cccccccccccc -->",
-			CleanText: "gamma",
-			Depth:     0,
+			ID:         "cccccccc-cccc-cccc-cccc-cccccccccccc",
+			Type:       parser.BlockNote,
+			RawText:    "#work/project/milestone-one gamma <!-- id: cccccccc-cccc-cccc-cccc-cccccccccccc -->",
+			CleanText:  "gamma",
+			Depth:      0,
 			LineNumber: 3,
 		},
 	}
@@ -947,7 +947,7 @@ func TestQueryTagHierarchy_DistinctCountsAtOrBeneath(t *testing.T) {
 		path string
 		want int
 	}{
-		{"work", 3},                     // A, B, C all reachable at or beneath
+		{"work", 3},                       // A, B, C all reachable at or beneath
 		{"work/project", 2},               // B, C
 		{"work/project/milestone-one", 1}, // C
 	}
@@ -1539,9 +1539,9 @@ func TestSearch_PerPageGroupingCapsResultsPerPage(t *testing.T) {
 	var blocks []parser.ParsedBlock
 	for i := 0; i < 5; i++ {
 		blocks = append(blocks, parser.ParsedBlock{
-			ID:        blockID("caf", i),
-			Type:      parser.BlockNote,
-			CleanText: "alpha beta gamma item number",
+			ID:         blockID("caf", i),
+			Type:       parser.BlockNote,
+			CleanText:  "alpha beta gamma item number",
 			LineNumber: i + 1,
 		})
 	}
@@ -1609,7 +1609,7 @@ func TestSearch_TagHydrationSurvivesFTS(t *testing.T) {
 	b := parser.ParsedBlock{
 		ID: "dddddddd-1111-1111-1111-111111111111", Type: parser.BlockTask,
 		CleanText: "ship the release", Status: "TODO",
-		RawText: "- [ ] ship the release #dev/release <!-- id: dddddddd-1111-1111-1111-111111111111 -->",
+		RawText:    "- [ ] ship the release #dev/release <!-- id: dddddddd-1111-1111-1111-111111111111 -->",
 		LineNumber: 1,
 	}
 	if err := dm.IndexFileBlocks("vault", "Work", "", "Daily", []parser.ParsedBlock{b}, []string{"dev/release"}); err != nil {
@@ -1744,3 +1744,49 @@ func TestSearch_UnicodeContentMatches(t *testing.T) {
 	}
 }
 
+func TestDistinctOwners(t *testing.T) {
+	dm := newTestDB(t)
+	// Four task blocks (Alice, Bob, Alice-dup, empty-owner) + one NOTE. The
+	// projection must collapse to the distinct non-empty owners, sorted, with
+	// no mention state written back (#184 tier invariant — read-only).
+	blocks := []parser.ParsedBlock{
+		{ID: "11111111-1111-1111-1111-111111111111", Type: parser.BlockTask, RawText: "- [ ] a [owner:: Alice] <!-- id: 11111111-1111-1111-1111-111111111111 -->", CleanText: "a", Status: "TODO", Owner: "Alice", LineNumber: 1},
+		{ID: "22222222-2222-2222-2222-222222222222", Type: parser.BlockTask, RawText: "- [ ] b [owner:: Bob] <!-- id: 22222222-2222-2222-2222-222222222222 -->", CleanText: "b", Status: "TODO", Owner: "Bob", LineNumber: 2},
+		{ID: "33333333-3333-3333-3333-333333333333", Type: parser.BlockTask, RawText: "- [ ] c [owner:: Alice] <!-- id: 33333333-3333-3333-3333-333333333333 -->", CleanText: "c", Status: "TODO", Owner: "Alice", LineNumber: 3},
+		{ID: "44444444-4444-4444-4444-444444444444", Type: parser.BlockTask, RawText: "- [ ] d <!-- id: 44444444-4444-4444-4444-444444444444 -->", CleanText: "d", Status: "TODO", Owner: "", LineNumber: 4},
+		{ID: "55555555-5555-5555-5555-555555555555", Type: parser.BlockNote, RawText: "a plain note <!-- id: 55555555-5555-5555-5555-555555555555 -->", CleanText: "a plain note", LineNumber: 5},
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+
+	owners, err := dm.DistinctOwners()
+	if err != nil {
+		t.Fatalf("DistinctOwners: %v", err)
+	}
+	want := []string{"Alice", "Bob"}
+	if len(owners) != len(want) {
+		t.Fatalf("DistinctOwners = %v, want %v", owners, want)
+	}
+	for i := range want {
+		if owners[i] != want[i] {
+			t.Errorf("DistinctOwners[%d] = %q, want %q (full: %v)", i, owners[i], want[i], owners)
+		}
+	}
+}
+
+func TestDistinctOwners_EmptyVault(t *testing.T) {
+	dm := newTestDB(t)
+	owners, err := dm.DistinctOwners()
+	if err != nil {
+		t.Fatalf("DistinctOwners on empty vault: %v", err)
+	}
+	// Non-nil empty slice (marshals to JSON [] not null — callers iterate
+	// without a null-guard). #184.
+	if owners == nil {
+		t.Error("DistinctOwners returned nil for an empty vault; want non-nil []string")
+	}
+	if len(owners) != 0 {
+		t.Errorf("DistinctOwners on empty vault = %v, want []", owners)
+	}
+}

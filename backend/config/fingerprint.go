@@ -9,10 +9,12 @@ package config
 // resolveNotebookDir quarantines the link.
 //
 // Platform implementations:
-//   - POSIX (Linux, darwin, freebsd): device id + inode + mtime from
-//     syscall.Stat_t. A rename WITHIN the same filesystem preserves the
-//     inode; a cross-filesystem move changes it (benign — the re-link prompt
-//     handles this).
+//   - POSIX (Linux, darwin, freebsd): device id + inode from
+//     syscall.Stat_t (the directory mtime is deliberately excluded — adding or
+//     removing a page inside the root mutates it, which would invalidate the
+//     fingerprint on every CRUD op). A rename WITHIN the same filesystem
+//     preserves the inode; a cross-filesystem move changes it (benign — the
+//     re-link prompt handles this).
 //   - Windows: volume serial number + file index from
 //     GetFileInformationByHandle (the NTFS stable identity).
 //

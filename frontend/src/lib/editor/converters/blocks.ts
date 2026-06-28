@@ -109,6 +109,11 @@ const SOLE_EMBED_RE =
 // the on-disk file round-trips byte-for-byte.
 const SOLE_EMBED_BLOCK_RE = /^<!-- silt-embed: (\{.*\}) -->$/
 
+// Match a clean_text that is solely a $$...$$ block equation (the entire block
+// body is one display equation). Such NOTE blocks become top-level
+// blockMathNode blocks rather than inline children of a noteBlock (#191).
+const SOLE_BLOCK_MATH_RE = /^\$\$([\s\S]+)\$\$$/
+
 export function embedBlockMarker(attrs: {
   embedType: string
   src: string
@@ -170,6 +175,18 @@ function blockToNode(block: ParsedBlock): NodeJSON {
     return {
       type: 'embedBlock',
       attrs: { id: block.id, ...embedBlockAttrs }
+    }
+  }
+
+  // A NOTE whose entire body is a single $$...$$ block equation becomes a
+  // top-level blockMathNode (#191). Same rationale as the sole-embed case:
+  // wrapping a block-level node inside noteBlock's inline-only content would
+  // violate the ProseMirror schema.
+  const blockMathMatch = text.match(SOLE_BLOCK_MATH_RE)
+  if (blockMathMatch) {
+    return {
+      type: 'blockMathNode',
+      attrs: { id: block.id, latex: blockMathMatch[1] }
     }
   }
 
@@ -680,6 +697,9 @@ function serializeChildNodeToBodyLine(node: NodeJSON): string {
       notebook: attrs.notebook || undefined
     })
   }
+  if (node.type === 'blockMathNode') {
+    return `$$${(attrs.latex as string) || ''}$$`
+  }
 
   const text = serializeInlineContent(node.content)
 
@@ -1007,6 +1027,30 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         depth: 0,
         raw_text: `{{embed:${uuid}}}`,
         clean_text: `{{embed:${uuid}}}`,
+        status: '',
+        owner: '',
+        start_date: '',
+        due_date: '',
+        priority: 3,
+        line_number: lineNumber,
+        file_date: ''
+      })
+      continue
+    }
+
+    // Block math (#191): a top-level $$...$$ equation serializes to a NOTE
+    // block carrying just the `$$...$$` text in its body. The Go renderer
+    // writes it verbatim, so the on-disk file round-trips byte-for-byte.
+    if (node.type === 'blockMathNode') {
+      const latex = (attrs.latex as string) || ''
+      const body = `$$${latex}$$`
+      blocks.push({
+        id,
+        parent_id: '',
+        type: 'NOTE',
+        depth: 0,
+        raw_text: body,
+        clean_text: body,
         status: '',
         owner: '',
         start_date: '',

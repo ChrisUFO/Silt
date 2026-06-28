@@ -30,6 +30,10 @@ function tokenToNodeJSON(t: Token, inheritedMarks: MarkRef[] = []): NodeJSON[] {
       return [{ type: 'embedNode', attrs: { uuid: t.uuid } }]
     case 'blockReference':
       return [{ type: 'blockReferenceNode', attrs: { uuid: t.uuid } }]
+    case 'mention':
+      return [{ type: 'mentionNode', attrs: { name: t.name } }]
+    case 'mathInline':
+      return [{ type: 'inlineMathNode', attrs: { latex: t.latex } }]
     case 'mark': {
       const own: MarkRef = {
         type: t.markType,
@@ -175,6 +179,12 @@ export function serializeInlineContent(content?: NodeJSON[]): string {
     } else if (child.type === 'blockReferenceNode') {
       closeAll()
       result += `((${(child.attrs?.uuid as string) || ''}))`
+    } else if (child.type === 'mentionNode') {
+      closeAll()
+      result += `@[${(child.attrs?.name as string) || ''}]`
+    } else if (child.type === 'inlineMathNode') {
+      closeAll()
+      result += `$${(child.attrs?.latex as string) || ''}$`
     } else if (child.content) {
       closeAll()
       result += serializeInlineContent(child.content)

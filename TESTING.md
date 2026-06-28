@@ -653,5 +653,36 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 | 5 | Set `editor.default_view_mode: "source"`; open a new page | The new tab opens in Source |
 | 6 | Open the `.md` in VS Code, edit it externally, return to Silt Source view | The Source view reflects the external edit (fsnotify) |
 | 7 | Source view: byte-identity check — `==highlight==`, `<u>`, `<!-- silt-align -->`, `<span style>` color, GFM table pipes, `<!-- id: uuid @ date -->`, `[key:: value]` all visible verbatim | Nothing hidden, added, or re-ordered |
-| 8 | Toggle Edit→Source→Edit on a long page | Scroll/cursor reset to top on return to Edit (documented #178 trade-off); content intact (auto-save flushed on unmount) |
+| 8 | Toggle Edit→Source→Edit on a long page | The Edit scroll offset is restored on return to Edit (#319); content intact (auto-save flushed on unmount) |
 | 9 | Open 8 tabs, set several to Source | Per `docs/editor-memory-profiling.md`, the Source tabs hold no TipTap editor (DevTools Memory confirms the drop vs. all-edit) |
+
+# Sprint 16 — Advanced Blocks & Editor Interactions (#190 #191 #181 #184 #319)
+
+## Automated Tests
+
+| File | Coverage |
+|---|---|
+| `backend/db/db_test.go` (+1, #184) | `TestDistinctOwners` — dedup, empty-owner skip, non-task exclusion, sorted |
+| `frontend/src/lib/editor/mentionSuggest.test.ts` (new, 11, #184) | owner filter (empty/substring/no-match); context detection (`@` trigger, multi-word query, email guard, code-block guard, no-`@`); insertion replaces `@query` with a `mentionNode` + caret after; no-op when no context |
+| `frontend/src/lib/editor/converters.test.ts` (+7, #184/#191) | `@[name]` tokenize + serialize; email non-tokenize; inline `$...$` round-trip; currency `$5` non-tokenize; `$$...$$` block round-trip via blocksToDoc/docToBlocks |
+| `frontend/src/lib/editor/useMermaid.test.ts` (new, 5, #190) | valid → SVG; initialize once per theme (`securityLevel: strict`); invalid source → readable error (no throw); memoise by (theme, source); empty source renders nothing |
+| `frontend/src/lib/editor/keymaps.test.ts` (+4, #181) | `moveActiveBlock` up/down swaps; no-op at top/bottom |
+| `frontend/src/components/VirtualScrollContainer.test.ts` (+3, #319) | scroll restored after Edit→Source→Edit; stale offset clamped to scrollHeight; no force-scroll on cold open |
+
+## Manual Verification Matrix (`wails dev`)
+
+| # | Scenario | Expected |
+|---|---|---|
+| 1 | Type `@` in a note whose vault has task owners | Mention typeahead lists distinct owners; ↑/↓ + Enter inserts an `@[name]` chip; backspace deletes it whole; the `@[name]` survives a save/reload round-trip |
+| 2 | Type `$E=mc^2$` in a note; on reload it renders via KaTeX; click opens an edit prompt | Inline math renders; round-trips verbatim; `5$ cash` / `$5` stay literal |
+| 3 | `/math` → enter `\int_0^1 x\,dx` | Centered block equation renders; round-trips as a sole `$$...$$` line |
+| 4 | A ```mermaid fence with `graph TD; A-->B` | Renders an SVG diagram; theme flip (dark↔light) re-renders; invalid source shows a readable error; Edit-source toggle reveals raw; Copy works |
+| 5 | Drag a block's grip to reorder; also `Alt+ArrowUp/Down` | Block moves; on-disk order updates on save; `Alt+↑/↓` moves the active block |
+| 6 | Long page, Edit→Source→Edit | Edit scroll offset restored (#319); cursor restore is a tracked follow-up |
+| 7 | Set `ui.formatting.math_enabled: false`; reload | The `/math` slash command is gone (existing math still renders) |
+
+## Known Gaps (deferred)
+
+- **#319 cursor-position restore** across the Edit↔Source round-trip — scroll-offset ships; cursor restore needs an async editor-readiness path the jsdom layer can't drive.
+- **#181 indent-on-drop** (Notion-style depth change on horizontal drop) — the drag-handle extension ships no drop-depth API; the custom drop-depth logic needs this manual matrix before landing.
+- **Math entry UX** uses `window.prompt` for `/math` and click-to-edit; a rich inline LaTeX editor is a follow-up.

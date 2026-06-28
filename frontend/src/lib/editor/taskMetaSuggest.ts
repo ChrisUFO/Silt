@@ -284,6 +284,15 @@ export const TaskMetaSuggest = Extension.create<TaskMetaSuggestOptions>({
         const tr = editor.state.tr.setMeta(metaSuggestKey, { escape: true })
         editor.view.dispatch(tr)
         return true
+      },
+      Tab: () => {
+        // Dismiss the popup on Tab (Tab then indents as usual) so it doesn't
+        // linger. Returns false so Tab's default runs.
+        if (!active()) return false
+        editor.view.dispatch(
+          editor.state.tr.setMeta(metaSuggestKey, { escape: true })
+        )
+        return false
       }
     }
   }

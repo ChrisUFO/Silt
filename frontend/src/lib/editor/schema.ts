@@ -720,6 +720,111 @@ export const BlockReferenceNode = Node.create({
   }
 })
 
+// ---- MathNode (inline + block, atomic) -----------------------------------
+// Renders LaTeX math via KaTeX (#191). Two nodes share one attr (`latex`,
+// the raw source): InlineMathNode (`$...$`, inline atomic) and BlockMathNode
+// (`$$...$$`, block atomic). The raw LaTeX round-trips through clean_text;
+// only the view differs. No official TipTap math package is used — Silt's own
+// converter/NodeView pipeline makes a custom node the cleaner fit.
+export const InlineMathNode = Node.create({
+  name: 'inlineMathNode',
+  group: 'inline',
+  inline: true,
+  atom: true,
+  selectable: true,
+  draggable: false,
+
+  addAttributes() {
+    return {
+      latex: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-latex') || '',
+        renderHTML: (attrs) =>
+          attrs.latex ? { 'data-latex': attrs.latex } : {}
+      }
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'span[data-type="math-inline"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'span',
+      mergeAttributes({ 'data-type': 'math-inline' }, HTMLAttributes)
+    ]
+  }
+})
+
+export const BlockMathNode = Node.create({
+  name: 'blockMathNode',
+  group: 'block',
+  atom: true,
+  selectable: true,
+  draggable: false,
+
+  addAttributes() {
+    return {
+      id: {
+        default: null,
+        parseHTML: (el) => el.getAttribute('data-id') || null,
+        renderHTML: (attrs) => (attrs.id ? { 'data-id': attrs.id } : {})
+      },
+      latex: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-latex') || '',
+        renderHTML: (attrs) =>
+          attrs.latex ? { 'data-latex': attrs.latex } : {}
+      }
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'div[data-type="math-block"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'div',
+      mergeAttributes({ 'data-type': 'math-block' }, HTMLAttributes)
+    ]
+  }
+})
+
+// ---- MentionNode (inline, atomic) ----------------------------------------
+// Renders an @-mention chip (`@[name]`) for inline owner references (#184).
+// Inline + atomic like BlockReferenceNode; the `name` attr is the owner label
+// and the textual form `@[name]` is reconstructed in clean_text on save. The
+// suggestion list comes from the read-only DistinctOwners index projection —
+// no mention state lives in SQLite.
+export const MentionNode = Node.create({
+  name: 'mentionNode',
+  group: 'inline',
+  inline: true,
+  atom: true,
+  selectable: true,
+  draggable: false,
+
+  addAttributes() {
+    return {
+      name: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-name') || '',
+        renderHTML: (attrs) => (attrs.name ? { 'data-name': attrs.name } : {})
+      }
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'span[data-type="mention"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ['span', mergeAttributes({ 'data-type': 'mention' }, HTMLAttributes)]
+  }
+})
+
 // ---- EmbedBlockNode (generic plugin-extensible block, #110 Phase 1) ---------
 // A generic block-level atomic node that plugins specialize via attrs (type,
 // src, caption, openable, pluginID, data). Covers attachments (#101), image

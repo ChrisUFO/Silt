@@ -143,6 +143,11 @@ type FormattingConfig struct {
 	// still parse from incoming files when disabled; only the editor's setColor
 	// calls become no-ops.
 	ColorEnabled *bool `yaml:"color_enabled,omitempty" json:"color_enabled,omitempty"`
+	// MathEnabled controls the LaTeX math features (#191): the /math slash
+	// command and KaTeX rendering of $…$ / $$…$$. Default true. Existing math
+	// in files still round-trips when disabled; the toggle removes the in-editor
+	// insertion affordance.
+	MathEnabled *bool `yaml:"math_enabled,omitempty" json:"math_enabled,omitempty"`
 }
 
 // TabRef is a persisted reference to an open tab's page (#142). It is the
@@ -334,6 +339,7 @@ func Defaults() SystemConfig {
 			Formatting: FormattingConfig{
 				TypographyEnabled: boolPtr(true),
 				ColorEnabled:      boolPtr(true),
+				MathEnabled:       boolPtr(true),
 			},
 		},
 	}
@@ -581,6 +587,10 @@ func normalize(cfg SystemConfig) SystemConfig {
 	}
 	if cfg.UI.Formatting.ColorEnabled == nil {
 		cfg.UI.Formatting.ColorEnabled = boolPtr(true)
+	}
+	// MathEnabled: nil → true (#191).
+	if cfg.UI.Formatting.MathEnabled == nil {
+		cfg.UI.Formatting.MathEnabled = boolPtr(true)
 	}
 	// ShowWordCount: nil → false (#168 Phase 3). Opt-in.
 	if cfg.Editor.ShowWordCount == nil {

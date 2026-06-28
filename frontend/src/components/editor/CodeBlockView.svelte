@@ -8,6 +8,7 @@
     COMMON_LANGUAGES,
     type ShikiTheme
   } from '../../lib/editor/useShiki'
+  import { renderMermaid, type MermaidTheme } from '../../lib/editor/useMermaid'
   import { pushNotification } from '../../notifications/store.svelte'
 
   // Dual-layer code block (#189). The ProseMirror-managed contenteditable
@@ -29,6 +30,17 @@
   )
   let shikiTheme = $derived<ShikiTheme>(isDark ? 'github-dark' : 'github-light')
 
+  // Mermaid diagrams (#190): a code block whose language is `mermaid` renders
+  // an SVG instead of the Shiki dual-layer. The mermaid module lazy-loads on
+  // first use; re-render is debounced like the Shiki path. `viewingSource`
+  // swaps to the editable raw source (the NodeViewContent) so the user can fix
+  // a broken diagram.
+  let isMermaid = $derived(language === 'mermaid')
+  let mermaidTheme = $derived<MermaidTheme>(isDark ? 'dark' : 'default')
+  let mermaidSvg = $state('')
+  let mermaidError = $state<string | null>(null)
+  let viewingSource = $state(false)
+
   let highlighted = $state('')
   // `highlightedFor` is the code string the Shiki layer currently renders.
   // While it lags behind the live `code` (during continuous typing, before the
@@ -47,6 +59,16 @@
   // Shiki's colours) once the highlighter catches up.
   let highlightTimer: ReturnType<typeof setTimeout> | null = null
   $effect(() => {
+    // Mermaid blocks render an SVG, not a Shiki layer. Skip highlighting
+    // entirely for them — otherwise `highlightedFor` would resolve to `code`,
+    // `stale` would flip false, and in Edit-source mode the editable text would
+    // go transparent with no Shiki layer behind it (the mermaid branch does not
+    // render one) → typed characters would vanish after the debounce.
+    if (isMermaid) {
+      highlighted = ''
+      highlightedFor = ''
+      return
+    }
     const c = code
     const lang = language
     const theme = shikiTheme
@@ -60,6 +82,33 @@
     // Cancel the pending highlight if the block unmounts during the debounce
     // window so the callback never writes $state on a destroyed scope.
     return () => clearTimeout(t)
+  })
+
+  // Mermaid render (debounced) — only for mermaid blocks. Re-renders on source
+  // or theme change; invalid source surfaces a readable error inline.
+  let mermaidTimer: ReturnType<typeof setTimeout> | null = null
+  $effect(() => {
+    if (!isMermaid) {
+      mermaidSvg = ''
+      mermaidError = null
+      return
+    }
+    const c = code
+    const theme = mermaidTheme
+    if (mermaidTimer) clearTimeout(mermaidTimer)
+    const t = setTimeout(async () => {
+      const res = await renderMermaid(c, theme)
+      mermaidSvg = res.svg
+      mermaidError = res.error
+    }, 200)
+    mermaidTimer = t
+    return () => clearTimeout(t)
+  })
+
+  // When the source is cleared (select-all + delete), drop back to the
+  // empty-state affordance instead of lingering on a bare editable layer.
+  $effect(() => {
+    if (!code.trim()) viewingSource = false
   })
 
   async function copyCode(): Promise<void> {
@@ -102,6 +151,20 @@
         </option>
       {/each}
     </select>
+    {#if isMermaid}
+      <button
+        type="button"
+        class="silt-code-toggle"
+        onclick={() => (viewingSource = !viewingSource)}
+        aria-pressed={viewingSource}
+        aria-label={viewingSource ? 'Show diagram' : 'Edit source'}
+        title={viewingSource ? 'Show diagram' : 'Edit source'}
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">
+          {viewingSource ? 'visibility' : 'edit'}
+        </span>
+      </button>
+    {/if}
     <button
       type="button"
       class="silt-code-copy"
@@ -114,18 +177,53 @@
     </button>
   </div>
   <div class="silt-code-body">
-    <!-- Shiki highlight layer (visible, non-interactive). -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="silt-code-display" aria-hidden="true">
-      {@html highlighted}
-    </div>
-    <!-- Editable layer (transparent text once Shiki is fresh, solid colour
-         while it lags so typed text is always visible). ProseMirror owns it;
-         the Shiki display layer provides the semantic <pre><code> markup, so
-         this layer only hosts the caret (self-closing, like every other NodeView). -->
+    {#if isMermaid && !viewingSource}
+      {#if mermaidError}
+        <div class="silt-mermaid-error" role="alert">
+          <span class="material-symbols-outlined" aria-hidden="true">error</span
+          >
+          <pre>{mermaidError}</pre>
+        </div>
+      {:else if !code.trim()}
+        <button
+          type="button"
+          class="silt-mermaid-empty"
+          onclick={() => (viewingSource = true)}
+          aria-label="Add a Mermaid diagram"
+        >
+          Add a Mermaid diagram, then press the preview toggle
+        </button>
+      {:else if !mermaidSvg}
+        <div
+          class="silt-mermaid-pending"
+          role="status"
+          aria-label="Rendering diagram"
+        >
+          <span class="material-symbols-outlined silt-spin" aria-hidden="true"
+            >progress_activity</span
+          >
+          Rendering diagram…
+        </div>
+      {:else}
+        <div class="silt-mermaid-svg" role="img" aria-label="Mermaid diagram">
+          {@html mermaidSvg}
+        </div>
+      {/if}
+    {:else if !isMermaid}
+      <!-- Shiki highlight layer (visible, non-interactive). -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="silt-code-display" aria-hidden="true">
+        {@html highlighted}
+      </div>
+    {/if}
+    <!-- ProseMirror-owned editable layer. Always mounted (one NodeViewContent
+         per NodeView). For code it is the transparent dual-layer overlay; for a
+         mermaid preview it is hidden until the user toggles to Edit source. -->
     <NodeViewContent
       as="pre"
-      class={`silt-code-edit${stale ? ' code-stale' : ''}`}
+      class={`silt-code-edit${stale ? ' code-stale' : ''}${
+        isMermaid && !viewingSource ? ' silt-mermaid-hidden' : ''
+      }`}
     />
   </div>
 </NodeViewWrapper>

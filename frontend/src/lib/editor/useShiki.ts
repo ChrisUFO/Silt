@@ -76,5 +76,6 @@ export const COMMON_LANGUAGES = [
   'bash',
   'sql',
   'html',
-  'css'
+  'css',
+  'mermaid'
 ]

@@ -6,6 +6,7 @@
   import Placeholder from '@tiptap/extension-placeholder'
   import { CharacterCount, Focus, TrailingNode } from '@tiptap/extensions'
   import Typography from '@tiptap/extension-typography'
+  import { DragHandle } from '@tiptap/extension-drag-handle'
   import { AutosaveManager } from '../lib/editor/useAutosave'
   import { FocusLockManager } from '../lib/editor/useFocusLock'
   import {
@@ -23,13 +24,23 @@
     insertCodeBlock,
     insertDetails,
     insertTable,
+    insertBlockMath,
     findActiveBlock,
     TaskMetaSuggest,
     applyMetaSuggestion,
     filterMetaKeys,
+    MentionSuggest,
+    applyMentionSuggestion,
+    filterOwners,
     blocksToDoc
   } from '../lib/editor'
-  import type { ParsedBlock, MetaKey, SuggestContext } from '../lib/editor'
+  import type {
+    ParsedBlock,
+    MetaKey,
+    SuggestContext,
+    MentionContext
+  } from '../lib/editor'
+  import { DistinctOwners } from '../../wailsjs/go/main/App.js'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
   import { pushNotification } from '../notifications/store.svelte'
@@ -93,6 +104,10 @@
       dirty: boolean
       error: string | null
     }) => void
+    /** Fired once when the ProseMirror editor finishes its initial mount
+     *  (onCreate). Lets the parent schedule post-readiness work such as
+     *  restoring scroll across an Edit↔Source round-trip (#319). */
+    onReady?: () => void
   }
 
   let {
@@ -106,7 +121,8 @@
     onUpdate,
     editorInstance = $bindable(null),
     activeMarks = $bindable(new Set()),
-    onSaveStateChange
+    onSaveStateChange,
+    onReady
   }: Props = $props()
   let editorReady = $state(false)
   let isFocused = $state(false)
@@ -115,6 +131,13 @@
   let slashQuery = $state('')
   let slashMenuDismissed = $state(false)
   let showTemplatePicker = $state(false)
+  // Per-vault math opt-out (#191). Live so toggling it in Settings takes effect
+  // on the next slash-menu open (hides the /math command).
+  let mathEnabled = $derived(
+    settings.config?.ui?.formatting?.math_enabled !== false
+  )
+  // Visually-hidden live region text for typeahead open/count announcements.
+  let suggestStatus = $state('')
 
   // Active inline marks in the current selection (#168). Updated on every
   // selection change so the FormatToolbar buttons reflect aria-pressed state.
@@ -320,10 +343,14 @@
   function onMetaChange(ctx: SuggestContext | null): void {
     if (!ctx) {
       metaPopup = null
+      suggestStatus = ''
       return
     }
     const items = filterMetaKeys(ctx.query)
     metaPopup = items.length === 0 ? null : { ctx, items, selected: 0 }
+    suggestStatus = items.length
+      ? `${items.length} metadata key${items.length === 1 ? '' : 's'} available`
+      : 'No matching metadata keys'
   }
 
   function onMetaNavigate(dir: 1 | -1): void {
@@ -354,7 +381,79 @@
   function metaPopupCoords(): { left: number; top: number } | null {
     if (!metaPopup || !editorInstance || editorInstance.isDestroyed) return null
     const c = editorInstance.view.coordsAtPos(metaPopup.ctx.from)
-    return { left: c.left, top: c.bottom }
+    return clampToViewport(
+      { x: c.left, y: c.bottom, width: 260, height: 260 },
+      { width: window.innerWidth, height: window.innerHeight }
+    )
+  }
+
+  // --- @-mention typeahead (#184) -----------------------------------------
+  // Owners come from the read-only DistinctOwners index projection; refreshed
+  // on mount and on focus so newly-assigned owners appear without a reload.
+  let owners = $state<string[]>([])
+  async function loadOwners(): Promise<void> {
+    try {
+      owners = (await DistinctOwners()) ?? []
+    } catch (e) {
+      console.error('DistinctOwners failed:', e)
+    }
+  }
+
+  // `mentionPopup` is null when closed. While open it carries the active
+  // context (range/position), the filtered owner list, and the highlighted
+  // index navigated by ↑/↓.
+  let mentionPopup = $state<{
+    ctx: MentionContext
+    items: string[]
+    selected: number
+  } | null>(null)
+
+  function onMentionChange(ctx: MentionContext | null): void {
+    if (!ctx) {
+      mentionPopup = null
+      suggestStatus = ''
+      return
+    }
+    const items = filterOwners(owners, ctx.query)
+    mentionPopup = items.length === 0 ? null : { ctx, items, selected: 0 }
+    suggestStatus = items.length
+      ? `${items.length} owner${items.length === 1 ? '' : 's'} available`
+      : 'No matching owners'
+  }
+
+  function onMentionNavigate(dir: 1 | -1): void {
+    if (!mentionPopup) return
+    const n = mentionPopup.items.length
+    mentionPopup.selected = (mentionPopup.selected + dir + n) % n
+  }
+
+  function onMentionSelectActive(): void {
+    if (!mentionPopup || !editorInstance || editorInstance.isDestroyed) {
+      mentionPopup = null
+      return
+    }
+    const item = mentionPopup.items[mentionPopup.selected]
+    mentionPopup = null
+    if (item) applyMentionSuggestion(editorInstance, item)
+  }
+
+  function onMentionPick(name: string): void {
+    if (!editorInstance || editorInstance.isDestroyed) {
+      mentionPopup = null
+      return
+    }
+    mentionPopup = null
+    applyMentionSuggestion(editorInstance, name)
+  }
+
+  function mentionPopupCoords(): { left: number; top: number } | null {
+    if (!mentionPopup || !editorInstance || editorInstance.isDestroyed)
+      return null
+    const c = editorInstance.view.coordsAtPos(mentionPopup.ctx.from)
+    return clampToViewport(
+      { x: c.left, y: c.bottom, width: 220, height: 260 },
+      { width: window.innerWidth, height: window.innerHeight }
+    )
   }
 
   // Capture the initial blocks under untrack to signal that the one-shot
@@ -409,6 +508,34 @@
       onChange: onMetaChange,
       onNavigate: onMetaNavigate,
       onSelectActive: onMetaSelectActive
+    }),
+    MentionSuggest.configure({
+      owners: () => owners,
+      onChange: onMentionChange,
+      onNavigate: onMentionNavigate,
+      onSelectActive: onMentionSelectActive
+    }),
+    // Drag-to-reorder handle (#181). A framework-agnostic DOM grip positioned
+    // by the extension over the hovered block; native ProseMirror drop reorders
+    // the whole block. Alt+Up/Down (SiltBlockKeymaps) is the keyboard
+    // equivalent. Indent-on-drop is a tracked follow-up (needs manual webview
+    // verification, which AGENTS.md forbids automating).
+    DragHandle.configure({
+      render: () => {
+        const el = document.createElement('div')
+        el.className = 'silt-drag-handle'
+        // Pointer-only affordance — keyboard reordering is via Alt+↑/↓
+        // (SiltBlockKeymaps). aria-hidden avoids exposing a non-functional
+        // button to AT; the title carries the hint for sighted users.
+        el.setAttribute('aria-hidden', 'true')
+        el.setAttribute(
+          'title',
+          'Drag to move block (Alt+Up/Down to move by keyboard)'
+        )
+        el.innerHTML =
+          '<span class="material-symbols-outlined" aria-hidden="true">drag_indicator</span>'
+        return el
+      }
     }),
     SiltBlockKeymaps,
     Placeholder.configure({
@@ -489,6 +616,8 @@
       acquireFocus()
       startHeartbeat()
       notifyFocus()
+      // Refresh the owner list so newly-assigned owners are mentionable.
+      void loadOwners()
     },
     onBlur: () => {
       isFocused = false
@@ -503,6 +632,9 @@
       editorInstance = editor as Editor
       editorReady = true
       isLastBlock = editor.state.doc.childCount <= 1
+      onReady?.()
+      // Seed the @-mention owner list on mount (#184).
+      void loadOwners()
     }
   })
 
@@ -683,6 +815,11 @@
       insertCallout(editorInstance as any, commandId.slice('callout-'.length))
     } else if (commandId === 'code-block') {
       insertCodeBlock(editorInstance as any)
+    } else if (commandId === 'math') {
+      // Best-effort entry: prompt for the LaTeX, then insert the block
+      // equation. A rich inline LaTeX editor is a tracked follow-up.
+      const latex = window.prompt('LaTeX equation:', 'a^2 + b^2 = c^2')
+      if (latex !== null) insertBlockMath(editorInstance as any, latex)
     } else if (commandId === 'details') {
       insertDetails(editorInstance as any)
     } else if (commandId === 'table') {
@@ -1164,6 +1301,7 @@
         style="position: fixed; left: {coords.left}px; top: {coords.top}px;"
         query={slashQuery}
         onSelect={handleSlashSelect}
+        exclude={mathEnabled ? [] : ['math']}
         onClose={() => {
           showSlashMenu = false
           slashMenuDismissed = true
@@ -1171,13 +1309,29 @@
       />
     {/if}
   {/if}
+  <!-- Visually-hidden live region: announces typeahead open/close + match count
+       for screen-reader users (both @-mention and %-metadata popups). -->
+  <div
+    aria-live="polite"
+    style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0"
+  >
+    {suggestStatus}
+  </div>
   {#if metaPopup}
     {@const c = metaPopupCoords()}
     {#if c}
-      <div class="meta-suggest" style="left:{c.left}px; top:{c.top}px">
+      <div
+        class="meta-suggest"
+        style="left:{c.left}px; top:{c.top}px"
+        role="listbox"
+        tabindex="-1"
+        aria-label="Task metadata"
+        aria-activedescendant="silt-meta-opt-{metaPopup.selected}"
+      >
         {#each metaPopup.items as item, i}
           <button
             type="button"
+            id="silt-meta-opt-{i}"
             class="meta-suggest-item"
             class:selected={i === metaPopup.selected}
             role="option"
@@ -1186,6 +1340,33 @@
           >
             <span class="meta-suggest-key">{item.key}</span>
             <span class="meta-suggest-desc">{item.description}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
+  {/if}
+  {#if mentionPopup}
+    {@const c = mentionPopupCoords()}
+    {#if c}
+      <div
+        class="mention-suggest"
+        style="left:{c.left}px; top:{c.top}px"
+        role="listbox"
+        tabindex="-1"
+        aria-label="Mention an owner"
+        aria-activedescendant="silt-mention-opt-{mentionPopup.selected}"
+      >
+        {#each mentionPopup.items as item, i}
+          <button
+            type="button"
+            id="silt-mention-opt-{i}"
+            class="mention-suggest-item"
+            class:selected={i === mentionPopup.selected}
+            role="option"
+            aria-selected={i === mentionPopup.selected}
+            onclick={() => onMentionPick(item)}
+          >
+            <span class="mention-suggest-at" aria-hidden="true">@</span>{item}
           </button>
         {/each}
       </div>
@@ -1444,7 +1625,7 @@
     padding: 4px;
     border-radius: 8px;
     background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--border-subtle, #33333a);
+    border: 1px solid var(--color-border-muted, #33333a);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
     display: flex;
     flex-direction: column;
@@ -1479,6 +1660,43 @@
   .meta-suggest-desc {
     font-size: 0.8rem;
     opacity: 0.8;
+  }
+
+  .mention-suggest {
+    position: fixed;
+    z-index: 50;
+    min-width: 200px;
+    margin-top: 4px;
+    padding: 4px;
+    border-radius: 8px;
+    background: var(--color-surface, #1e1e22);
+    border: 1px solid var(--color-border-muted, #33333a);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .mention-suggest-item {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    padding: 6px 8px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--color-text-primary, #e6e6e6);
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .mention-suggest-item.selected {
+    background: var(--color-accent-primary-start, #4f7cff);
+    color: #fff;
+  }
+
+  .mention-suggest-at {
+    opacity: 0.7;
   }
 
   .context-menu-card {

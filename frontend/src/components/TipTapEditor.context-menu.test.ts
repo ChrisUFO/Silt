@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   acquireFocusLock: vi.fn().mockResolvedValue(undefined),
   refreshFocusLock: vi.fn().mockResolvedValue(undefined),
   releaseFocusLock: vi.fn().mockResolvedValue(undefined),
+  distinctOwners: vi.fn().mockResolvedValue([]),
   eventsOn: vi.fn(() => () => {})
 }))
 
@@ -26,7 +27,9 @@ vi.mock('../../wailsjs/go/main/App.js', () => ({
   SaveFileBlocks: mocks.saveFileBlocks,
   AcquireFocusLock: mocks.acquireFocusLock,
   RefreshFocusLock: mocks.refreshFocusLock,
-  ReleaseFocusLock: mocks.releaseFocusLock
+  ReleaseFocusLock: mocks.releaseFocusLock,
+  // TipTapEditor seeds the @-mention owner list on mount/focus (#184).
+  DistinctOwners: mocks.distinctOwners
 }))
 
 vi.mock('../../wailsjs/runtime/runtime.js', () => ({

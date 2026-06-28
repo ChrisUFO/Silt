@@ -8,6 +8,7 @@ export {
   HeaderBlock,
   CalloutBlock,
   CodeBlock,
+  MentionNode,
   SiltBlockExtensions,
   SiltInlineMarkExtensions,
   SiltColorMarkExtensions,
@@ -26,8 +27,10 @@ export {
   insertCodeBlock,
   insertDetails,
   insertTable,
+  insertBlockMath,
   toggleDetails,
   findActiveBlock,
+  moveActiveBlock,
   BLOCK_TYPES
 } from './keymaps'
 export {
@@ -44,6 +47,13 @@ export type {
   InsertPlan,
   TaskMetaSuggestOptions
 } from './taskMetaSuggest'
+export {
+  MentionSuggest,
+  applyMentionSuggestion,
+  filterOwners,
+  getMentionContext
+} from './mentionSuggest'
+export type { MentionContext, MentionSuggestOptions } from './mentionSuggest'
 export type {
   ParsedBlock,
   BlockType,

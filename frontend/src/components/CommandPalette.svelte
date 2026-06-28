@@ -10,9 +10,17 @@
     onClose: () => void
     query?: string
     style?: string
+    /** Command ids to hide (e.g. feature opt-outs like math when disabled). */
+    exclude?: string[]
   }
 
-  let { onSelect, onClose, query = '', style = '' }: Props = $props()
+  let {
+    onSelect,
+    onClose,
+    query = '',
+    style = '',
+    exclude = []
+  }: Props = $props()
 
   let selectedIdx = $state(0)
   let containerEl = $state<HTMLDivElement | null>(null)
@@ -24,9 +32,12 @@
   // Filter and rank commands by the query prop reactively
   let filteredCommands = $derived.by(() => {
     const q = query.toLowerCase().trim()
-    if (!q) return allCommands
+    const pool = exclude.length
+      ? allCommands.filter((c) => !exclude.includes(c.id))
+      : allCommands
+    if (!q) return pool
 
-    const scored = allCommands
+    const scored = pool
       .map((cmd, index) => {
         const label = cmd.label.toLowerCase()
         const id = cmd.id.toLowerCase()

@@ -7,6 +7,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import { waitFor } from '@testing-library/dom'
 import TipTapEditorStub from './TipTapEditor.stub.svelte'
 import EditorUtilityBarStub from './editor/EditorUtilityBar.stub.svelte'
 import MarkdownSourceViewerStub from './editor/MarkdownSourceViewer.stub.svelte'
@@ -148,5 +149,97 @@ describe('VirtualScrollContainer editor chrome', () => {
     const btn = screen.getByRole('button', { name: 'Toggle source view' })
     expect(btn).toHaveAttribute('aria-pressed', 'true')
     expect(btn).toHaveAttribute('aria-keyshortcuts', 'Ctrl+Shift+V')
+  })
+})
+
+describe('Edit↔Source scroll preservation (#319)', () => {
+  // jsdom has no layout, so back scrollTop/scrollHeight with a controlled mock
+  // scoped to this describe block (restored in afterEach). All elements share
+  // one value, which is fine here — only the scroll container reads/writes it.
+  let scrollTopVal = 0
+  let scrollHeightVal = 1000
+  const origScrollTop = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    'scrollTop'
+  )
+  const origScrollHeight = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    'scrollHeight'
+  )
+
+  beforeEach(() => {
+    mocks.onToggleViewMode.mockClear()
+    scrollTopVal = 0
+    scrollHeightVal = 1000
+    Object.defineProperty(HTMLElement.prototype, 'scrollTop', {
+      configurable: true,
+      get() {
+        return scrollTopVal
+      },
+      set(v: number) {
+        scrollTopVal = v
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get() {
+        return scrollHeightVal
+      }
+    })
+  })
+  afterEach(() => {
+    if (origScrollTop)
+      Object.defineProperty(HTMLElement.prototype, 'scrollTop', origScrollTop)
+    if (origScrollHeight)
+      Object.defineProperty(
+        HTMLElement.prototype,
+        'scrollHeight',
+        origScrollHeight
+      )
+    cleanup()
+  })
+
+  it('restores the Edit scroll offset after an Edit→Source→Edit round-trip', async () => {
+    const { rerender } = render(VirtualScrollContainer, {
+      props: baseProps()
+    })
+    // User scrolled down in Edit mode.
+    scrollTopVal = 480
+    // Leave Edit: $effect.pre captures 480 before the editor unmounts.
+    rerender({ ...baseProps(), viewMode: 'source' })
+    expect(screen.getByTestId('markdown-source-stub')).toBeInTheDocument()
+    // Simulate the fresh editor remount starting back at the top.
+    scrollTopVal = 0
+    // Return to Edit: the remounted editor signals readiness → restore.
+    rerender(baseProps())
+    expect(screen.getByTestId('tiptap-stub')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(scrollTopVal).toBe(480)
+    })
+  })
+
+  it('clamps a stale offset that exceeds the current scroll height', async () => {
+    const { rerender } = render(VirtualScrollContainer, {
+      props: baseProps()
+    })
+    scrollTopVal = 900
+    rerender({ ...baseProps(), viewMode: 'source' })
+    // Doc shortened while in Source view (autosave/fsnotify external edit).
+    scrollHeightVal = 300
+    scrollTopVal = 0
+    rerender(baseProps())
+    await waitFor(() => {
+      // Clamped to the shorter height — no overscroll, no crash.
+      expect(scrollTopVal).toBe(300)
+    })
+  })
+
+  it('does not force-scroll on a cold Edit open (no prior Source detour)', async () => {
+    scrollTopVal = 0
+    render(VirtualScrollContainer, { props: baseProps() })
+    // No edit→source transition happened, so pendingRestore stays false and
+    // the readiness handler is a no-op (target-block nav owns cold opens).
+    await new Promise((r) => setTimeout(r, 0))
+    expect(scrollTopVal).toBe(0)
   })
 })

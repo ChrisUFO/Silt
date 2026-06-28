@@ -46,16 +46,25 @@ could redirect the link to an attacker-chosen folder, and every downstream
 containment check (`isPathWithinRoot`) would be satisfied against the new
 root.
 
-**Control:** `LinkNotebook` captures a `RootFingerprint` (inode + device +
-mtime on POSIX; volume serial + file index on Windows) at link time. On every
-access, `resolveNotebookDir` recomputes the fingerprint and compares. On
-mismatch, the link is **quarantined** (excluded from indexing, reads, and
-writes) and the user sees a re-link prompt. A config reload (fsnotify) that
-changes `root_path` is detected and quarantined without adopting the new path.
+**Control:** `LinkNotebook` captures a `RootFingerprint` (inode + device on
+POSIX; volume serial + file index on Windows) at link time. On every access,
+`resolveNotebookDir` recomputes the fingerprint and compares. On mismatch, the
+link is **quarantined** (excluded from indexing, reads, and writes) and the
+user sees a re-link prompt. A config reload (fsnotify) that changes `root_path`
+is detected and quarantined without adopting the new path. The POSIX
+fingerprint is `dev:ino` only — directory `mtime` is intentionally excluded
+because adding/removing a page inside the linked root mutates the directory's
+mtime (which would invalidate the fingerprint on every CRUD op), and `touch -r`
+defeats mtime anyway. This is an inode-identity anchor, not a tamper-evidence
+seal: a co-tenant with write access to the linked root can still clone+recreate
+the folder.
 
 **Migration:** existing linked notebooks (pre-F3) get a fingerprint assigned
 silently on the next vault open (the user linked the folder on THIS host, so
-it's trusted).
+it's trusted). A subsequent format change that drops a field (e.g. the POSIX
+`mtime` removal) triggers a one-time re-link prompt for existing links on the
+affected platform — the fingerprint no longer matches, so the user re-confirms
+the link once.
 
 ### 3.2 settings.json integrity tripwire (F20)
 

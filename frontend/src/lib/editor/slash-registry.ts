@@ -328,6 +328,14 @@ registerSlashCommand({
   icon: 'code_blocks'
 })
 
+// --- Block math (#191) ----------------------------------------------------
+registerSlashCommand({
+  id: 'math',
+  label: 'Math equation',
+  description: 'Insert a centered LaTeX equation ($$…$$) rendered with KaTeX',
+  icon: 'functions'
+})
+
 // --- Foldable details (#183) ----------------------------------------------
 registerSlashCommand({
   id: 'details',
