@@ -389,3 +389,29 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 	}
 	return results, nil
 }
+
+// DistinctOwners returns the sorted, de-duplicated set of non-empty task owners
+// across the whole vault. This is the read-only projection the @-mention
+// typeahead (#184) offers: typing `@` surfaces every owner already assigned to
+// a task. SQLite stays working memory — no mention state is stored here; the
+// `@[name]` token round-trips through markdown as the source of truth.
+func (dm *DatabaseManager) DistinctOwners() ([]string, error) {
+	rows, err := dm.db.Query("SELECT DISTINCT owner FROM tasks WHERE owner != '' ORDER BY owner")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query distinct owners: %w", err)
+	}
+	defer rows.Close()
+
+	var owners []string
+	for rows.Next() {
+		var o string
+		if err := rows.Scan(&o); err != nil {
+			return nil, err
+		}
+		owners = append(owners, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating distinct owners: %w", err)
+	}
+	return owners, nil
+}

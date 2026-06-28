@@ -33,7 +33,16 @@ export type BlockReferenceToken = {
   kind: 'blockReference'
   uuid: string
 }
-export type Token = TextToken | MarkToken | EmbedToken | BlockReferenceToken
+export type MentionToken = {
+  kind: 'mention'
+  name: string
+}
+export type Token =
+  | TextToken
+  | MarkToken
+  | EmbedToken
+  | BlockReferenceToken
+  | MentionToken
 
 // ---- Tokenize stage: recursive-descent parser ----------------------------
 
@@ -177,20 +186,23 @@ function parseInlineTokens(
   return tokens
 }
 
-// ---- Smart Graph tokenization --------------------------------------------
+// ---- Smart Graph + mention tokenization ---------------------------------
 
-// Smart Graph token regex (embed + block reference). UUIDs: 8-4-4-4-12 hex.
-const SMART_GRAPH_TOKEN =
-  /(\{\{embed:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}\})|\(\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)\)/gi
+// Atomic inline-token regex (embed + block reference + @-mention). UUIDs:
+// 8-4-4-4-12 hex. Mention names are any non-bracket, non-newline run inside
+// `@[...]` (owner labels can contain spaces, e.g. "Ada Lovelace").
+const ATOMIC_INLINE_TOKEN =
+  /(\{\{embed:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}\})|\(\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)\)|@\[([^\[\]\n]+)\]/gi
 
-// Split clean_text on Smart Graph tokens. Text segments are later parsed for
-// inline marks; token segments are emitted as-is (#85).
-function splitSmartGraph(text: string): Token[] {
+// Split clean_text on atomic inline tokens. Text segments are later parsed for
+// inline marks; token segments are emitted as-is (#85 embed/block-ref, #184
+// mention).
+function splitAtomicTokens(text: string): Token[] {
   const tokens: Token[] = []
   let last = 0
   let match: RegExpExecArray | null
-  SMART_GRAPH_TOKEN.lastIndex = 0
-  while ((match = SMART_GRAPH_TOKEN.exec(text)) !== null) {
+  ATOMIC_INLINE_TOKEN.lastIndex = 0
+  while ((match = ATOMIC_INLINE_TOKEN.exec(text)) !== null) {
     if (match.index > last) {
       tokens.push({
         kind: 'text',
@@ -202,6 +214,8 @@ function splitSmartGraph(text: string): Token[] {
       tokens.push({ kind: 'embed', uuid: match[2] })
     } else if (match[3]) {
       tokens.push({ kind: 'blockReference', uuid: match[3] })
+    } else if (match[4]) {
+      tokens.push({ kind: 'mention', name: match[4] })
     }
     last = match.index + match[0].length
   }
@@ -218,7 +232,7 @@ function splitSmartGraph(text: string): Token[] {
 // NodeJSON[] via the helper below or use the legacy API directly.
 export function tokenizeInline(text: string): Token[] {
   if (!text) return []
-  const segments = splitSmartGraph(text)
+  const segments = splitAtomicTokens(text)
   const tokens: Token[] = []
   for (const seg of segments) {
     if (seg.kind === 'text') {

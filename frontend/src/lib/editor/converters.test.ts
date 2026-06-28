@@ -24,6 +24,10 @@ import {
   parseEmbedBlockMarker,
   tokenizeInline
 } from './converters'
+import {
+  legacyTokenizeInline,
+  serializeInlineContent
+} from './converters/serialize'
 import type { ParsedBlock, DocJSON } from './types'
 
 // Helper: build a ParsedBlock with sensible defaults for a given type.
@@ -1613,6 +1617,33 @@ describe('tokenize / validate pipeline (#198)', () => {
     if (refs[0].kind === 'blockReference') {
       expect(refs[0].uuid).toBe(UUID)
     }
+  })
+
+  it('emits a MentionToken for @[name] (#184)', () => {
+    const tokens = tokenizeInline('ping @[Ada Lovelace] now')
+    const mentions = tokens.filter((t) => t.kind === 'mention')
+    expect(mentions).toHaveLength(1)
+    if (mentions[0].kind === 'mention') {
+      expect(mentions[0].name).toBe('Ada Lovelace')
+    }
+  })
+
+  it('does not tokenize an email-style foo@bar as a mention (#184)', () => {
+    const tokens = tokenizeInline('email me at foo@bar.com please')
+    expect(tokens.filter((t) => t.kind === 'mention')).toHaveLength(0)
+    const text = tokens
+      .filter((t) => t.kind === 'text')
+      .map((t) => (t as { text: string }).text)
+      .join('')
+    expect(text).toContain('foo@bar.com')
+  })
+
+  it('round-trips @[name] through tokenize + serialize (#184)', () => {
+    const src = 'assign @[Alice] and @[Bob] here'
+    const nodes = legacyTokenizeInline(src)
+    const mentions = nodes.filter((n) => n.type === 'mentionNode')
+    expect(mentions).toHaveLength(2)
+    expect(serializeInlineContent(nodes)).toBe(src)
   })
 
   it('validate drops links with disallowed schemes (javascript:)', () => {

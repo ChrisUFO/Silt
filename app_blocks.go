@@ -44,6 +44,28 @@ func (a *App) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBl
 	return res, err
 }
 
+// DistinctOwners returns the sorted, de-duplicated set of task owners in the
+// vault — the source for the @-mention typeahead (#184). Read-only projection
+// of the tasks index; no mention state is persisted to SQLite.
+func (a *App) DistinctOwners() ([]string, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.db == nil {
+		return nil, fmt.Errorf("vault database not loaded")
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var res []string
+	var err error
+	a.coordinator.WithDBRead(func() {
+		res, err = a.db.DistinctOwners()
+	})
+
+	return res, err
+}
+
 // UpdateBlockState changes task status and updates the file and cache.
 //
 // To avoid TOCTOU races between the DB read and the file write, we look up the

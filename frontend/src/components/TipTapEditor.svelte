@@ -27,9 +27,18 @@
     TaskMetaSuggest,
     applyMetaSuggestion,
     filterMetaKeys,
+    MentionSuggest,
+    applyMentionSuggestion,
+    filterOwners,
     blocksToDoc
   } from '../lib/editor'
-  import type { ParsedBlock, MetaKey, SuggestContext } from '../lib/editor'
+  import type {
+    ParsedBlock,
+    MetaKey,
+    SuggestContext,
+    MentionContext
+  } from '../lib/editor'
+  import { DistinctOwners } from '../../wailsjs/go/main/App.js'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
   import { pushNotification } from '../notifications/store.svelte'
@@ -362,6 +371,68 @@
     return { left: c.left, top: c.bottom }
   }
 
+  // --- @-mention typeahead (#184) -----------------------------------------
+  // Owners come from the read-only DistinctOwners index projection; refreshed
+  // on mount and on focus so newly-assigned owners appear without a reload.
+  let owners = $state<string[]>([])
+  async function loadOwners(): Promise<void> {
+    try {
+      owners = (await DistinctOwners()) ?? []
+    } catch (e) {
+      console.error('DistinctOwners failed:', e)
+    }
+  }
+
+  // `mentionPopup` is null when closed. While open it carries the active
+  // context (range/position), the filtered owner list, and the highlighted
+  // index navigated by ↑/↓.
+  let mentionPopup = $state<{
+    ctx: MentionContext
+    items: string[]
+    selected: number
+  } | null>(null)
+
+  function onMentionChange(ctx: MentionContext | null): void {
+    if (!ctx) {
+      mentionPopup = null
+      return
+    }
+    const items = filterOwners(owners, ctx.query)
+    mentionPopup = items.length === 0 ? null : { ctx, items, selected: 0 }
+  }
+
+  function onMentionNavigate(dir: 1 | -1): void {
+    if (!mentionPopup) return
+    const n = mentionPopup.items.length
+    mentionPopup.selected = (mentionPopup.selected + dir + n) % n
+  }
+
+  function onMentionSelectActive(): void {
+    if (!mentionPopup || !editorInstance || editorInstance.isDestroyed) {
+      mentionPopup = null
+      return
+    }
+    const item = mentionPopup.items[mentionPopup.selected]
+    mentionPopup = null
+    if (item) applyMentionSuggestion(editorInstance, item)
+  }
+
+  function onMentionPick(name: string): void {
+    if (!editorInstance || editorInstance.isDestroyed) {
+      mentionPopup = null
+      return
+    }
+    mentionPopup = null
+    applyMentionSuggestion(editorInstance, name)
+  }
+
+  function mentionPopupCoords(): { left: number; top: number } | null {
+    if (!mentionPopup || !editorInstance || editorInstance.isDestroyed)
+      return null
+    const c = editorInstance.view.coordsAtPos(mentionPopup.ctx.from)
+    return { left: c.left, top: c.bottom }
+  }
+
   // Capture the initial blocks under untrack to signal that the one-shot
   // capture is intentional — the $effect below handles live reactivity (#64).
   const initialDoc = untrack(() => blocksToDoc(blocks))
@@ -414,6 +485,12 @@
       onChange: onMetaChange,
       onNavigate: onMetaNavigate,
       onSelectActive: onMetaSelectActive
+    }),
+    MentionSuggest.configure({
+      owners: () => owners,
+      onChange: onMentionChange,
+      onNavigate: onMentionNavigate,
+      onSelectActive: onMentionSelectActive
     }),
     SiltBlockKeymaps,
     Placeholder.configure({
@@ -494,6 +571,8 @@
       acquireFocus()
       startHeartbeat()
       notifyFocus()
+      // Refresh the owner list so newly-assigned owners are mentionable.
+      void loadOwners()
     },
     onBlur: () => {
       isFocused = false
@@ -509,6 +588,8 @@
       editorReady = true
       isLastBlock = editor.state.doc.childCount <= 1
       onReady?.()
+      // Seed the @-mention owner list on mount (#184).
+      void loadOwners()
     }
   })
 
@@ -1197,6 +1278,30 @@
       </div>
     {/if}
   {/if}
+  {#if mentionPopup}
+    {@const c = mentionPopupCoords()}
+    {#if c}
+      <div
+        class="mention-suggest"
+        style="left:{c.left}px; top:{c.top}px"
+        role="listbox"
+        aria-label="Mention an owner"
+      >
+        {#each mentionPopup.items as item, i}
+          <button
+            type="button"
+            class="mention-suggest-item"
+            class:selected={i === mentionPopup.selected}
+            role="option"
+            aria-selected={i === mentionPopup.selected}
+            onclick={() => onMentionPick(item)}
+          >
+            <span class="mention-suggest-at" aria-hidden="true">@</span>{item}
+          </button>
+        {/each}
+      </div>
+    {/if}
+  {/if}
   {#if showLinkInput && linkInputCoords}
     <div
       class="link-input-popover"
@@ -1485,6 +1590,43 @@
   .meta-suggest-desc {
     font-size: 0.8rem;
     opacity: 0.8;
+  }
+
+  .mention-suggest {
+    position: fixed;
+    z-index: 50;
+    min-width: 200px;
+    margin-top: 4px;
+    padding: 4px;
+    border-radius: 8px;
+    background: var(--color-surface, #1e1e22);
+    border: 1px solid var(--border-subtle, #33333a);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .mention-suggest-item {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    padding: 6px 8px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--color-text-primary, #e6e6e6);
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .mention-suggest-item.selected {
+    background: var(--color-accent-primary-start, #4f7cff);
+    color: #fff;
+  }
+
+  .mention-suggest-at {
+    opacity: 0.7;
   }
 
   .context-menu-card {

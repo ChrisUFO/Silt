@@ -5,6 +5,7 @@ import {
   HeaderBlock,
   EmbedNode,
   BlockReferenceNode,
+  MentionNode,
   EmbedBlockNode,
   CalloutBlock,
   CodeBlock
@@ -14,6 +15,7 @@ import NoteBlockView from '../../components/editor/NoteBlockView.svelte'
 import HeaderBlockView from '../../components/editor/HeaderBlockView.svelte'
 import EmbedNodeView from '../../components/editor/EmbedNodeView.svelte'
 import BlockReferenceNodeView from '../../components/editor/BlockReferenceNodeView.svelte'
+import MentionNodeView from '../../components/editor/MentionNodeView.svelte'
 import EmbedBlockNodeView from '../../components/editor/EmbedBlockNodeView.svelte'
 import CalloutBlockView from '../../components/editor/CalloutBlockView.svelte'
 import CodeBlockView from '../../components/editor/CodeBlockView.svelte'
@@ -47,6 +49,13 @@ export const SiltBlockExtensionsWithNodeViews = [
   BlockReferenceNode.extend({
     addNodeView() {
       return SvelteNodeViewRenderer(BlockReferenceNodeView)
+    }
+  }),
+  // @-mention chip (#184). Inline atomic node rendering @[name] as a
+  // non-editable chip; the suggestion list comes from DistinctOwners.
+  MentionNode.extend({
+    addNodeView() {
+      return SvelteNodeViewRenderer(MentionNodeView)
     }
   }),
   // Generic plugin-extensible embed block (#110). The default NodeView renders

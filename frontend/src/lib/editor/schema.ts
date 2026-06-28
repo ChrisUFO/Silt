@@ -720,6 +720,39 @@ export const BlockReferenceNode = Node.create({
   }
 })
 
+// ---- MentionNode (inline, atomic) ----------------------------------------
+// Renders an @-mention chip (`@[name]`) for inline owner references (#184).
+// Inline + atomic like BlockReferenceNode; the `name` attr is the owner label
+// and the textual form `@[name]` is reconstructed in clean_text on save. The
+// suggestion list comes from the read-only DistinctOwners index projection —
+// no mention state lives in SQLite.
+export const MentionNode = Node.create({
+  name: 'mentionNode',
+  group: 'inline',
+  inline: true,
+  atom: true,
+  selectable: true,
+  draggable: false,
+
+  addAttributes() {
+    return {
+      name: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-name') || '',
+        renderHTML: (attrs) => (attrs.name ? { 'data-name': attrs.name } : {})
+      }
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'span[data-type="mention"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ['span', mergeAttributes({ 'data-type': 'mention' }, HTMLAttributes)]
+  }
+})
+
 // ---- EmbedBlockNode (generic plugin-extensible block, #110 Phase 1) ---------
 // A generic block-level atomic node that plugins specialize via attrs (type,
 // src, caption, openable, pluginID, data). Covers attachments (#101), image
