@@ -1660,6 +1660,15 @@ describe('tokenize / validate pipeline (#198)', () => {
     expect(nodes.filter((n) => n.type === 'inlineMathNode')).toHaveLength(0)
   })
 
+  it('does not tokenize decimal/comma currency amounts as math (#191)', () => {
+    // Single-$ amounts in prose have no closing delimiter, so they never enter
+    // math mode — pin that so a future guard tweak can't regress it.
+    for (const src of ['cost $5.00 today', 'total $12.99', 'over $1,000 now']) {
+      const nodes = legacyTokenizeInline(src)
+      expect(nodes.filter((n) => n.type === 'inlineMathNode')).toHaveLength(0)
+    }
+  })
+
   it('round-trips a $$...$$ block equation via blocksToDoc/docToBlocks (#191)', () => {
     const blocks = [mkBlock('NOTE', { clean_text: '$$\\int_0^1 x\\,dx$$' })]
     const doc = blocksToDoc(blocks)

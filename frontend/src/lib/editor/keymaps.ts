@@ -155,6 +155,14 @@ function focusBlockAt(editor: Editor, blockIndex: number): void {
 // not reorderable this way; Tab/Shift-Tab still indent them).
 export function moveActiveBlock(editor: Editor, direction: 1 | -1): boolean {
   if (!editor || editor.isDestroyed) return false
+  const active = findActiveBlock(editor)
+  if (!active) return false
+  // Explicit top-level guard: only ProseMirror tree-depth-1 blocks are
+  // reorderable (active.depth is the TREE depth from findActiveBlock — NOT
+  // node.attrs.depth, which is the indent level, which would wrongly reject
+  // legitimately-indented top-level blocks). Reordering a block nested inside a
+  // callout/details would corrupt the doc structure.
+  if (active.depth !== 1) return false
   const info = currentBlockInfo(editor)
   if (!info) return false
   const { doc, tr } = editor.state
