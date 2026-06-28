@@ -110,6 +110,25 @@ describe('CalendarSidebar (#322)', () => {
     expect(screen.getByTestId('count-all').textContent?.trim()).toBe('49')
   })
 
+  it('quotes the `all` aggregate alias — ALL is a SQLite keyword', async () => {
+    // Regression guard: `AS all` (bare) is a syntax error because ALL is a
+    // reserved word (UNION ALL / SELECT ALL). The query mocks sqliteQuery per
+    // the IPC-boundary convention, so the SQL string itself is never executed
+    // in jsdom — assert the quoted alias here so it can't silently regress.
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 0, 0)
+      return mockDayCounts([])
+    })
+    render(CalendarSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const countSql = mocks.sqliteQuery.mock.calls
+      .map((c) => String(c[0]))
+      .find((s) => s.includes('SUM(CASE'))
+    expect(countSql).toBeDefined()
+    expect(countSql).toContain('AS "all"')
+    expect(countSql).not.toMatch(/AS all\b/)
+  })
+
   it('clicking the Today smart list sets activeFilter to "today"', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
       if (sql.includes('SUM(CASE')) return mockCounts(3, 12, 1, 0, 49)

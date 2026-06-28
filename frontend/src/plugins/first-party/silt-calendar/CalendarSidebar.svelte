@@ -68,6 +68,10 @@
       // local-day anchor (#118) — NOT SQLite's UTC date('now') — for the
       // same reasons Kanban/query.ts binds the today parameter.
       //
+      // The `all` alias is double-quoted because ALL is a SQLite keyword
+      // (UNION ALL / SELECT ALL); a bare `AS all` is a syntax error. The
+      // other aliases are not keywords so they stay unquoted.
+      //
       // "Today" = exactly due_date = today. Overdue items live in the
       // separate Overdue smart list (badge is right above). Conflating
       // overdue into "Today" makes the badge misleading when there are 5
@@ -80,7 +84,7 @@
             SUM(CASE WHEN t.status != 'DONE' AND t.due_date >= ? AND t.due_date <= ? THEN 1 ELSE 0 END) AS upcoming,
             SUM(CASE WHEN t.status != 'DONE' AND t.due_date < ? THEN 1 ELSE 0 END) AS overdue,
             SUM(CASE WHEN t.status = 'DONE' AND t.due_date = ? THEN 1 ELSE 0 END) AS completed,
-            SUM(CASE WHEN t.status != 'DONE' THEN 1 ELSE 0 END) AS all
+            SUM(CASE WHEN t.status != 'DONE' THEN 1 ELSE 0 END) AS "all"
          FROM blocks b JOIN tasks t ON b.id = t.block_id`,
         [today, tomorrow, weekAhead, today, today]
       )
