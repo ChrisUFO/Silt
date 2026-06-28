@@ -160,11 +160,17 @@ function blockToNode(block: ParsedBlock): NodeJSON {
   // A NOTE whose entire body is a single {{embed:uuid}} token becomes a
   // top-level embedNode. Wrapping a block-level node inside noteBlock's
   // inline-only content would violate the ProseMirror schema (#85).
+  // Sole-content atomic blocks capture their bullet marker from raw_text so
+  // the Go serializer re-emits it on save (#327).
   const embedMatch = text.match(SOLE_EMBED_RE)
   if (embedMatch) {
     return {
       type: 'embedNode',
-      attrs: { id: block.id, uuid: embedMatch[1] }
+      attrs: {
+        id: block.id,
+        uuid: embedMatch[1],
+        bullet: detectBullet(block.raw_text)
+      }
     }
   }
 
@@ -174,7 +180,11 @@ function blockToNode(block: ParsedBlock): NodeJSON {
   if (embedBlockAttrs) {
     return {
       type: 'embedBlock',
-      attrs: { id: block.id, ...embedBlockAttrs }
+      attrs: {
+        id: block.id,
+        ...embedBlockAttrs,
+        bullet: detectBullet(block.raw_text)
+      }
     }
   }
 
@@ -186,7 +196,11 @@ function blockToNode(block: ParsedBlock): NodeJSON {
   if (blockMathMatch) {
     return {
       type: 'blockMathNode',
-      attrs: { id: block.id, latex: blockMathMatch[1] }
+      attrs: {
+        id: block.id,
+        latex: blockMathMatch[1],
+        bullet: detectBullet(block.raw_text)
+      }
     }
   }
 
@@ -1017,16 +1031,19 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
     // Smart Graph block-level node: the embed token is its own line. We
     // emit a NOTE block carrying just the {{embed:uuid}} text in its body
     // (atomic; depth 0; no parent). The Go side will write the token
-    // verbatim, so the on-disk file is unchanged.
+    // verbatim, so the on-disk file is unchanged. The bullet attr (#327)
+    // prefixes raw_text so a `- {{embed:...}}` round-trips its marker.
     if (node.type === 'embedNode') {
       const uuid = (attrs.uuid as string) || ''
+      const body = `{{embed:${uuid}}}`
+      const bullet = attrs.bullet !== undefined ? attrs.bullet : ''
       blocks.push({
         id,
         parent_id: '',
         type: 'NOTE',
         depth: 0,
-        raw_text: `{{embed:${uuid}}}`,
-        clean_text: `{{embed:${uuid}}}`,
+        raw_text: `${bullet}${body}`,
+        clean_text: body,
         status: '',
         owner: '',
         start_date: '',
@@ -1041,15 +1058,18 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
     // Block math (#191): a top-level $$...$$ equation serializes to a NOTE
     // block carrying just the `$$...$$` text in its body. The Go renderer
     // writes it verbatim, so the on-disk file round-trips byte-for-byte.
+    // The bullet attr (#327) prefixes raw_text so a `- $$x$$` round-trips
+    // its marker.
     if (node.type === 'blockMathNode') {
       const latex = (attrs.latex as string) || ''
       const body = `$$${latex}$$`
+      const bullet = attrs.bullet !== undefined ? attrs.bullet : ''
       blocks.push({
         id,
         parent_id: '',
         type: 'NOTE',
         depth: 0,
-        raw_text: body,
+        raw_text: `${bullet}${body}`,
         clean_text: body,
         status: '',
         owner: '',
@@ -1067,6 +1087,8 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
     // emits it verbatim, so the on-disk file round-trips. `notebook` is
     // persisted so the embedBlock NodeView can resolve the relPath to the
     // correct attachments/ folder when the user clicks to open the file.
+    // The bullet attr (#327) prefixes raw_text so a `- <!-- silt-embed: ...
+    // -->` round-trips its marker.
     if (node.type === 'embedBlock') {
       const marker = embedBlockMarker({
         embedType: attrs.embedType || '',
@@ -1076,12 +1098,13 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         pluginID: attrs.pluginID || undefined,
         notebook: attrs.notebook || undefined
       })
+      const bullet = attrs.bullet !== undefined ? attrs.bullet : ''
       blocks.push({
         id,
         parent_id: '',
         type: 'NOTE',
         depth: 0,
-        raw_text: marker,
+        raw_text: `${bullet}${marker}`,
         clean_text: marker,
         status: '',
         owner: '',

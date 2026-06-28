@@ -654,6 +654,9 @@ export const SiltTableExtensions = [
 // via ResolveBlockReference and renders it as a nested live portal. The
 // `uuid` attr is the block UUID; the textual form `{{embed:uuid}}` is
 // reconstructed in clean_text on save.
+//
+// `bullet` is round-trip metadata (#327): a sole-content NOTE (`- {{embed:...}}`)
+// carries its bullet marker so the Go serializer re-emits it. Default '' = bare.
 export const EmbedNode = Node.create({
   name: 'embedNode',
   group: 'block',
@@ -672,7 +675,8 @@ export const EmbedNode = Node.create({
         default: '',
         parseHTML: (el) => el.getAttribute('data-uuid') || '',
         renderHTML: (attrs) => (attrs.uuid ? { 'data-uuid': attrs.uuid } : {})
-      }
+      },
+      bullet: { default: '' }
     }
   },
 
@@ -776,7 +780,11 @@ export const BlockMathNode = Node.create({
         parseHTML: (el) => el.getAttribute('data-latex') || '',
         renderHTML: (attrs) =>
           attrs.latex ? { 'data-latex': attrs.latex } : {}
-      }
+      },
+      // `bullet` is round-trip metadata (#327): a sole-content NOTE
+      // (`- $$x$$`) carries its bullet marker so the Go serializer re-emits
+      // it. Default '' = bare (atomic blocks default to no bullet).
+      bullet: { default: '' }
     }
   },
 
@@ -884,7 +892,11 @@ export const EmbedBlockNode = Node.create({
         parseHTML: (el) => el.getAttribute('data-plugin') || '',
         renderHTML: (attrs) =>
           attrs.pluginID ? { 'data-plugin': attrs.pluginID } : {}
-      }
+      },
+      // `bullet` is round-trip metadata (#327): a sole-content NOTE
+      // (`- <!-- silt-embed: ... -->`) carries its bullet marker so the Go
+      // serializer re-emits it. Default '' = bare.
+      bullet: { default: '' }
     }
   },
 
