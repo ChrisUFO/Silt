@@ -230,7 +230,10 @@
           dueDate: f?.dueDate ?? '',
           tags: f?.tags ?? []
         }
-        if (JSON.stringify(nextFilters) !== JSON.stringify(getKanbanState().filters)) {
+        if (
+          JSON.stringify(nextFilters) !==
+          JSON.stringify(getKanbanState().filters)
+        ) {
           // Do NOT write to the local `filters` $derived directly — that
           // is a no-op since `filters` is derived from the shared module
           // (#323). Writing to the shared module via setFiltersShared
@@ -475,8 +478,6 @@
 
   // Scope persistence (debounced, #323). The scope value lives in the
   // shared module; the board's setScope() flips the override flag AND
-  // Scope persistence (debounced, #323). The scope value lives in the
-  // shared module; the board's setScope() flips the override flag AND
   // schedules a debounced persist so a reload restores the user's pick
   // and the sidebar radio reflects the persisted value (#323 AC #4).
   //
@@ -493,6 +494,11 @@
       scopePersisted = true
       return
     }
+    // Only user-initiated picks persist. Navigation auto-narrow writes via
+    // narrowScopeTo(), which leaves scopeUserOverride false — those changes
+    // are ephemeral (per-session) and must not churn config.yaml on every
+    // nav event. Matches the release-notes contract for #323.
+    if (!scopeUserOverride) return
     if (saveScopeTimer) clearTimeout(saveScopeTimer)
     saveScopeTimer = setTimeout(() => {
       void persistScope(s)

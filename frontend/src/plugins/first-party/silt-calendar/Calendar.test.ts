@@ -25,7 +25,8 @@ import { v2CtxStubs } from '../../test-helpers'
 import {
   getFocusState,
   resetFocusStateForTests,
-  setActiveFilter
+  setActiveFilter,
+  setFocusDate
 } from './focusState.svelte'
 
 function makeCtx(): PluginContext {
@@ -173,7 +174,10 @@ describe('Calendar plugin', () => {
     // AgendaList runs its own non-DONE-task query; mock that with two
     // tasks so all four groups render.
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'") && sql.includes('due_date IS NOT NULL')) {
+      if (
+        sql.includes("status != 'DONE'") &&
+        sql.includes('due_date IS NOT NULL')
+      ) {
         return {
           rows: [
             {
@@ -317,5 +321,58 @@ describe('Calendar plugin', () => {
     setActiveFilter('upcoming')
     await flush()
     expect(getFocusState().activeFilter).toBe('upcoming')
+  })
+
+  // --- focusDate → cursor jump (sidebar mini-cal click → main view)
+  it('jumps the month cursor to the focused date month when focusDate changes', async () => {
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const heading = () => screen.getByRole('heading')
+    const before = heading().textContent
+    setFocusDate('2026-08-15')
+    await flush()
+    const after = heading().textContent
+    expect(after).toBe('August 2026')
+    expect(after).not.toBe(before)
+  })
+
+  // --- Completed filter highlights DONE tasks in the month grid
+  it('Completed filter keeps DONE tasks bright and dims non-DONE in month grid', async () => {
+    const now = new Date()
+    const ymd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [
+        {
+          id: 'todo1',
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          file_date: ymd,
+          clean_content: 'Active task',
+          status: 'TODO',
+          due_date: ymd
+        },
+        {
+          id: 'done1',
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          file_date: ymd,
+          clean_content: 'Finished task',
+          status: 'DONE',
+          due_date: ymd
+        }
+      ],
+      truncated: false
+    })
+    render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    setActiveFilter('completed')
+    await flush()
+    const todoBtn = screen.getByText('Active task')
+    const doneBtn = screen.getByText('Finished task')
+    expect(todoBtn.className).toMatch(/opacity-30/)
+    expect(doneBtn.className).not.toMatch(/opacity-30/)
   })
 })

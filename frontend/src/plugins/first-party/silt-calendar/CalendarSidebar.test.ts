@@ -13,7 +13,12 @@ vi.mock('../../../wailsjs/runtime/runtime.js', () => ({
 import CalendarSidebar from './CalendarSidebar.svelte'
 import type { PluginContext, PluginManifest } from '../../sdk'
 import { v2CtxStubs } from '../../test-helpers'
-import { resetFocusStateForTests, getFocusState, setFocusDate, setActiveFilter } from './focusState.svelte'
+import {
+  resetFocusStateForTests,
+  getFocusState,
+  setFocusDate,
+  setActiveFilter
+} from './focusState.svelte'
 
 function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
   return {
@@ -51,9 +56,7 @@ function mockCounts(
   all: number
 ) {
   return {
-    rows: [
-      { today, upcoming, overdue, completed, all }
-    ],
+    rows: [{ today, upcoming, overdue, completed, all }],
     truncated: false
   }
 }
@@ -339,5 +342,78 @@ describe('CalendarSidebar (#322)', () => {
     // day-dots). With a single $effect firing once on mount, exactly
     // 2 queries are issued. Two $effects would issue 4.
     expect(queryCount).toBe(2)
+  })
+
+  // --- #323 perf: nowTick must not re-fire reload() when the local day is unchanged
+  it('does NOT reload on nowTick ticks when ctx.today is unchanged (no-query same-day ticks)', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 0, 0)
+      return mockDayCounts([])
+    })
+    // Capture the nowTick interval callback so we can drive it
+    // deterministically without waiting 60s of real time and without
+    // the microtask-tangling that vi.useFakeTimers introduces across
+    // reload()'s await chain.
+    let tickCb: (() => void) | undefined
+    const setIntervalSpy = vi
+      .spyOn(globalThis, 'setInterval')
+      .mockImplementation(((fn: () => void) => {
+        tickCb = fn
+        return 0 as any
+      }) as any)
+    try {
+      render(CalendarSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+      const afterMount = mocks.sqliteQuery.mock.calls.length
+      // Cold mount fires reload() exactly once → 2 SQLite queries
+      // (conditional-aggregate counts + per-day dots).
+      expect(afterMount).toBe(2)
+      expect(tickCb).toBeTruthy()
+      // Five minute-ticks with the local-day anchor unchanged. The
+      // gating effect must short-circuit each one instead of re-running
+      // reload() — the previous unguarded effect wasted ~960 redundant
+      // queries per workday.
+      for (let i = 0; i < 5; i++) {
+        tickCb!()
+        await flush()
+      }
+      expect(mocks.sqliteQuery.mock.calls.length).toBe(afterMount)
+    } finally {
+      setIntervalSpy.mockRestore()
+    }
+  })
+
+  it('still reloads when ctx.today rolls to a new day (midnight re-bucket still fires)', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 0, 0)
+      return mockDayCounts([])
+    })
+    const ctx = makeCtx({ today: '2026-06-16' })
+    let tickCb: (() => void) | undefined
+    const setIntervalSpy = vi
+      .spyOn(globalThis, 'setInterval')
+      .mockImplementation(((fn: () => void) => {
+        tickCb = fn
+        return 0 as any
+      }) as any)
+    try {
+      render(CalendarSidebar, { ctx, manifest: MANIFEST })
+      await flush()
+      const afterMount = mocks.sqliteQuery.mock.calls.length
+      expect(afterMount).toBe(2)
+      // Simulate midnight: mutate the same ctx object the effect
+      // re-reads on each nowTick tick (ctx.today is a plain getter per
+      // sdk.ts:82). The next tick must see the day string differ from
+      // lastSeenToday and fire reload() again so the smart-list counts
+      // re-bucket under the new local day.
+      ctx.today = '2026-06-17'
+      expect(tickCb).toBeTruthy()
+      tickCb!()
+      await flush()
+      // reload() fires once more → 2 additional SQLite queries.
+      expect(mocks.sqliteQuery.mock.calls.length).toBe(afterMount + 2)
+    } finally {
+      setIntervalSpy.mockRestore()
+    }
   })
 })

@@ -297,22 +297,25 @@
   // the user can focus on the matching slice without hiding the others
   // entirely (industry-standard parity — Things 3 / MS To Do dim rather
   // than hide).
-  function itemMatchesFilter(dueDate: string): boolean {
+  function itemMatchesFilter(item: CalItem): boolean {
     const f = getFocusState().activeFilter
     if (f === 'all') return true
     const t = todayKey
-    if (f === 'overdue') return dueDate < t
+    if (f === 'overdue') return item.due_date < t
     // "Today" smart list = exactly due today. Overdue tasks are NOT
     // dimmed by the Today filter — they live in the separate Overdue
     // smart list. Matches the SQL bucket in CalendarSidebar.
-    if (f === 'today') return dueDate === t
+    if (f === 'today') return item.due_date === t
     // "Upcoming" = strictly future (today is its own smart list).
     // Matches the SQL bucket in CalendarSidebar which also excludes
     // today from the Upcoming count. Clicking the Upcoming badge and
     // the filter result must agree.
     if (f === 'upcoming')
-      return dueDate > t && dueDate <= plusDaysISO(t, 7)
-    if (f === 'completed') return false
+      return item.due_date > t && item.due_date <= plusDaysISO(t, 7)
+    // The month/week grid query loads tasks without a status filter,
+    // so DONE tasks are present here and brighten under "Completed";
+    // non-DONE tasks dim out.
+    if (f === 'completed') return item.status === 'DONE'
     return true
   }
 </script>
@@ -381,7 +384,8 @@
       role="status"
       aria-live="polite"
     >
-      <span class="material-symbols-outlined text-[14px] text-accent-primary-start"
+      <span
+        class="material-symbols-outlined text-[14px] text-accent-primary-start"
         >filter_alt</span
       >
       <span class="text-text-primary"
@@ -428,100 +432,100 @@
          shared focusState drives its scroll-to-group and dim behaviour. -->
     <AgendaList {ctx} {manifest} />
   {:else}
-  <div class="flex-1 overflow-auto custom-scrollbar p-4">
-    {#if loading}
-      <div class="text-text-muted animate-pulse p-6">Loading…</div>
-    {:else if errorMsg}
-      <div class="text-error p-6">{errorMsg}</div>
-    {:else if mode === 'month'}
-      <!-- Month grid -->
-      <div class="grid grid-cols-7 gap-1 min-w-[700px]">
-        {#each DOW as d}
-          <div
-            class="text-center text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted py-1"
-          >
-            {d}
-          </div>
-        {/each}
-        {#each monthWeeks as week}
-          {#each week as day}
-            {@const inMonth = day.getMonth() === cursor.getMonth()}
+    <div class="flex-1 overflow-auto custom-scrollbar p-4">
+      {#if loading}
+        <div class="text-text-muted animate-pulse p-6">Loading…</div>
+      {:else if errorMsg}
+        <div class="text-error p-6">{errorMsg}</div>
+      {:else if mode === 'month'}
+        <!-- Month grid -->
+        <div class="grid grid-cols-7 gap-1 min-w-[700px]">
+          {#each DOW as d}
+            <div
+              class="text-center text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted py-1"
+            >
+              {d}
+            </div>
+          {/each}
+          {#each monthWeeks as week}
+            {#each week as day}
+              {@const inMonth = day.getMonth() === cursor.getMonth()}
+              {@const isToday = ymd(day) === todayKey}
+              {@const items = byDate[ymd(day)] ?? []}
+              <div
+                role="gridcell"
+                tabindex="0"
+                data-celldate={ymd(day)}
+                aria-label={`${day.toDateString()}${items.length ? ', ' + items.length + ' task' + (items.length === 1 ? '' : 's') : ''}`}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter' && items[0]) {
+                    e.preventDefault()
+                    openItem(items[0])
+                  } else {
+                    onCellKeydown(e, day)
+                  }
+                }}
+                class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 focus:outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start/40 {inMonth
+                  ? 'border-border-muted bg-panel'
+                  : 'border-border-muted/30 bg-transparent'}"
+              >
+                <span
+                  class="text-[11px] font-label-sm-bold w-5 h-5 flex items-center justify-center rounded-full"
+                  class:bg-accent-primary-start={isToday}
+                  class:text-void={isToday}
+                  class:text-text-muted={!isToday && !inMonth}
+                  class:text-text-primary={!isToday && inMonth}
+                  >{day.getDate()}</span
+                >
+                {#each items.slice(0, 3) as item (item.id)}
+                  <button
+                    onclick={() => openItem(item)}
+                    class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-accent-primary-glow border border-accent-primary-start/20 text-accent-primary-start hover:brightness-110 transition-all cursor-pointer"
+                    class:opacity-30={!itemMatchesFilter(item)}
+                    title={item.clean_content}>{item.clean_content}</button
+                  >
+                {/each}
+                {#if items.length > 3}
+                  <span class="text-[9px] text-text-muted px-1"
+                    >+{items.length - 3} more</span
+                  >
+                {/if}
+              </div>
+            {/each}
+          {/each}
+        </div>
+      {:else}
+        <!-- Week view: day columns -->
+        <div class="grid grid-cols-7 gap-2 min-w-[700px]">
+          {#each weekDays as day}
             {@const isToday = ymd(day) === todayKey}
             {@const items = byDate[ymd(day)] ?? []}
-            <div
-              role="gridcell"
-              tabindex="0"
-              data-celldate={ymd(day)}
-              aria-label={`${day.toDateString()}${items.length ? ', ' + items.length + ' task' + (items.length === 1 ? '' : 's') : ''}`}
-              onkeydown={(e) => {
-                if (e.key === 'Enter' && items[0]) {
-                  e.preventDefault()
-                  openItem(items[0])
-                } else {
-                  onCellKeydown(e, day)
-                }
-              }}
-              class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 focus:outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start/40 {inMonth
-                ? 'border-border-muted bg-panel'
-                : 'border-border-muted/30 bg-transparent'}"
-            >
-              <span
-                class="text-[11px] font-label-sm-bold w-5 h-5 flex items-center justify-center rounded-full"
-                class:bg-accent-primary-start={isToday}
-                class:text-void={isToday}
-                class:text-text-muted={!isToday && !inMonth}
-                class:text-text-primary={!isToday && inMonth}
-                >{day.getDate()}</span
-              >
-              {#each items.slice(0, 3) as item (item.id)}
+            <div class="flex flex-col gap-1.5">
+              <div class="text-center pb-2 border-b border-border-muted">
+                <div
+                  class="text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted"
+                >
+                  {DOW[day.getDay()]}
+                </div>
+                <span
+                  class="inline-flex items-center justify-center w-7 h-7 rounded-full text-[13px] font-label-sm-bold mt-1"
+                  class:bg-accent-primary-start={isToday}
+                  class:text-void={isToday}
+                  class:text-text-primary={!isToday}>{day.getDate()}</span
+                >
+              </div>
+              {#each items as item (item.id)}
                 <button
                   onclick={() => openItem(item)}
-                  class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-accent-primary-glow border border-accent-primary-start/20 text-accent-primary-start hover:brightness-110 transition-all cursor-pointer"
-                  class:opacity-30={!itemMatchesFilter(item.due_date)}
+                  class="text-left text-[12px] px-2 py-1.5 rounded bg-panel border border-border-muted hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer"
+                  class:opacity-30={!itemMatchesFilter(item)}
                   title={item.clean_content}>{item.clean_content}</button
                 >
               {/each}
-              {#if items.length > 3}
-                <span class="text-[9px] text-text-muted px-1"
-                  >+{items.length - 3} more</span
-                >
-              {/if}
             </div>
           {/each}
-        {/each}
-      </div>
-    {:else}
-      <!-- Week view: day columns -->
-      <div class="grid grid-cols-7 gap-2 min-w-[700px]">
-        {#each weekDays as day}
-          {@const isToday = ymd(day) === todayKey}
-          {@const items = byDate[ymd(day)] ?? []}
-          <div class="flex flex-col gap-1.5">
-            <div class="text-center pb-2 border-b border-border-muted">
-              <div
-                class="text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted"
-              >
-                {DOW[day.getDay()]}
-              </div>
-              <span
-                class="inline-flex items-center justify-center w-7 h-7 rounded-full text-[13px] font-label-sm-bold mt-1"
-                class:bg-accent-primary-start={isToday}
-                class:text-void={isToday}
-                class:text-text-primary={!isToday}>{day.getDate()}</span
-              >
-            </div>
-            {#each items as item (item.id)}
-              <button
-                onclick={() => openItem(item)}
-                class="text-left text-[12px] px-2 py-1.5 rounded bg-panel border border-border-muted hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer"
-                class:opacity-30={!itemMatchesFilter(item.due_date)}
-                title={item.clean_content}>{item.clean_content}</button
-              >
-            {/each}
-          </div>
-        {/each}
-      </div>
-    {/if}
-  </div>
+        </div>
+      {/if}
+    </div>
   {/if}
 </div>

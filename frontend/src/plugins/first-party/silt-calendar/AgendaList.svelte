@@ -189,7 +189,6 @@
     // today from the Upcoming count.
     if (activeFilter === 'upcoming')
       return item.due_date > today && item.due_date <= weekAhead
-    if (activeFilter === 'completed') return false
     return true
   }
 </script>
@@ -216,7 +215,8 @@
       aria-live="polite"
       data-testid="agenda-filter-banner"
     >
-      <span class="material-symbols-outlined text-[14px] text-accent-primary-start"
+      <span
+        class="material-symbols-outlined text-[14px] text-accent-primary-start"
         >filter_alt</span
       >
       <span class="text-text-primary"
@@ -266,6 +266,13 @@
       <div class="text-text-muted animate-pulse">Loading agenda…</div>
     {:else if errorMsg}
       <div class="text-error">Failed to load: {errorMsg}</div>
+    {:else if activeFilter === 'completed'}
+      <div
+        class="text-text-muted py-10 text-center font-body-md max-w-md mx-auto"
+      >
+        Agenda shows active tasks only. Switch to Month or Week to review
+        completed tasks.
+      </div>
     {:else if items.length === 0}
       <div class="text-text-muted py-10 text-center font-body-md">
         Nothing scheduled. Add a due date to a task to see it here.

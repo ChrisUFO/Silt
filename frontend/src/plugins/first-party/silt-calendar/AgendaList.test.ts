@@ -198,4 +198,18 @@ describe('AgendaList markDoneError UI', () => {
     const tomorrowGroup = screen.getByLabelText('Tomorrow')
     expect(tomorrowGroup.getAttribute('data-group-date')).toBe('2026-06-17')
   })
+
+  // --- Completed filter: agenda is forward-looking, so show an
+  // explanatory empty state instead of dimming every row.
+  it('Completed filter shows an explanatory empty state and skips the grouped list', async () => {
+    setActiveFilter('completed')
+    render(AgendaList, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    expect(
+      screen.getByText(/Agenda shows active tasks only/i)
+    ).toBeInTheDocument()
+    // Groups are short-circuited out by the completed branch.
+    expect(screen.queryByLabelText('Today')).toBeNull()
+    expect(screen.queryByLabelText('Overdue')).toBeNull()
+  })
 })

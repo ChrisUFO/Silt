@@ -106,7 +106,10 @@
         [first, last]
       )
       const bucket: Record<string, number> = {}
-      for (const r of dayRes.rows as unknown as Array<{ d: string; c: number }>) {
+      for (const r of dayRes.rows as unknown as Array<{
+        d: string
+        c: number
+      }>) {
         if (r.d) bucket[r.d] = r.c
       }
       byDate = bucket
@@ -151,15 +154,21 @@
     }
   })
 
-  // Re-run the count query when the local-day anchor shifts (nowTick
-  // ticks every minute to catch midnight crossings) OR when the
-  // mini-calendar cursor moves to a different month. Both anchors feed
-  // `reload()`, so a single effect keyed on both is enough — splitting
-  // them would fire reload() twice on cold mount (one effect run per
-  // dep group), wasting a SQLite round-trip.
+  // Reload counts only when something that affects them actually changes:
+  // the local-day string rolling over (caught via nowTick) OR the
+  // mini-calendar cursor moving to a different month. A bare nowTick with
+  // no day change is a no-op — otherwise the sidebar fires ~960 redundant
+  // SQLite queries per workday. block:changed is handled by its own
+  // subscription above and does not need to go through this effect.
+  let lastSeenToday = ''
+  let lastSeenMiniKey = ''
   $effect(() => {
     void nowTick
-    void miniCursor
+    const t = ctx.today
+    const miniKey = `${miniCursor.getFullYear()}-${miniCursor.getMonth()}`
+    if (t === lastSeenToday && miniKey === lastSeenMiniKey) return
+    lastSeenToday = t
+    lastSeenMiniKey = miniKey
     void reload()
   })
 
@@ -173,10 +182,7 @@
     if (!fd) return
     const [y, m] = fd.split('-').map(Number)
     if (!y || !m) return
-    if (
-      miniCursor.getFullYear() === y &&
-      miniCursor.getMonth() === m - 1
-    )
+    if (miniCursor.getFullYear() === y && miniCursor.getMonth() === m - 1)
       return
     miniCursor = new Date(y, m - 1, 1)
   })
@@ -240,10 +246,18 @@
   })
 
   function prevMonth() {
-    miniCursor = new Date(miniCursor.getFullYear(), miniCursor.getMonth() - 1, 1)
+    miniCursor = new Date(
+      miniCursor.getFullYear(),
+      miniCursor.getMonth() - 1,
+      1
+    )
   }
   function nextMonth() {
-    miniCursor = new Date(miniCursor.getFullYear(), miniCursor.getMonth() + 1, 1)
+    miniCursor = new Date(
+      miniCursor.getFullYear(),
+      miniCursor.getMonth() + 1,
+      1
+    )
   }
   function pickDay(d: Date) {
     setFocusDate(ymd(d))
@@ -305,9 +319,7 @@
     // pattern in Kanban.svelte:45-64.
     const next = smartLists[nextIdx]
     if (next) {
-      document
-        .querySelector<HTMLElement>(`[data-testid="${next.id}"]`)
-        ?.focus()
+      document.querySelector<HTMLElement>(`[data-testid="${next.id}"]`)?.focus()
     }
   }
 
@@ -452,10 +464,12 @@
           aria-label="Previous month"
           class="p-1 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
         >
-          <span class="material-symbols-outlined text-[14px]">chevron_left</span>
+          <span class="material-symbols-outlined text-[14px]">chevron_left</span
+          >
         </button>
         <span class="text-text-primary text-[11px] font-label-sm-bold">
-          {MONTHS[miniCursor.getMonth()]} {miniCursor.getFullYear()}
+          {MONTHS[miniCursor.getMonth()]}
+          {miniCursor.getFullYear()}
         </span>
         <button
           type="button"
@@ -463,7 +477,9 @@
           aria-label="Next month"
           class="p-1 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
         >
-          <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+          <span class="material-symbols-outlined text-[14px]"
+            >chevron_right</span
+          >
         </button>
       </div>
       <div class="flex justify-end mb-1">
@@ -507,7 +523,9 @@
                 {inMonth
                 ? 'text-text-primary hover:bg-hover'
                 : 'text-text-muted/50'}
-                {key === activeFocusDate ? 'ring-1 ring-accent-primary-start bg-accent-primary-glow' : ''}"
+                {key === activeFocusDate
+                ? 'ring-1 ring-accent-primary-start bg-accent-primary-glow'
+                : ''}"
             >
               <span>{day.getDate()}</span>
               {#if count > 0}
