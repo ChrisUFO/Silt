@@ -39,7 +39,9 @@ export {
   filterMetaKeys,
   getSuggestContext,
   getMetaSuggestState,
-  META_KEYS
+  META_KEYS,
+  buildMetaToken,
+  OWNER_TOKEN_RE
 } from './taskMetaSuggest'
 export type {
   MetaKey,
@@ -51,9 +53,14 @@ export {
   MentionSuggest,
   applyMentionSuggestion,
   filterOwners,
-  getMentionContext
+  getMentionContext,
+  planOwnerWriteback
 } from './mentionSuggest'
-export type { MentionContext, MentionSuggestOptions } from './mentionSuggest'
+export type {
+  MentionContext,
+  MentionSuggestOptions,
+  OwnerWriteback
+} from './mentionSuggest'
 export type {
   ParsedBlock,
   BlockType,

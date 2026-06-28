@@ -19,6 +19,12 @@ import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
 import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import type { EditorState, Selection } from '@tiptap/pm/state'
+import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
+import {
+  buildMetaToken,
+  isInTaskBlock,
+  OWNER_TOKEN_RE
+} from './taskMetaSuggest'
 
 // Owner names may contain letters/digits, spaces, apostrophes, hyphens, dots
 // (e.g. "Ada Lovelace", "O'Brien", "J. Doe"). Any other char ends the query.
@@ -98,24 +104,122 @@ export function filterOwners(
   return owners.filter((o) => o.toLowerCase().includes(q))
 }
 
+// Decide how to set a task's owner to `name` given the block's current plain
+// text. Returns offsets relative to the START of blockText (the caller maps
+// them into doc positions and adds blockStart). `name` is part of the contract
+// (the value being written) even though the offsets themselves are
+// value-independent: a replace always targets the existing token span and an
+// insert always targets the trimmed tail of the line.
+// - existing `[owner:: X]` → replace the whole match with `[owner:: name]`
+// - none → insert at the end of the (trimEnd'd) text; the caller prepends a
+//   separating space.
+export type OwnerWriteback =
+  | { kind: 'replace'; from: number; to: number }
+  | { kind: 'insert'; at: number }
+
+export function planOwnerWriteback(
+  blockText: string,
+  name: string
+): OwnerWriteback {
+  const m = OWNER_TOKEN_RE.exec(blockText)
+  if (m) {
+    return { kind: 'replace', from: m.index, to: m.index + m[0].length }
+  }
+  return { kind: 'insert', at: blockText.trimEnd().length }
+}
+
+// Map an offset within a block's textContent to a doc position. Mention chips
+// are atomic (nodeSize 1) but contribute nothing to textContent, so the two
+// coordinate systems diverge after any chip — this walk accounts for that by
+// advancing docPos by the chip's nodeSize while leaving the textContent cursor
+// (consumed) untouched.
+function textOffsetToDocPos(
+  blockNode: ProseMirrorNode,
+  blockStart: number,
+  textOffset: number
+): number {
+  let consumed = 0
+  let docPos = blockStart
+  for (let i = 0; i < blockNode.childCount; i++) {
+    const child = blockNode.child(i)
+    if (child.isText) {
+      const len = child.text?.length ?? 0
+      if (consumed + len >= textOffset) {
+        return docPos + (textOffset - consumed)
+      }
+      consumed += len
+      docPos += len
+    } else {
+      docPos += child.nodeSize
+    }
+  }
+  return docPos
+}
+
 // Replace the active `@query` with an atomic MentionNode and place the caret
-// after it. Returns false (and changes nothing) when no context is active.
+// after it. When the caret was inside a taskBlock, also stamps the task's
+// owner via an inline `[owner:: name]` token (single transaction = one undo).
+// Returns false (and changes nothing) when no context is active.
 export function applyMentionSuggestion(editor: Editor, name: string): boolean {
   const ctx = getMentionContext(editor.state)
   if (!ctx) return false
   const mentionType = editor.schema.nodes.mentionNode
   if (!mentionType) return false
 
+  const schema = editor.state.schema
   const node = mentionType.create({ name })
   const tr = editor.state.tr.delete(ctx.from, ctx.to).insert(ctx.from, node)
   let after = ctx.from + node.nodeSize
   // Preserve a separating space when the query ended with whitespace, so
   // chaining `@alice @bob` doesn't collapse the two chips together.
   if (/\s$/.test(ctx.query)) {
-    const space = editor.state.schema.text(' ')
+    const space = schema.text(' ')
     tr.insert(after, space)
     after += space.nodeSize
   }
+
+  // Owner write-back (#329): confirming a mention inside a taskBlock also
+  // stamps the task's owner. Non-task blocks insert the chip with no side
+  // effects. Every doc position below is resolved from tr.doc (post-mention-
+  // insert) — the mention insert shifts inline offsets, so mixing in the
+  // original state's coordinates would corrupt the doc.
+  if (isInTaskBlock(editor.state)) {
+    // Remember the step count before the owner step so we can re-map `after`
+    // (which lives in the post-mention doc) through the owner step later.
+    const stepsBeforeOwner = tr.steps.length
+    const $chip = tr.doc.resolve(after)
+    let depth = -1
+    for (let d = $chip.depth; d >= 1; d--) {
+      if ($chip.node(d).type.name === 'taskBlock') {
+        depth = d
+        break
+      }
+    }
+    if (depth !== -1) {
+      const blockNode = $chip.node(depth)
+      const blockStart = $chip.start(depth)
+      const blockEnd = $chip.end(depth)
+      const plan = planOwnerWriteback(blockNode.textContent, name)
+      const token = buildMetaToken('owner', name)
+      if (plan.kind === 'replace') {
+        const fromDoc = textOffsetToDocPos(blockNode, blockStart, plan.from)
+        const toDoc = textOffsetToDocPos(blockNode, blockStart, plan.to)
+        tr.insertText(token, fromDoc, toDoc)
+      } else {
+        // Append at the block's content end (after any chip) with a single
+        // separating space — unless the last text already ends in whitespace.
+        const last = blockNode.lastChild
+        const sep =
+          last && last.isText && /\s$/.test(last.text ?? '') ? '' : ' '
+        tr.insertText(sep + token, blockEnd)
+      }
+      // Re-map the caret target from the post-mention doc into the final doc
+      // so it still lands just after the chip. assoc = -1 keeps it on the
+      // chip side when an owner token was inserted exactly at `after`.
+      after = tr.mapping.slice(stepsBeforeOwner).map(after, -1)
+    }
+  }
+
   tr.setSelection(TextSelection.create(tr.doc, after, after))
   editor.view.dispatch(tr)
   return true

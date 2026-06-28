@@ -124,12 +124,24 @@ export interface InsertPlan {
   cursorOffset: number | null
 }
 
+// The canonical inline-metadata token shape: `[key:: value]`. Single source of
+// truth for the format — used both by `%`-autocomplete (buildInsertPlan) and by
+// the mention → owner write-back (#329), so the two paths can never drift.
+export function buildMetaToken(key: string, value: string): string {
+  return `[${key}:: ${value}]`
+}
+
+// Matches an existing owner token, capturing the current value. Case-
+// insensitive on the key so `[Owner:: ]` variants are caught; the emitted
+// token is always lowercase `owner`.
+export const OWNER_TOKEN_RE = /\[owner::\s*([^\]]*)\]/i
+
 // Build the inline snippet for a metadata key. `pin` is a boolean and is
 // auto-filled; every other key opens an empty value slot with the caret
 // positioned inside the brackets for immediate typing.
 export function buildInsertPlan(key: string): InsertPlan {
   if (key === 'pin') return { text: '[pin:: true]', cursorOffset: null }
-  const text = `[${key}:: ]`
+  const text = buildMetaToken(key, '')
   // Place the caret just before the closing `]` so typing fills the value:
   //   `[due:: |]` -> type "tomorrow" -> `[due:: tomorrow]`
   return { text, cursorOffset: text.length - 1 }
