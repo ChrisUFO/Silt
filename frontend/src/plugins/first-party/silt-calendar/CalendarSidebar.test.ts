@@ -271,4 +271,52 @@ describe('CalendarSidebar (#322)', () => {
     expect(screen.getByTestId('count-overdue').textContent?.trim()).toBe('5')
     expect(screen.getByTestId('count-upcoming').textContent?.trim()).toBe('12')
   })
+
+  // --- #325 merge-blocking regression: cleanup on unmount
+  it('cleans up refresh-navigation listener, calendar:clear-filter listener, nowInterval, and block:changed subscription on unmount', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 0, 0)
+      return mockDayCounts([])
+    })
+    // Track every unsubscribe fn returned by ctx.on — the component
+    // stores it in offBlock and calls it on cleanup.
+    const offBlockFns: Array<() => void> = []
+    const ctx = makeCtx({
+      on: vi.fn(() => {
+        const fn = vi.fn()
+        offBlockFns.push(fn)
+        return fn
+      })
+    })
+    // Spy AFTER makeCtx so the spy is in place before the component
+    // mounts and registers its listeners.
+    const removeEventListenerSpy = vi.spyOn(window, 'removeEventListener')
+    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval')
+    render(CalendarSidebar, { ctx, manifest: MANIFEST })
+    await flush()
+    // Sanity: the component registered at least the block:changed
+    // subscription that the cleanup will tear down.
+    expect(offBlockFns.length).toBeGreaterThan(0)
+    // Trigger unmount.
+    cleanup()
+    // 1. refresh-navigation listener removed.
+    expect(removeEventListenerSpy).toHaveBeenCalledWith(
+      'refresh-navigation',
+      expect.any(Function)
+    )
+    // 2. calendar:clear-filter listener removed (second onMount in the
+    //    same component file).
+    expect(removeEventListenerSpy).toHaveBeenCalledWith(
+      'calendar:clear-filter',
+      expect.any(Function)
+    )
+    // 3. nowInterval cleared.
+    expect(clearIntervalSpy).toHaveBeenCalled()
+    // 4. block:changed unsubscribe invoked — every offBlock fn that
+    //    was returned by ctx.on('block:changed', …) must have been
+    //    called exactly once on cleanup.
+    for (const fn of offBlockFns) {
+      expect(fn).toHaveBeenCalledTimes(1)
+    }
+  })
 })

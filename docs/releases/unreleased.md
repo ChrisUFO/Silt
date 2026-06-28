@@ -16,6 +16,7 @@
 - **Calendar's sidebar state resets on vault switch.** The `refresh-navigation` event (fired after every vault switch) now clears `focusDate` and `activeFilter` so a new vault opens on Today / All Tasks instead of inheriting state from the previous vault.
 - **Kanban scope radios are keyboard-correct per WAI-ARIA APG.** The radio group reads the chosen scope from the focused element's own `data-scope-radio` attribute, so Enter on a focused radio activates it even when the cursor index hasn't been updated yet. Disabled scopes are skipped by arrow-key navigation and ignore Enter/Space activation.
 - **Agenda mode is read-only on the sidebar.** Cursor movement and reload triggers from the sidebar's mini-calendar are now skipped when the Calendar view is in Agenda mode, so clicking a day cell doesn't snap the agenda list away from the user's current selection.
+- **Calendar sidebar cleans up on view switch.** When you switch away from the Calendar view, the sidebar's `refresh-navigation` listener, `block:changed` subscription, and minute-tick `nowInterval` are all released. Switching back to Calendar starts fresh instead of inheriting stale state from the previous mount.
 
 # Improvements
 

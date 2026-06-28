@@ -11,7 +11,7 @@
   // A11Y: roving tabindex across both lists (Arrow keys + Home/End + Enter).
   // Counts re-query on `refresh-navigation` + `block:changed` (mirrors how
   // Sidebar + TagSidebarPanel refresh).
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount } from 'svelte'
   import type { PluginContext, PluginManifest } from '../../sdk'
   import { plusDaysISO, localToday } from '../../sdk'
   import {
@@ -124,7 +124,6 @@
   let nowTick = $state(0)
   let nowInterval: ReturnType<typeof setInterval> | undefined
   onMount(() => {
-    reload()
     offBlock = ctx.on('block:changed', () => {
       reload()
     })
@@ -141,11 +140,15 @@
     nowInterval = setInterval(() => {
       nowTick++
     }, 60_000)
-    // The cleanup function returns from onMount — no separate onDestroy
-    // needed. (Previously had a duplicate onDestroy that called
-    // offBlock?.() and clearInterval(nowInterval) again, removing the
-    // refresh-navigation listener ONLY in the onMount-return path. The
-    // duplicate is dead code that drifted from the cleanup contract.)
+    // Cleanup runs on unmount (when the user switches away from the
+    // Calendar view). Without it the refresh-navigation listener, the
+    // block:changed subscription, and the nowInterval tick all leak
+    // across view cycles and fire reload() on a dead component.
+    return () => {
+      window.removeEventListener('refresh-navigation', onRefresh)
+      offBlock?.()
+      if (nowInterval) clearInterval(nowInterval)
+    }
   })
 
   // Re-run the count query each minute so the local-day anchor inside
