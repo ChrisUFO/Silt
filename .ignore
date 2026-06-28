@@ -1,0 +1,5 @@
+# Let opencode read deepwork session state (even though git ignores it)
+!.slim/
+!.slim/**
+!.slim/deepwork/
+!.slim/deepwork/**

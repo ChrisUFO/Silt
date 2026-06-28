@@ -481,6 +481,25 @@ export interface RegisteredPlugin {
   manifest: PluginManifest
   /** Svelte component rendered for the plugin's view. */
   component: any
+  /**
+   * Optional primary sidebar component (#321). When the plugin's view is
+   * the active sidebar context, `Sidebar.svelte` resolves this component
+   * via the same `loadedPlugins.plugins.get(...)` lookup the main view
+   * uses, and renders it in place of the Notebook › Section › Page tree.
+   *
+   * The component receives `{ ctx, manifest }` as props — the same
+   * PluginContext the main view receives, with the session token attached
+   * (#151/#236). A plugin that omits this field falls back to the page
+   * tree (the previous default behavior).
+   *
+   * This slot is for first-party compiled Svelte components. Third-party
+   * plugins render sidebar content via the existing iframe surface system
+   * (`registerSurface({ kind: 'sidebar-panel', ... })`, #117); they do
+   * not use this field. The split is intentional — third-party plugins
+   * ship JS, not compiled Svelte, and the iframe bridge is the only safe
+   * way to render untrusted code in the host webview today.
+   */
+  sidebarComponent?: any
   /** Optional init hook invoked with the live PluginContext. */
   init?: (ctx: PluginContext) => void
   /** v2 lifecycle hooks (#106) — invoked by the host loader. */

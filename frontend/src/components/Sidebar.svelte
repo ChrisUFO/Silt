@@ -34,6 +34,14 @@
     findNotebook
   } from '../lib/sidebar/navActions'
 
+  import type { PluginContext, PluginManifest } from '../plugins/sdk'
+  import {
+    getPluginSidebar,
+    pluginIdForView
+  } from '../plugins/getPluginSidebar'
+  import { getSessionToken } from '../plugins/loader'
+  import { makePluginContext } from '../plugins/context'
+
   interface Props {
     activeNotebook: string
     activeSection: string
@@ -72,6 +80,22 @@
     onSelectView,
     onPageMoved
   }: Props = $props()
+
+  // Resolve the active view's plugin sidebar (#321). Mirrors the lookup
+  // PluginView.svelte does for the main view: read the live plugin entry
+  // from the reactive store, build the context with the session token the
+  // loader registered. The render branch uses the resolved `SidebarCmp`
+  // and passes it `{ ctx, manifest }` — the same shape PluginView passes.
+  let pluginSidebarEntry = $derived(getPluginSidebar(activeView))
+  let SidebarCmp = $derived(pluginSidebarEntry?.sidebarComponent)
+  let pluginSidebarCtx: PluginContext | null = $derived.by(() => {
+    const id = pluginIdForView(activeView)
+    if (!id) return null
+    return makePluginContext(id, getSessionToken(id))
+  })
+  let pluginSidebarManifest: PluginManifest | null = $derived(
+    pluginSidebarEntry?.manifest ?? null
+  )
 
   let tree = $state<NavigationTree>({ notebooks: [] })
   let showNotebookDropdown = $state(false)
@@ -583,6 +607,12 @@
   >
     {#if activeView === 'tags'}
       <TagSidebarPanel bind:selectedTag />
+    {:else if SidebarCmp && pluginSidebarCtx}
+      <!-- Plugin-provided primary sidebar (#321). The active view's plugin
+           owns the entire sidebar slot when it registers a sidebarComponent;
+           the notebook selector + page tree are skipped because the plugin
+           is responsible for any navigation affordance it wants to expose. -->
+      <SidebarCmp ctx={pluginSidebarCtx} manifest={pluginSidebarManifest} />
     {:else}
       <!-- Notebook selector -->
       <div class="px-1 mb-3 relative">

@@ -1,7 +1,9 @@
 import type { RegisteredPlugin } from './sdk'
 import Agenda from './first-party/silt-agenda/Agenda.svelte'
 import Calendar from './first-party/silt-calendar/Calendar.svelte'
+import CalendarSidebar from './first-party/silt-calendar/CalendarSidebar.svelte'
 import Kanban from './first-party/silt-kanban/Kanban.svelte'
+import KanbanSidebar from './first-party/silt-kanban/KanbanSidebar.svelte'
 import AttachmentsPlugin from './first-party/silt-attachments'
 
 // First-party plugin registry: bundled Svelte components that ship with the
@@ -29,10 +31,12 @@ registerPlugin({
     name: 'Calendar',
     version: '1.0.0',
     author: 'Silt',
-    description: 'Month and week grids of tasks by due date.',
+    description:
+      'Month, week, and agenda layouts of tasks by due date. Smart-list sidebar (#322).',
     icon: 'calendar_month'
   },
   component: Calendar,
+  sidebarComponent: CalendarSidebar,
   source: 'first-party'
 })
 registerPlugin({
@@ -54,6 +58,7 @@ registerPlugin({
     ]
   },
   component: Kanban,
+  sidebarComponent: KanbanSidebar,
   source: 'first-party'
 })
 // silt-attachments (#101): attaches files to notes via /attach. The plugin

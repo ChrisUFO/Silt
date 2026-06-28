@@ -492,7 +492,51 @@ const off = ctx.registerSurface({
 The iframe's `window.__siltCtx` is a postMessage proxy for the full
 PluginContext. Theme tokens are injected as CSS custom properties.
 
-### 8.9 Settings schema (#103)
+### 8.9 First-party primary sidebar (`sidebarComponent`)
+
+First-party plugins can also supply a **compiled** Svelte component to
+take over the sidebar slot for the plugin's view, replacing the
+Notebook › Section › Page tree. The component receives the same
+`PluginContext` as the main view (with the session token the loader
+registered, #151/#236), so it can call `ctx.sqliteQuery`,
+`ctx.updateBlockState`, and the rest of the SDK as usual.
+
+This is a different surface from the iframe `sidebar-panel` kind above:
+it is for **first-party compiled components only** and runs in the
+same webview (not a sandboxed iframe). Third-party plugins continue
+to render sidebar content via the iframe bridge in §8.8.
+
+```ts
+// registry.ts
+import CalendarSidebar from './CalendarSidebar.svelte'
+registerPlugin({
+  manifest: { id: 'silt-calendar', name: 'Calendar', version: '1.0.0' },
+  component: Calendar,
+  sidebarComponent: CalendarSidebar, // new
+  source: 'first-party'
+})
+```
+
+```svelte
+<!-- CalendarSidebar.svelte -->
+<script lang="ts">
+  import type { PluginContext, PluginManifest } from '../../sdk'
+  interface Props { ctx: PluginContext; manifest?: PluginManifest }
+  let { ctx, manifest }: Props = $props()
+</script>
+
+<aside aria-label="Calendar sidebar">
+  <!-- ... -->
+</aside>
+```
+
+`Sidebar.svelte` resolves the active view's plugin and renders the
+`sidebarComponent` in place of the page tree. If a plugin omits the
+field, the page tree renders as a fallback. The sidebar receives the
+same session-token-attached `ctx` the main view uses, so all
+session-gated SDK calls work transparently.
+
+### 8.10 Settings schema (#103)
 
 ```json
 {

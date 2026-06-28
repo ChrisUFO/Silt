@@ -35,6 +35,9 @@ Thumbs.db
 # Temporary planning files
 PLAN.md
 
+# deepwork session state (opencode)
+.slim/deepwork/
+
 # Build distributions
 distributions/
 

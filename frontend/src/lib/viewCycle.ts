@@ -4,14 +4,15 @@
  * Pure function + const — pulled out of App.svelte so the cycle order is
  * testable in isolation. If `current` is not in the cycle (e.g. a plugin
  * view), `nextView` jumps to `'notes'` as the anchor.
+ *
+ * Note: `'agenda'` is intentionally NOT in the cycle after #322 merged the
+ * Agenda view into Calendar as a third mode. The activity bar no longer
+ * exposes Agenda as an entry, and routing `activeView === 'agenda'` would
+ * send the user to the (now-defunct) silt-agenda plugin's standalone view
+ * rather than the unified Calendar with its Agenda mode. Pressing
+ * Alt+Tab from Tags jumps directly to Calendar.
  */
-export const VIEW_CYCLE = [
-  'notes',
-  'tags',
-  'agenda',
-  'calendar',
-  'kanban'
-] as const
+export const VIEW_CYCLE = ['notes', 'tags', 'calendar', 'kanban'] as const
 export type CycleView = (typeof VIEW_CYCLE)[number]
 
 /**

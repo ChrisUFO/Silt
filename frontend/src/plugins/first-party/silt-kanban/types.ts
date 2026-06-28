@@ -39,6 +39,22 @@ export interface KanbanFilters {
 
 export type Scope = 'vault' | 'notebook' | 'section' | 'page'
 
+/**
+ * A named Kanban configuration (#323). Persisted to
+ * `plugins.plugin_settings.silt-kanban.boards[]` in config.yaml. Clicking
+ * a saved board applies its `scope` + `filters` to the live board; the
+ * underlying settings (KanbanFilters, Scope) are the existing types so
+ * a saved board never goes out of sync with the live board schema.
+ */
+export interface SavedBoard {
+  /** UUID generated client-side via crypto.randomUUID(). */
+  id: string
+  /** User-given board name; shown in the sidebar list. */
+  name: string
+  scope: Scope
+  filters: KanbanFilters
+}
+
 export const PRIORITY_LABELS: Record<number, string> = {
   1: 'Critical',
   2: 'Normal',

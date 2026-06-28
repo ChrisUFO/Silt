@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
   import type { PluginContext, PluginManifest } from '../../sdk'
+  import { plusDaysISO } from '../../sdk'
+  import { settings, updatePluginSetting } from '../../../settings/store.svelte'
+  import { getFocusState } from './focusState.svelte'
+  import AgendaList from './AgendaList.svelte'
 
   interface Props {
     ctx: PluginContext
@@ -20,7 +24,18 @@
     due_date: string
   }
 
-  let mode = $state<'month' | 'week'>('month')
+  // Calendar/Agenda unified view (#322). The mode is persisted to the
+  // plugin's settings so a user who prefers the agenda list keeps it
+  // across reloads; the default is 'month' for parity with the previous
+  // standalone Calendar.
+  type ViewMode = 'month' | 'week' | 'agenda'
+  function initialMode(): ViewMode {
+    const cfgMode = settings.config?.plugins?.plugin_settings?.['silt-calendar']
+      ?.view_mode as ViewMode | undefined
+    return cfgMode === 'week' || cfgMode === 'agenda' ? cfgMode : 'month'
+  }
+  let mode = $state<ViewMode>(initialMode())
+  let modeLoaded = $state(false)
   // Anchor date for the visible window.
   let cursor = $state(new Date())
   let byDate = $state<Record<string, CalItem[]>>({})
@@ -155,8 +170,13 @@
     }
   }
 
-  // Reload whenever the visible window shifts.
+  // Reload whenever the visible window shifts. Skipped in agenda mode
+  // — the AgendaList subcomponent handles its own query/refresh
+  // (#322). Without this guard, a focusDate change in agenda mode
+  // would mutate cursor (which we skip above) and the reload would
+  // not fire anyway. Belt-and-suspenders.
   $effect(() => {
+    if (mode === 'agenda') return
     void windowStart
     void windowEnd
     reload()
@@ -216,6 +236,88 @@
     void nowTick
     return ymd(new Date())
   })
+
+  // Persist view_mode to plugin settings (debounced via the same atomic
+  // UpdatePluginSetting path Kanban uses for columns/filters, #120).
+  // Surface a save failure as `modeError` so the user knows their mode
+  // pick won't survive a reload (matches the `configError` pattern in
+  // Kanban.svelte). Without this, a silent saveConfig rejection leaves
+  // the user wondering why their mode reverts on restart.
+  let modeSaveTimer: ReturnType<typeof setTimeout> | null = null
+  let modeError = $state('')
+  onDestroy(() => {
+    if (modeSaveTimer) clearTimeout(modeSaveTimer)
+  })
+  $effect(() => {
+    const m = mode
+    // Skip the very first run that re-reads the persisted value back —
+    // that would be a no-op write of the value we just loaded.
+    if (!modeLoaded) {
+      modeLoaded = true
+      return
+    }
+    if (modeSaveTimer) clearTimeout(modeSaveTimer)
+    modeSaveTimer = setTimeout(() => {
+      void persistMode(m)
+    }, 400)
+  })
+  async function persistMode(m: ViewMode) {
+    if (!settings.config) return
+    modeError = ''
+    const ok = await updatePluginSetting('silt-calendar', 'view_mode', m)
+    if (!ok) modeError = settings.error || "Couldn't save view mode"
+  }
+
+  // React to the sidebar's focusDate: jump the main view's cursor to the
+  // matching month/week so the user sees the day they clicked. For
+  // agenda mode the AgendaList subcomponent scrolls the matching group
+  // itself, so we only need the cursor jump for month/week. Skip the
+  // cursor write in agenda mode so the reload $effect at line ~174
+  // doesn't fire on focusDate changes — agenda doesn't read cursor,
+  // and re-running reload() in agenda mode means a wasted IPC against
+  // the SQLite index that AgendaList then ignores.
+  $effect(() => {
+    if (mode === 'agenda') return
+    const focus = getFocusState().focusDate
+    if (!focus) {
+      // No focus date — reset cursor to today so the user lands back on
+      // the current month after clearing a jump (#323 hardening). This
+      // also covers the "user dismissed the jump" path from the
+      // mini-calendar's "Clear jump date" affordance.
+      cursor = new Date()
+      return
+    }
+    const [y, m, d] = focus.split('-').map(Number)
+    if (!y || !m || !d) return
+    cursor = new Date(y, m - 1, d)
+  })
+
+  // Dim class helper: a month/week cell with a due-date task that does
+  // NOT match the active smart-list filter gets an opacity-30 ring so
+  // the user can focus on the matching slice without hiding the others
+  // entirely (industry-standard parity — Things 3 / MS To Do dim rather
+  // than hide).
+  function itemMatchesFilter(item: CalItem): boolean {
+    const f = getFocusState().activeFilter
+    if (f === 'all') return true
+    const t = todayKey
+    if (f === 'overdue') return item.due_date < t
+    // "Today" smart list = exactly due today. Overdue tasks are NOT
+    // dimmed by the Today filter — they live in the separate Overdue
+    // smart list. Matches the SQL bucket in CalendarSidebar.
+    if (f === 'today') return item.due_date === t
+    // "Upcoming" = strictly future (today is its own smart list).
+    // Matches the SQL bucket in CalendarSidebar which also excludes
+    // today from the Upcoming count. Clicking the Upcoming badge and
+    // the filter result must agree.
+    if (f === 'upcoming')
+      return item.due_date > t && item.due_date <= plusDaysISO(t, 7)
+    // The month/week grid query loads tasks without a status filter,
+    // so DONE tasks are present here and brighten under "Completed";
+    // non-DONE tasks dim out.
+    if (f === 'completed') return item.status === 'DONE'
+    return true
+  }
 </script>
 
 <div class="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -266,100 +368,164 @@
         class:text-accent-primary-start={mode === 'week'}
         class:text-text-muted={mode !== 'week'}>Week</button
       >
+      <button
+        onclick={() => (mode = 'agenda')}
+        class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors"
+        class:bg-hover={mode === 'agenda'}
+        class:text-accent-primary-start={mode === 'agenda'}
+        class:text-text-muted={mode !== 'agenda'}>Agenda</button
+      >
     </div>
   </header>
 
-  <div class="flex-1 overflow-auto custom-scrollbar p-4">
-    {#if loading}
-      <div class="text-text-muted animate-pulse p-6">Loading…</div>
-    {:else if errorMsg}
-      <div class="text-error p-6">{errorMsg}</div>
-    {:else if mode === 'month'}
-      <!-- Month grid -->
-      <div class="grid grid-cols-7 gap-1 min-w-[700px]">
-        {#each DOW as d}
-          <div
-            class="text-center text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted py-1"
-          >
-            {d}
-          </div>
-        {/each}
-        {#each monthWeeks as week}
-          {#each week as day}
-            {@const inMonth = day.getMonth() === cursor.getMonth()}
+  {#if getFocusState().activeFilter !== 'all' && mode !== 'agenda'}
+    <div
+      class="px-6 py-1.5 border-b border-border-muted bg-accent-primary-glow flex items-center gap-2 text-[12px] font-body-md"
+      role="status"
+      aria-live="polite"
+    >
+      <span
+        class="material-symbols-outlined text-[14px] text-accent-primary-start"
+        >filter_alt</span
+      >
+      <span class="text-text-primary"
+        >Filtered by: <strong>{getFocusState().activeFilter}</strong></span
+      >
+      <button
+        type="button"
+        onclick={() => {
+          // Mirror the sidebar's X affordance: clear filter.
+          const ev = new CustomEvent('calendar:clear-filter')
+          window.dispatchEvent(ev)
+        }}
+        aria-label="Clear filter"
+        class="ml-auto p-1 rounded hover:bg-hover text-text-muted hover:text-error border-none bg-transparent cursor-pointer"
+      >
+        <span class="material-symbols-outlined text-[14px]">close</span>
+      </button>
+    </div>
+  {/if}
+
+  {#if modeError}
+    <div
+      class="px-6 py-1.5 border-b border-yellow-500/30 bg-yellow-500/10 flex items-center gap-2 text-[12px] font-body-md"
+      role="alert"
+      data-testid="mode-error"
+    >
+      <span class="material-symbols-outlined text-[14px] text-yellow-300"
+        >save</span
+      >
+      <span class="text-text-primary">{modeError}</span>
+      <button
+        type="button"
+        onclick={() => (modeError = '')}
+        aria-label="Dismiss error"
+        class="ml-auto p-1 rounded hover:bg-hover text-text-muted border-none bg-transparent cursor-pointer"
+      >
+        <span class="material-symbols-outlined text-[14px]">close</span>
+      </button>
+    </div>
+  {/if}
+
+  {#if mode === 'agenda'}
+    <!-- Agenda mode renders the extracted grouped-list component. The
+         shared focusState drives its scroll-to-group and dim behaviour. -->
+    <AgendaList {ctx} {manifest} />
+  {:else}
+    <div class="flex-1 overflow-auto custom-scrollbar p-4">
+      {#if loading}
+        <div class="text-text-muted animate-pulse p-6">Loading…</div>
+      {:else if errorMsg}
+        <div class="text-error p-6">{errorMsg}</div>
+      {:else if mode === 'month'}
+        <!-- Month grid -->
+        <div class="grid grid-cols-7 gap-1 min-w-[700px]">
+          {#each DOW as d}
+            <div
+              class="text-center text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted py-1"
+            >
+              {d}
+            </div>
+          {/each}
+          {#each monthWeeks as week}
+            {#each week as day}
+              {@const inMonth = day.getMonth() === cursor.getMonth()}
+              {@const isToday = ymd(day) === todayKey}
+              {@const items = byDate[ymd(day)] ?? []}
+              <div
+                role="gridcell"
+                tabindex="0"
+                data-celldate={ymd(day)}
+                aria-label={`${day.toDateString()}${items.length ? ', ' + items.length + ' task' + (items.length === 1 ? '' : 's') : ''}`}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter' && items[0]) {
+                    e.preventDefault()
+                    openItem(items[0])
+                  } else {
+                    onCellKeydown(e, day)
+                  }
+                }}
+                class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 focus:outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start/40 {inMonth
+                  ? 'border-border-muted bg-panel'
+                  : 'border-border-muted/30 bg-transparent'}"
+              >
+                <span
+                  class="text-[11px] font-label-sm-bold w-5 h-5 flex items-center justify-center rounded-full"
+                  class:bg-accent-primary-start={isToday}
+                  class:text-void={isToday}
+                  class:text-text-muted={!isToday && !inMonth}
+                  class:text-text-primary={!isToday && inMonth}
+                  >{day.getDate()}</span
+                >
+                {#each items.slice(0, 3) as item (item.id)}
+                  <button
+                    onclick={() => openItem(item)}
+                    class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-accent-primary-glow border border-accent-primary-start/20 text-accent-primary-start hover:brightness-110 transition-all cursor-pointer"
+                    class:opacity-30={!itemMatchesFilter(item)}
+                    title={item.clean_content}>{item.clean_content}</button
+                  >
+                {/each}
+                {#if items.length > 3}
+                  <span class="text-[9px] text-text-muted px-1"
+                    >+{items.length - 3} more</span
+                  >
+                {/if}
+              </div>
+            {/each}
+          {/each}
+        </div>
+      {:else}
+        <!-- Week view: day columns -->
+        <div class="grid grid-cols-7 gap-2 min-w-[700px]">
+          {#each weekDays as day}
             {@const isToday = ymd(day) === todayKey}
             {@const items = byDate[ymd(day)] ?? []}
-            <div
-              role="gridcell"
-              tabindex="0"
-              data-celldate={ymd(day)}
-              aria-label={`${day.toDateString()}${items.length ? ', ' + items.length + ' task' + (items.length === 1 ? '' : 's') : ''}`}
-              onkeydown={(e) => {
-                if (e.key === 'Enter' && items[0]) {
-                  e.preventDefault()
-                  openItem(items[0])
-                } else {
-                  onCellKeydown(e, day)
-                }
-              }}
-              class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 focus:outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start/40 {inMonth
-                ? 'border-border-muted bg-panel'
-                : 'border-border-muted/30 bg-transparent'}"
-            >
-              <span
-                class="text-[11px] font-label-sm-bold w-5 h-5 flex items-center justify-center rounded-full"
-                class:bg-accent-primary-start={isToday}
-                class:text-void={isToday}
-                class:text-text-muted={!isToday && !inMonth}
-                class:text-text-primary={!isToday && inMonth}
-                >{day.getDate()}</span
-              >
-              {#each items.slice(0, 3) as item (item.id)}
+            <div class="flex flex-col gap-1.5">
+              <div class="text-center pb-2 border-b border-border-muted">
+                <div
+                  class="text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted"
+                >
+                  {DOW[day.getDay()]}
+                </div>
+                <span
+                  class="inline-flex items-center justify-center w-7 h-7 rounded-full text-[13px] font-label-sm-bold mt-1"
+                  class:bg-accent-primary-start={isToday}
+                  class:text-void={isToday}
+                  class:text-text-primary={!isToday}>{day.getDate()}</span
+                >
+              </div>
+              {#each items as item (item.id)}
                 <button
                   onclick={() => openItem(item)}
-                  class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-accent-primary-glow border border-accent-primary-start/20 text-accent-primary-start hover:brightness-110 transition-all cursor-pointer"
+                  class="text-left text-[12px] px-2 py-1.5 rounded bg-panel border border-border-muted hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer"
+                  class:opacity-30={!itemMatchesFilter(item)}
                   title={item.clean_content}>{item.clean_content}</button
                 >
               {/each}
-              {#if items.length > 3}
-                <span class="text-[9px] text-text-muted px-1"
-                  >+{items.length - 3} more</span
-                >
-              {/if}
             </div>
           {/each}
-        {/each}
-      </div>
-    {:else}
-      <!-- Week view: day columns -->
-      <div class="grid grid-cols-7 gap-2 min-w-[700px]">
-        {#each weekDays as day}
-          {@const isToday = ymd(day) === todayKey}
-          {@const items = byDate[ymd(day)] ?? []}
-          <div class="flex flex-col gap-1.5">
-            <div class="text-center pb-2 border-b border-border-muted">
-              <div
-                class="text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted"
-              >
-                {DOW[day.getDay()]}
-              </div>
-              <span
-                class="inline-flex items-center justify-center w-7 h-7 rounded-full text-[13px] font-label-sm-bold mt-1"
-                class:bg-accent-primary-start={isToday}
-                class:text-void={isToday}
-                class:text-text-primary={!isToday}>{day.getDate()}</span
-              >
-            </div>
-            {#each items as item (item.id)}
-              <button
-                onclick={() => openItem(item)}
-                class="text-left text-[12px] px-2 py-1.5 rounded bg-panel border border-border-muted hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer"
-                title={item.clean_content}>{item.clean_content}</button
-              >
-            {/each}
-          </div>
-        {/each}
-      </div>
-    {/if}
-  </div>
+        </div>
+      {/if}
+    </div>
+  {/if}
 </div>

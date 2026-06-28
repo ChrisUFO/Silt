@@ -93,6 +93,11 @@ import Kanban from './Kanban.svelte'
 import type { PluginContext, PluginManifest } from '../../sdk'
 import { v2CtxStubs } from '../../test-helpers'
 import { reactiveCtx, setNav, resetNav } from './reactiveCtx.svelte'
+import {
+  setScope,
+  narrowScopeTo,
+  resetKanbanStateForTests
+} from './kanbanSharedState.svelte'
 
 function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
   // The default getPluginSettings returns the mock vault config's
@@ -1108,6 +1113,100 @@ describe('Kanban plugin (#19)', () => {
       )
       expect(persistedCall?.[2]).not.toContain('TODO')
       confirmSpy.mockRestore()
+    })
+  })
+
+  // --- #323 shared state — Kanban.svelte reacts to shared-state writes --
+  // Verifies the #323 contract: writes from the sidebar (via
+  // kanbanSharedState) propagate to Kanban.svelte's reload effect without
+  // needing a direct event. The shared module is the single source of
+  // truth; this test pins the bidirectional plumbing without requiring
+  // both components to be mounted at once.
+  describe('shared state reactivity (#323)', () => {
+    it('imports kanbanSharedState and reflects writes from the sidebar', async () => {
+      // First mount the Kanban component so it hydrates the shared module.
+      mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+      render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+      // Re-import here so the test's vi.mock for the settings store is
+      // already in place.
+      const { setFilters: setSharedFilters } =
+        await import('./kanbanSharedState.svelte')
+      // Write a new filter from the "sidebar side"; Kanban.svelte's
+      // existing $effect on `filters` should pick it up and re-query.
+      const before = mocks.sqliteQuery.mock.calls.length
+      setSharedFilters({
+        owners: [],
+        priorities: [1],
+        dueDate: '',
+        tags: []
+      })
+      await flush()
+      // The reload $effect fired — at least one new sqliteQuery.
+      expect(mocks.sqliteQuery.mock.calls.length).toBeGreaterThan(before)
+    })
+  })
+
+  // Pins the #323 persistence contract: only USER-initiated scope picks
+  // hit config.yaml. Navigation auto-narrow writes (narrowScopeTo) leave
+  // scopeUserOverride false and must not churn the persisted value.
+  describe('scope persistence — user picks only (#323)', () => {
+    beforeEach(async () => {
+      vi.useFakeTimers()
+      mocks.sqliteQuery.mockReset()
+      mocks.sqliteQuery.mockResolvedValue({
+        rows: SAMPLE_ROWS,
+        truncated: false
+      })
+      render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+      // Let mount effects settle, then reset the shared state so each
+      // test starts from a known override=false baseline (narrowScopeTo
+      // is a no-op while the override is set, which would mask the bug).
+      await tick()
+      await vi.advanceTimersByTimeAsync(0)
+      resetKanbanStateForTests()
+      await tick()
+      await vi.advanceTimersByTimeAsync(0)
+      mocks.updatePluginSetting.mockClear()
+    })
+
+    afterEach(() => {
+      cleanup()
+      vi.useRealTimers()
+    })
+
+    it('persists a user-initiated scope pick after the 500ms debounce', async () => {
+      // setScope is the USER path — flips scopeUserOverride so the
+      // persistence effect writes through.
+      setScope('notebook')
+      await tick()
+
+      // Within the debounce window — nothing persisted yet.
+      expect(mocks.updatePluginSetting).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(500)
+
+      expect(mocks.updatePluginSetting).toHaveBeenCalledTimes(1)
+      expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+        'silt-kanban',
+        'scope',
+        'notebook'
+      )
+    })
+
+    it('does not persist navigation-driven auto-narrow writes', async () => {
+      // narrowScopeTo is the NAV path — mutates scope WITHOUT flipping
+      // scopeUserOverride; the persistence effect must skip it.
+      narrowScopeTo('page')
+      await tick()
+
+      // Well past the 500ms debounce — no scope write should have fired.
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      const scopeCall = mocks.updatePluginSetting.mock.calls.find(
+        ([, key]) => key === 'scope'
+      )
+      expect(scopeCall).toBeUndefined()
     })
   })
 })
