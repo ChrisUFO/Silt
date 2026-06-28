@@ -3,6 +3,7 @@
 // can't silently regress the bidirectional contract between Kanban.svelte
 // and KanbanSidebar.svelte.
 import { describe, expect, it, beforeEach } from 'vitest'
+import type { KanbanFilters } from './types'
 import {
   getKanbanState,
   setScope,
@@ -143,7 +144,12 @@ describe('kanbanSharedState (#323)', () => {
       // caller's own UI state and are not deep-frozen. The top-level
       // replacement IS what prevents re-renders from re-reading stale
       // data via the reactivity contract.
-      const filters = {
+      // The explicit : KanbanFilters annotation narrows the literal so
+      // dueDate: '' is typed as the literal '' (not the wider string) —
+      // matches KanbanFilters' declared type. Without the annotation TS
+      // widens to string and the applySavedBoard call below fails to
+      // typecheck (TS2345).
+      const filters: KanbanFilters = {
         owners: ['alice'],
         priorities: [2],
         dueDate: '',

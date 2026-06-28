@@ -9,6 +9,7 @@ import {
   clearActiveFilter,
   setFocusDate,
   clearFocusDate,
+  resetFocusState,
   resetFocusStateForTests
 } from './focusState.svelte'
 
@@ -69,6 +70,22 @@ describe('focusState (#322)', () => {
       const detail = (handler.mock.calls[0][0] as CustomEvent).detail
       expect(detail.date).toBe('')
       window.removeEventListener('calendar:focus-date', handler)
+    })
+  })
+
+  describe('resetFocusState() (production path)', () => {
+    // The production-mode reset is called by CalendarSidebar's
+    // refresh-navigation handler to drop stale focusDate / activeFilter
+    // state on vault switch (#141 SwitchVault, #323 hardening). It must
+    // be identical to the test reset — the only difference is the
+    // intended caller. We test both reset points to make sure the
+    // production reset stays exported and doesn't drift.
+    it('clears focusDate AND activeFilter', () => {
+      setFocusDate('2026-06-16')
+      setActiveFilter('overdue')
+      resetFocusState()
+      expect(getFocusState().focusDate).toBe('')
+      expect(getFocusState().activeFilter).toBe('all')
     })
   })
 })

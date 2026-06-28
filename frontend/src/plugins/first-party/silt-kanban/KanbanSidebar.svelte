@@ -186,6 +186,15 @@
   }
 
   async function deleteBoard(b: SavedBoard) {
+    // Confirm before destroying a saved board — the user may have spent
+    // time crafting a non-trivial scope+filter combination named for
+    // a real workflow ("My Work", "Sprint 15"). One mis-click destroys
+    // it; recovery means re-creating from scratch or hand-editing the
+    // YAML. Matches Kanban.svelte's removeColumn UX (window.confirm).
+    // Browser-native confirm() is acceptable here because delete is a
+    // destructive single-occurrence action; richer UI (undo toast) is a
+    // future polish opportunity once a toast system lands.
+    if (!window.confirm(`Delete saved board "${b.name}"?`)) return
     const next = savedBoards.filter((x) => x.id !== b.id)
     savedBoards = next
     await persistBoards(next)
@@ -194,41 +203,92 @@
   // --- Scope radio + filter quick-toggles -------------------------------
 
   const SCOPES: Scope[] = ['vault', 'notebook', 'section', 'page']
-  // svelte-ignore state_referenced_locally: scopeFocusIdx is the LOCAL
-  // roving-tabindex cursor; it intentionally captures the initial scope
-  // value so the first Tab focus lands on whichever scope is currently
-  // active when the sidebar mounts.
-  let scopeFocusIdx = $state(SCOPES.indexOf(liveScope))
+
+  // Roving tabindex cursor for the scope radiogroup. Reactive on
+  // liveScope so external writes (e.g. Kanban.svelte's resetScopeToContext
+  // → clearScopeOverride + setScopeShared) keep the focus cursor in sync
+  // with the displayed selected radio. Without this, the user clicks
+  // "Follow" in the board header → scope jumps to 'vault' visually but
+  // the sidebar's Tab focus still lands on the previously-focused
+  // (wrong) radio.
+  let scopeFocusIdx = $derived(SCOPES.indexOf(liveScope))
+
+  function isScopeDisabled(s: Scope): boolean {
+    return s !== 'vault' && !ctx.activeNotebook
+  }
+
+  // Advance to the next enabled scope in the given direction. Skips
+  // disabled scopes so the cursor never lands on an unreachable option
+  // (e.g. when no notebook/section/page is active, 'notebook',
+  // 'section', 'page' are all dimmed).
+  function nextEnabledIdx(from: number, dir: 1 | -1): number {
+    let i = from
+    for (let n = 0; n < SCOPES.length; n++) {
+      i = (i + dir + SCOPES.length) % SCOPES.length
+      if (!isScopeDisabled(SCOPES[i] as Scope)) return i
+    }
+    return from // all disabled (shouldn't happen — vault is always enabled)
+  }
 
   function onScopeKeydown(e: KeyboardEvent) {
-    const max = SCOPES.length - 1
-    let nextIdx = scopeFocusIdx
-    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+    if (
+      e.key === 'ArrowDown' ||
+      e.key === 'ArrowRight' ||
+      e.key === 'ArrowUp' ||
+      e.key === 'ArrowLeft'
+    ) {
       e.preventDefault()
-      nextIdx = Math.min(max, scopeFocusIdx + 1)
-    } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
-      e.preventDefault()
-      nextIdx = Math.max(0, scopeFocusIdx - 1)
-    } else if (e.key === 'Home') {
-      e.preventDefault()
-      nextIdx = 0
-    } else if (e.key === 'End') {
-      e.preventDefault()
-      nextIdx = max
-    } else if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      const s = SCOPES[scopeFocusIdx]
-      if (s) setScope(s)
+      const dir: 1 | -1 = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1
+      const next = nextEnabledIdx(scopeFocusIdx, dir)
+      const nextScope = SCOPES[next]
+      if (nextScope) document
+        .querySelector<HTMLElement>(`[data-scope-radio="${nextScope}"]`)
+        ?.focus()
       return
-    } else return
-    scopeFocusIdx = nextIdx
-    document
-      .querySelector<HTMLElement>(`[data-scope-radio="${SCOPES[nextIdx]}"]`)
-      ?.focus()
+    }
+    if (e.key === 'Home') {
+      e.preventDefault()
+      const first = SCOPES.findIndex((s) => !isScopeDisabled(s))
+      if (first >= 0) document
+        .querySelector<HTMLElement>(`[data-scope-radio="${SCOPES[first]}"]`)
+        ?.focus()
+      return
+    }
+    if (e.key === 'End') {
+      e.preventDefault()
+      let last = -1
+      for (let i = SCOPES.length - 1; i >= 0; i--) {
+        if (!isScopeDisabled(SCOPES[i] as Scope)) {
+          last = i
+          break
+        }
+      }
+      if (last >= 0) document
+        .querySelector<HTMLElement>(`[data-scope-radio="${SCOPES[last]}"]`)
+        ?.focus()
+      return
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      // Activate the scope corresponding to the focused element (the
+      // event's currentTarget), NOT the roving cursor. The cursor and
+      // focus are normally in sync, but focus follows the cursor rather
+      // than vice versa — and reading the event target is robust against
+      // any cursor drift. Per WAI-ARIA APG radiogroup guidance, a
+      // disabled radio must NOT respond to activation.
+      const target = e.currentTarget as HTMLElement | null
+      const targetScope = target?.getAttribute('data-scope-radio') as
+        | Scope
+        | null
+      if (targetScope && !isScopeDisabled(targetScope)) setScope(targetScope)
+      return
+    }
   }
 
   function pickScope(s: Scope) {
-    scopeFocusIdx = SCOPES.indexOf(s)
+    // pickScope is only called from the click handler, which is itself
+    // guarded against disabled scopes. The internal call is therefore
+    // safe without re-checking.
     setScope(s)
   }
 
@@ -415,13 +475,11 @@
             role="radio"
             aria-checked={selected}
             aria-disabled={disabled}
-            tabindex={i === scopeFocusIdx ? 0 : -1}
+            tabindex={i === scopeFocusIdx && !disabled ? 0 : -1}
             data-scope-radio={s}
             data-testid={`scope-${s}`}
             onclick={() => !disabled && pickScope(s)}
             onkeydown={onScopeKeydown}
-            onfocus={() => (scopeFocusIdx = i)}
-            disabled={disabled}
             class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-[12px] font-body-md cursor-pointer border-none bg-transparent transition-colors
               {selected
               ? 'bg-accent-primary-glow text-accent-primary-start'

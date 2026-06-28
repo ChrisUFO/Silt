@@ -36,6 +36,7 @@
   let loading = $state(true)
   let errorMsg = $state('')
   let markDoneError = $state('')
+  let markDoneTimer: ReturnType<typeof setTimeout> | null = null
 
   async function reload() {
     loading = true
@@ -58,7 +59,31 @@
     }
   }
 
-  let today = $derived(ctx.today)
+  // The local-day anchors (`today` / `tomorrow` / `weekAhead`) drive
+  // the bucket grouping below. They depend on `ctx.today` (an SDK
+  // getter — see sdk.ts:82), but ctx.today is a plain getter that
+  // re-evaluates only when its reactive deps change. To re-bucket
+  // across midnight when the agenda view stays mounted, we maintain
+  // a 60s `nowTick` and depend on it (mirrors Calendar.svelte:50-53's
+  // pattern). Without this, a user with the agenda open at 23:59
+  // would see today's bucket sit on yesterday's date until they
+  // remounted.
+  let nowTick = $state(0)
+  let nowInterval: ReturnType<typeof setInterval> | undefined
+
+  onMount(() => {
+    nowInterval = setInterval(() => {
+      nowTick++
+    }, 60_000)
+  })
+  onDestroy(() => {
+    if (nowInterval) clearInterval(nowInterval)
+  })
+
+  let today = $derived.by(() => {
+    void nowTick
+    return ctx.today
+  })
   let tomorrow = $derived(plusDaysISO(ctx.today, 1))
   let weekAhead = $derived(plusDaysISO(ctx.today, 7))
 
@@ -73,6 +98,7 @@
 
   async function markDone(item: AgendaItem) {
     markDoneError = ''
+    if (markDoneTimer) clearTimeout(markDoneTimer)
     try {
       await ctx.updateBlockState(item.id, 'DONE')
       // Only remove from the list once the backend confirmed the change;
@@ -80,6 +106,14 @@
       items = items.filter((i) => i.id !== item.id)
     } catch (e) {
       markDoneError = e instanceof Error ? e.message : String(e)
+      // Auto-clear after 8s so the banner doesn't sit forever on a list
+      // that's actually working (the user dismissed it without further
+      // action). The user can also dismiss manually via the banner's
+      // close button.
+      markDoneTimer = setTimeout(() => {
+        markDoneError = ''
+        markDoneTimer = null
+      }, 8_000)
     }
   }
 
@@ -109,6 +143,7 @@
   })
   onDestroy(() => {
     offBlockChanged?.()
+    if (markDoneTimer) clearTimeout(markDoneTimer)
   })
 
   // Reactive scroll: when the sidebar's focusDate or activeFilter changes
@@ -141,8 +176,10 @@
     const { activeFilter } = getFocusState()
     if (activeFilter === 'all') return true
     if (activeFilter === 'overdue') return item.due_date < today
-    if (activeFilter === 'today')
-      return item.due_date === today || item.due_date < today
+    // "Today" smart list = exactly due today. Overdue tasks are NOT
+    // matched by the Today filter — they live in the separate Overdue
+    // smart list. Matches the SQL bucket in CalendarSidebar.
+    if (activeFilter === 'today') return item.due_date === today
     if (activeFilter === 'upcoming')
       return item.due_date >= today && item.due_date <= weekAhead
     if (activeFilter === 'completed') return false
@@ -192,9 +229,26 @@
 
   {#if markDoneError}
     <div
-      class="px-6 py-2 bg-error-bg border-b border-error-border text-error text-[12px] font-body-md"
+      class="px-6 py-2 bg-error-bg border-b border-error-border text-error text-[12px] font-body-md flex items-center gap-2"
+      role="alert"
+      data-testid="mark-done-error"
     >
-      Couldn't mark task done: {markDoneError}
+      <span class="flex-1">Couldn't mark task done: {markDoneError}</span>
+      <button
+        type="button"
+        aria-label="Dismiss error"
+        onclick={() => {
+          markDoneError = ''
+          if (markDoneTimer) {
+            clearTimeout(markDoneTimer)
+            markDoneTimer = null
+          }
+        }}
+        data-testid="mark-done-error-dismiss"
+        class="p-1 rounded hover:bg-hover text-text-muted hover:text-error border-none bg-transparent cursor-pointer"
+      >
+        <span class="material-symbols-outlined text-[14px]">close</span>
+      </button>
     </div>
   {/if}
 

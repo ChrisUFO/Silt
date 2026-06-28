@@ -144,6 +144,9 @@ describe('KanbanSidebar (#323)', () => {
     expect(getKanbanState().scope).toBe('notebook')
     expect(getKanbanState().filters.owners).toEqual(['alice'])
     expect(getKanbanState().filters.priorities).toEqual([1, 2])
+    // The board's button is now aria-pressed=true (active highlight) —
+    // pins the fingerprint-based isActive computation against regressions.
+    expect(boardBtn!.getAttribute('aria-pressed')).toBe('true')
   })
 
   it('+ Save current… opens the inline name input; Enter commits', async () => {
@@ -284,5 +287,94 @@ describe('KanbanSidebar (#323)', () => {
     // Only the valid board should have rendered.
     expect(screen.getByTestId('board-b-ok')).toBeInTheDocument()
     expect(document.querySelectorAll('[data-testid^="board-"]').length).toBe(1)
+  })
+
+  // --- #323 P1 review fixes: scope radio keyboard a11y + delete confirm
+  describe('scope radio a11y', () => {
+    it('Enter on a focused scope radio activates it (uses event target, not cursor)', async () => {
+      mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+      // ctx has activeSection set, so 'section' is enabled.
+      render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+      const section = screen.getByTestId('scope-section')
+      section.focus()
+      await fireEvent.keyDown(section, { key: 'Enter' })
+      expect(getKanbanState().scope).toBe('section')
+    })
+
+    it('Enter on a disabled scope radio does NOT activate it (#323 P1 a11y)', async () => {
+      // Override the ctx so no notebook/section/page is active — all
+      // non-vault scopes are disabled.
+      const emptyCtx = makeCtx({
+        activeNotebook: '',
+        activeSection: '',
+        activePage: ''
+      })
+      mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+      render(KanbanSidebar, { ctx: emptyCtx, manifest: MANIFEST })
+      await flush()
+      // The non-vault scopes (notebook/section/page) are all disabled.
+      // ArrowDown from vault skips them and wraps to vault (the only
+      // enabled option). Verifies the keyboard handler never lands on a
+      // disabled scope.
+      const vault = screen.getByTestId('scope-vault')
+      vault.focus()
+      await fireEvent.keyDown(vault, { key: 'ArrowDown' })
+      expect(document.activeElement).toBe(vault)
+      // Now Press Enter on the focused (enabled) vault — should activate
+      // vault (the existing first test covers the enable path).
+      await fireEvent.keyDown(vault, { key: 'Enter' })
+      expect(getKanbanState().scope).toBe('vault')
+    })
+  })
+
+  describe('deleteBoard() UX safety', () => {
+    it('prompts for confirmation before deleting a saved board', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+      mocks.settings.config.plugins.plugin_settings['silt-kanban'].boards = [
+        {
+          id: 'b1',
+          name: 'My Work',
+          scope: 'vault',
+          filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+        }
+      ]
+      mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+      render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+      await fireEvent.click(screen.getByTestId('delete-board-b1'))
+      // Confirm was shown.
+      expect(confirmSpy).toHaveBeenCalledTimes(1)
+      expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('My Work'))
+      // User cancelled: the board is still rendered.
+      expect(screen.getByTestId('board-b1')).toBeInTheDocument()
+      confirmSpy.mockRestore()
+    })
+
+    it('proceeds with deletion when user confirms', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+      mocks.settings.config.plugins.plugin_settings['silt-kanban'].boards = [
+        {
+          id: 'b1',
+          name: 'My Work',
+          scope: 'vault',
+          filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+        }
+      ]
+      mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
+      mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+      render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+      await fireEvent.click(screen.getByTestId('delete-board-b1'))
+      // Board is removed from the rendered list.
+      expect(screen.queryByTestId('board-b1')).toBeNull()
+      // Persisted.
+      expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+        'silt-kanban',
+        'boards',
+        []
+      )
+      confirmSpy.mockRestore()
+    })
   })
 })

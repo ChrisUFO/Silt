@@ -170,8 +170,13 @@
     }
   }
 
-  // Reload whenever the visible window shifts.
+  // Reload whenever the visible window shifts. Skipped in agenda mode
+  // — the AgendaList subcomponent handles its own query/refresh
+  // (#322). Without this guard, a focusDate change in agenda mode
+  // would mutate cursor (which we skip above) and the reload would
+  // not fire anyway. Belt-and-suspenders.
   $effect(() => {
+    if (mode === 'agenda') return
     void windowStart
     void windowEnd
     reload()
@@ -266,8 +271,13 @@
   // React to the sidebar's focusDate: jump the main view's cursor to the
   // matching month/week so the user sees the day they clicked. For
   // agenda mode the AgendaList subcomponent scrolls the matching group
-  // itself, so we only need the cursor jump for month/week.
+  // itself, so we only need the cursor jump for month/week. Skip the
+  // cursor write in agenda mode so the reload $effect at line ~174
+  // doesn't fire on focusDate changes — agenda doesn't read cursor,
+  // and re-running reload() in agenda mode means a wasted IPC against
+  // the SQLite index that AgendaList then ignores.
   $effect(() => {
+    if (mode === 'agenda') return
     const focus = getFocusState().focusDate
     if (!focus) {
       // No focus date — reset cursor to today so the user lands back on
@@ -292,7 +302,10 @@
     if (f === 'all') return true
     const t = todayKey
     if (f === 'overdue') return dueDate < t
-    if (f === 'today') return dueDate === t || dueDate < t
+    // "Today" smart list = exactly due today. Overdue tasks are NOT
+    // dimmed by the Today filter — they live in the separate Overdue
+    // smart list. Matches the SQL bucket in CalendarSidebar.
+    if (f === 'today') return dueDate === t
     if (f === 'upcoming')
       return dueDate >= t && dueDate <= plusDaysISO(t, 7)
     if (f === 'completed') return false

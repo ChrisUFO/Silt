@@ -230,9 +230,13 @@
           dueDate: f?.dueDate ?? '',
           tags: f?.tags ?? []
         }
-        if (JSON.stringify(nextFilters) !== JSON.stringify(filters)) {
-          filters = nextFilters
-          // Also mirror into the shared module so the sidebar's checkboxes
+        if (JSON.stringify(nextFilters) !== JSON.stringify(getKanbanState().filters)) {
+          // Do NOT write to the local `filters` $derived directly — that
+          // is a no-op since `filters` is derived from the shared module
+          // (#323). Writing to the shared module via setFiltersShared
+          // propagates through the $derived and triggers the reload
+          // $effect at line ~347.
+          // Mirror into the shared module so the sidebar's checkboxes
           // pick up the per-notebook override (#133).
           setFiltersShared(nextFilters)
         }
@@ -400,7 +404,10 @@
     if (saveScopeTimer) clearTimeout(saveScopeTimer)
   })
   function handleFiltersChange(f: KanbanFilters) {
-    filters = f
+    // Do NOT write to the local `filters` $derived directly — that is a
+    // no-op since `filters` derives from the shared module (#323).
+    // setFiltersShared propagates through the $derived and triggers the
+    // reload $effect.
     setFiltersShared(f)
     if (saveFiltersTimer) clearTimeout(saveFiltersTimer)
     saveFiltersTimer = setTimeout(() => {
@@ -468,11 +475,24 @@
 
   // Scope persistence (debounced, #323). The scope value lives in the
   // shared module; the board's setScope() flips the override flag AND
+  // Scope persistence (debounced, #323). The scope value lives in the
+  // shared module; the board's setScope() flips the override flag AND
   // schedules a debounced persist so a reload restores the user's pick
   // and the sidebar radio reflects the persisted value (#323 AC #4).
+  //
+  // The first-run guard mirrors Calendar.svelte's modeLoaded pattern
+  // (Calendar.svelte:240-258): the $effect fires on mount before the
+  // user has touched anything, and the persisted value is by definition
+  // what we just loaded — writing it back is a wasted config.yaml
+  // mutation. Skip the first run.
   let saveScopeTimer: ReturnType<typeof setTimeout> | null = null
+  let scopePersisted = $state(false)
   $effect(() => {
     const s = scope
+    if (!scopePersisted) {
+      scopePersisted = true
+      return
+    }
     if (saveScopeTimer) clearTimeout(saveScopeTimer)
     saveScopeTimer = setTimeout(() => {
       void persistScope(s)

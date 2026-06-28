@@ -19,7 +19,8 @@
     setActiveFilter,
     clearActiveFilter,
     setFocusDate,
-    clearFocusDate
+    clearFocusDate,
+    resetFocusState
   } from './focusState.svelte'
 
   interface Props {
@@ -66,15 +67,22 @@
       // query so we hit the index once per refresh. The query uses the
       // local-day anchor (#118) — NOT SQLite's UTC date('now') — for the
       // same reasons Kanban/query.ts binds the today parameter.
+      //
+      // "Today" = exactly due_date = today. Overdue items live in the
+      // separate Overdue smart list (badge is right above). Conflating
+      // overdue into "Today" makes the badge misleading when there are 5
+      // overdue tasks and 0 due-today — the badge reads "Today: 5" but
+      // the user has nothing due today. Matches the agenda view's own
+      // Overdue / Today grouping (separate rows).
       const res = await ctx.sqliteQuery(
         `SELECT
-            SUM(CASE WHEN t.status != 'DONE' AND (t.due_date = ? OR t.due_date < ?) THEN 1 ELSE 0 END) AS today,
+            SUM(CASE WHEN t.status != 'DONE' AND t.due_date = ? THEN 1 ELSE 0 END) AS today,
             SUM(CASE WHEN t.status != 'DONE' AND t.due_date >= ? AND t.due_date <= ? THEN 1 ELSE 0 END) AS upcoming,
             SUM(CASE WHEN t.status != 'DONE' AND t.due_date < ? THEN 1 ELSE 0 END) AS overdue,
             SUM(CASE WHEN t.status = 'DONE' AND t.due_date = ? THEN 1 ELSE 0 END) AS completed,
             SUM(CASE WHEN t.status != 'DONE' THEN 1 ELSE 0 END) AS all
          FROM blocks b JOIN tasks t ON b.id = t.block_id`,
-        [today, today, tomorrow, weekAhead, today, today]
+        [today, tomorrow, weekAhead, today, today]
       )
       const row = (res.rows?.[0] ?? {}) as Record<string, unknown>
       counts = {
@@ -120,24 +128,31 @@
     offBlock = ctx.on('block:changed', () => {
       reload()
     })
-    const onRefresh = () => reload()
+    const onRefresh = () => {
+      // refresh-navigation fires after a vault switch (#141 SwitchVault)
+      // and on every notebook reload. Drop any focusDate/activeFilter
+      // carried over from the previous vault so the new vault's
+      // smart-list / mini-cal cursor state starts clean. Same pattern as
+      // KanbanSidebar's reset on settings-load (#323).
+      resetFocusState()
+      reload()
+    }
     window.addEventListener('refresh-navigation', onRefresh)
     nowInterval = setInterval(() => {
       nowTick++
     }, 60_000)
-    return () => {
-      window.removeEventListener('refresh-navigation', onRefresh)
-      offBlock?.()
-      if (nowInterval) clearInterval(nowInterval)
-    }
-  })
-  onDestroy(() => {
-    offBlock?.()
-    if (nowInterval) clearInterval(nowInterval)
+    // The cleanup function returns from onMount — no separate onDestroy
+    // needed. (Previously had a duplicate onDestroy that called
+    // offBlock?.() and clearInterval(nowInterval) again, removing the
+    // refresh-navigation listener ONLY in the onMount-return path. The
+    // duplicate is dead code that drifted from the cleanup contract.)
   })
 
   // Re-run the count query each minute so the local-day anchor inside
-  // `reload()` (`ctx.today || localToday()`) reflects the new day.
+  // `reload()` (`ctx.today || localToday()`) reflects the new day. The
+  // effect fires on mount too, so the onMount no longer calls reload()
+  // explicitly — three reloads on cold start (onMount + two effects)
+  // collapsed to one.
   $effect(() => {
     void nowTick
     void reload()

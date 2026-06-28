@@ -14,12 +14,11 @@ import { loadedPlugins } from './store.svelte'
 
 /**
  * Map a top-level view id to the plugin id whose sidebar should own the
- * sidebar slot when that view is active. Today the mapping is purely
- * `silt-${activeView}` for the three plugin views; Tags and Notes do not
- * have plugin sidebars and return null from `getPluginSidebar`.
+ * sidebar slot when that view is active. After #322 merged the Agenda
+ * view into Calendar, only `calendar` and `kanban` ship compiled
+ * sidebar components. Tags and Notes return null.
  */
 export function pluginIdForView(activeView: string): string | null {
-  if (activeView === 'agenda') return 'silt-agenda'
   if (activeView === 'calendar') return 'silt-calendar'
   if (activeView === 'kanban') return 'silt-kanban'
   return null
@@ -27,7 +26,7 @@ export function pluginIdForView(activeView: string): string | null {
 
 /**
  * Resolve the active view's plugin entry. Returns null when:
- *   - the view is not a plugin view (notes / tags), or
+ *   - the view is not a plugin view (notes / tags / agenda), or
  *   - the plugin is not loaded (disabled or not registered), or
  *   - the plugin did not register a `sidebarComponent`.
  *

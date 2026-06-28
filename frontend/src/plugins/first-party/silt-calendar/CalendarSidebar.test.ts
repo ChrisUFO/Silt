@@ -13,7 +13,7 @@ vi.mock('../../../wailsjs/runtime/runtime.js', () => ({
 import CalendarSidebar from './CalendarSidebar.svelte'
 import type { PluginContext, PluginManifest } from '../../sdk'
 import { v2CtxStubs } from '../../test-helpers'
-import { resetFocusStateForTests, getFocusState, setFocusDate } from './focusState.svelte'
+import { resetFocusStateForTests, getFocusState, setFocusDate, setActiveFilter } from './focusState.svelte'
 
 function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
   return {
@@ -233,5 +233,42 @@ describe('CalendarSidebar (#322)', () => {
     expect(todayBtn).toBeInTheDocument()
     await fireEvent.click(todayBtn)
     expect(getFocusState().focusDate).toBe('')
+  })
+
+  // --- #323 P1 review fixes
+  it('refresh-navigation clears focusDate + activeFilter (vault switch reset)', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 0, 0)
+      return mockDayCounts([])
+    })
+    render(CalendarSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    // Set non-default focusDate + activeFilter (simulating the user
+    // having interacted with the sidebar in vault A).
+    setFocusDate('2026-08-15')
+    setActiveFilter('overdue')
+    expect(getFocusState().focusDate).toBe('2026-08-15')
+    expect(getFocusState().activeFilter).toBe('overdue')
+    // Vault switch fires refresh-navigation; the sidebar drops the
+    // stale state so the new vault starts clean.
+    window.dispatchEvent(new CustomEvent('refresh-navigation'))
+    await flush()
+    expect(getFocusState().focusDate).toBe('')
+    expect(getFocusState().activeFilter).toBe('all')
+  })
+
+  it('Today smart-list count does NOT include overdue tasks', async () => {
+    // The badge reads "Today" — overdue items have their own separate
+    // count. Conflating them makes the badge misleading when there are
+    // N overdue tasks and 0 due-today.
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SUM(CASE')) return mockCounts(0, 12, 5, 0, 17)
+      return mockDayCounts([])
+    })
+    render(CalendarSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    expect(screen.getByTestId('count-today').textContent?.trim()).toBe('0')
+    expect(screen.getByTestId('count-overdue').textContent?.trim()).toBe('5')
+    expect(screen.getByTestId('count-upcoming').textContent?.trim()).toBe('12')
   })
 })

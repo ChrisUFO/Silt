@@ -3,7 +3,20 @@ import { tick } from 'svelte'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
 const mocks = vi.hoisted(() => ({
-  sqliteQuery: vi.fn()
+  sqliteQuery: vi.fn(),
+  // Mocked settings store so we can flip updatePluginSetting's return
+  // value to force the persistence-failure banner path.
+  updatePluginSetting: vi.fn().mockResolvedValue(true)
+}))
+
+vi.mock('../../../settings/store.svelte', () => ({
+  settings: {
+    config: {
+      plugins: { plugin_settings: { 'silt-calendar': {} } }
+    },
+    error: ''
+  },
+  updatePluginSetting: mocks.updatePluginSetting
 }))
 
 import Calendar from './Calendar.svelte'
@@ -236,16 +249,32 @@ describe('Calendar plugin', () => {
   // --- #322 hardening: persistence-failure UI for view_mode (#322 polish)
   it('surfaces view_mode save failures as a visible banner', async () => {
     // Force the next updatePluginSetting to return false (write rejection).
+    mocks.updatePluginSetting.mockReset().mockResolvedValue(false)
     mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
-    // Switch mode to trigger the persist path (modeLoaded guard lets the
-    // first run be a no-op).
+    // Switch mode to trigger the persist path. The modeLoaded guard
+    // skips the first run; this user click is the second $effect run,
+    // which schedules a debounced persist (400ms) — wait it out.
     await fireEvent.click(screen.getByRole('button', { name: 'Week' }))
-    // The banner is only rendered when modeError is non-empty, which
-    // depends on the debounced persist actually firing + the mock
-    // returning false. We can't easily wait for the debounce here, so
-    // assert the negative: the banner is absent by default.
+    // Wait > 400ms for the debounced persistMode to fire.
+    await new Promise((r) => setTimeout(r, 500))
+    await flush()
+    // The modeError banner is now rendered with the failure message.
+    expect(screen.queryByTestId('mode-error')).toBeInTheDocument()
+    expect(screen.getByText(/Couldn't save view mode/i)).toBeInTheDocument()
+  })
+
+  it('dismisses the modeError banner via the X button', async () => {
+    mocks.updatePluginSetting.mockReset().mockResolvedValue(false)
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByRole('button', { name: 'Week' }))
+    await new Promise((r) => setTimeout(r, 500))
+    await flush()
+    expect(screen.queryByTestId('mode-error')).toBeInTheDocument()
+    await fireEvent.click(screen.getByLabelText('Dismiss error'))
     expect(screen.queryByTestId('mode-error')).toBeNull()
   })
 

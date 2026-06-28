@@ -67,6 +67,18 @@ export function clearActiveFilter(): void {
 }
 
 /**
+ * Reset to defaults. Production path used on vault switch so a stale
+ * focusDate or activeFilter from the previous vault does not dim or
+ * jump the cursor in the newly-opened vault. Mirrors the
+ * KanbanSharedState.resetKanbanStateForTests contract but is exported
+ * under a production name so callers can wire it to lifecycle events.
+ */
+export function resetFocusState(): void {
+  _state.focusDate = ''
+  _state.activeFilter = 'all'
+}
+
+/**
  * Test-only: reset all state to defaults. Not exported in the public
  * SDK surface; only consumed by Vitest specs.
  */
