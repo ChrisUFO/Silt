@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
   import type { PluginContext, PluginManifest } from '../../sdk'
+  import { plusDaysISO } from '../../sdk'
+  import { settings, updatePluginSetting } from '../../../settings/store.svelte'
+  import { getFocusState } from './focusState.svelte'
+  import AgendaList from './AgendaList.svelte'
 
   interface Props {
     ctx: PluginContext
@@ -20,7 +24,18 @@
     due_date: string
   }
 
-  let mode = $state<'month' | 'week'>('month')
+  // Calendar/Agenda unified view (#322). The mode is persisted to the
+  // plugin's settings so a user who prefers the agenda list keeps it
+  // across reloads; the default is 'month' for parity with the previous
+  // standalone Calendar.
+  type ViewMode = 'month' | 'week' | 'agenda'
+  function initialMode(): ViewMode {
+    const cfgMode = settings.config?.plugins?.plugin_settings?.['silt-calendar']
+      ?.view_mode as ViewMode | undefined
+    return cfgMode === 'week' || cfgMode === 'agenda' ? cfgMode : 'month'
+  }
+  let mode = $state<ViewMode>(initialMode())
+  let modeLoaded = $state(false)
   // Anchor date for the visible window.
   let cursor = $state(new Date())
   let byDate = $state<Record<string, CalItem[]>>({})
@@ -216,6 +231,55 @@
     void nowTick
     return ymd(new Date())
   })
+
+  // Persist view_mode to plugin settings (debounced via the same atomic
+  // UpdatePluginSetting path Kanban uses for columns/filters, #120).
+  let modeSaveTimer: ReturnType<typeof setTimeout> | null = null
+  onDestroy(() => {
+    if (modeSaveTimer) clearTimeout(modeSaveTimer)
+  })
+  $effect(() => {
+    const m = mode
+    // Skip the very first run that re-reads the persisted value back —
+    // that would be a no-op write of the value we just loaded.
+    if (!modeLoaded) {
+      modeLoaded = true
+      return
+    }
+    if (modeSaveTimer) clearTimeout(modeSaveTimer)
+    modeSaveTimer = setTimeout(() => {
+      void updatePluginSetting('silt-calendar', 'view_mode', m)
+    }, 400)
+  })
+
+  // React to the sidebar's focusDate: jump the main view's cursor to the
+  // matching month/week so the user sees the day they clicked. For
+  // agenda mode the AgendaList subcomponent scrolls the matching group
+  // itself, so we only need the cursor jump for month/week.
+  $effect(() => {
+    const focus = getFocusState().focusDate
+    if (!focus) return
+    const [y, m, d] = focus.split('-').map(Number)
+    if (!y || !m || !d) return
+    cursor = new Date(y, m - 1, d)
+  })
+
+  // Dim class helper: a month/week cell with a due-date task that does
+  // NOT match the active smart-list filter gets an opacity-30 ring so
+  // the user can focus on the matching slice without hiding the others
+  // entirely (industry-standard parity — Things 3 / MS To Do dim rather
+  // than hide).
+  function itemMatchesFilter(dueDate: string): boolean {
+    const f = getFocusState().activeFilter
+    if (f === 'all') return true
+    const t = todayKey
+    if (f === 'overdue') return dueDate < t
+    if (f === 'today') return dueDate === t || dueDate < t
+    if (f === 'upcoming')
+      return dueDate >= t && dueDate <= plusDaysISO(t, 7)
+    if (f === 'completed') return false
+    return true
+  }
 </script>
 
 <div class="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -266,9 +330,48 @@
         class:text-accent-primary-start={mode === 'week'}
         class:text-text-muted={mode !== 'week'}>Week</button
       >
+      <button
+        onclick={() => (mode = 'agenda')}
+        class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors"
+        class:bg-hover={mode === 'agenda'}
+        class:text-accent-primary-start={mode === 'agenda'}
+        class:text-text-muted={mode !== 'agenda'}>Agenda</button
+      >
     </div>
   </header>
 
+  {#if getFocusState().activeFilter !== 'all' && mode !== 'agenda'}
+    <div
+      class="px-6 py-1.5 border-b border-border-muted bg-accent-primary-glow flex items-center gap-2 text-[12px] font-body-md"
+      role="status"
+      aria-live="polite"
+    >
+      <span class="material-symbols-outlined text-[14px] text-accent-primary-start"
+        >filter_alt</span
+      >
+      <span class="text-text-primary"
+        >Filtered by: <strong>{getFocusState().activeFilter}</strong></span
+      >
+      <button
+        type="button"
+        onclick={() => {
+          // Mirror the sidebar's X affordance: clear filter.
+          const ev = new CustomEvent('calendar:clear-filter')
+          window.dispatchEvent(ev)
+        }}
+        aria-label="Clear filter"
+        class="ml-auto p-1 rounded hover:bg-hover text-text-muted hover:text-error border-none bg-transparent cursor-pointer"
+      >
+        <span class="material-symbols-outlined text-[14px]">close</span>
+      </button>
+    </div>
+  {/if}
+
+  {#if mode === 'agenda'}
+    <!-- Agenda mode renders the extracted grouped-list component. The
+         shared focusState drives its scroll-to-group and dim behaviour. -->
+    <AgendaList {ctx} {manifest} />
+  {:else}
   <div class="flex-1 overflow-auto custom-scrollbar p-4">
     {#if loading}
       <div class="text-text-muted animate-pulse p-6">Loading…</div>
@@ -318,6 +421,7 @@
                 <button
                   onclick={() => openItem(item)}
                   class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-accent-primary-glow border border-accent-primary-start/20 text-accent-primary-start hover:brightness-110 transition-all cursor-pointer"
+                  class:opacity-30={!itemMatchesFilter(item.due_date)}
                   title={item.clean_content}>{item.clean_content}</button
                 >
               {/each}
@@ -354,6 +458,7 @@
               <button
                 onclick={() => openItem(item)}
                 class="text-left text-[12px] px-2 py-1.5 rounded bg-panel border border-border-muted hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer"
+                class:opacity-30={!itemMatchesFilter(item.due_date)}
                 title={item.clean_content}>{item.clean_content}</button
               >
             {/each}
@@ -362,4 +467,5 @@
       </div>
     {/if}
   </div>
+  {/if}
 </div>

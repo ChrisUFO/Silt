@@ -122,4 +122,108 @@ describe('Calendar plugin', () => {
     expect(detail.blockId).toBe('c1')
     window.removeEventListener('navigate-to-block', handler)
   })
+
+  // --- #322 unified Calendar/Agenda ---------------------------------------
+
+  it('mode toggle has three buttons: Month, Week, Agenda (#322)', async () => {
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    expect(screen.getByRole('button', { name: 'Month' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Week' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Agenda' })).toBeInTheDocument()
+  })
+
+  it('switching to Agenda mode renders the agenda subcomponent (#322)', async () => {
+    const today = '2026-06-16'
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    render(Calendar, { ctx: { ...makeCtx(), today }, manifest: MANIFEST })
+    await flush()
+    const agendaBtn = screen.getByRole('button', { name: 'Agenda' })
+    await fireEvent.click(agendaBtn)
+    await flush()
+    // With no items the AgendaList shows the empty state ("Nothing
+    // scheduled."). The agenda header still mounts.
+    expect(screen.getByText(/Nothing scheduled/i)).toBeInTheDocument()
+  })
+
+  it('switching to Agenda mode renders the four groups when items exist (#322)', async () => {
+    const today = '2026-06-16'
+    // First sqliteQuery is the Calendar's windowed due-date query (mode =
+    // month default). Return empty so we don't render month tasks. The
+    // AgendaList runs its own non-DONE-task query; mock that with two
+    // tasks so all four groups render.
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'") && sql.includes('due_date IS NOT NULL')) {
+        return {
+          rows: [
+            {
+              id: 'a1',
+              notebook: 'Work',
+              section: 'Journal',
+              page: 'Daily',
+              file_date: '2026-06-16',
+              clean_content: 'Overdue task',
+              status: 'TODO',
+              owner: '',
+              start_date: '',
+              due_date: '2026-06-14',
+              priority: 2
+            },
+            {
+              id: 'a2',
+              notebook: 'Work',
+              section: 'Journal',
+              page: 'Daily',
+              file_date: '2026-06-16',
+              clean_content: 'Today task',
+              status: 'TODO',
+              owner: '',
+              start_date: '',
+              due_date: today,
+              priority: 2
+            }
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Calendar, { ctx: { ...makeCtx(), today }, manifest: MANIFEST })
+    await flush()
+    const agendaBtn = screen.getByRole('button', { name: 'Agenda' })
+    await fireEvent.click(agendaBtn)
+    await flush()
+    expect(screen.getByLabelText('Overdue')).toBeInTheDocument()
+    expect(screen.getByLabelText('Today')).toBeInTheDocument()
+  })
+
+  it('Month grid click on a task still dispatches navigate-to-block (#322 AC preserved)', async () => {
+    // Re-verify the existing contract survives the merge.
+    const now = new Date()
+    const ymd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [
+        {
+          id: 'c1',
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          file_date: ymd,
+          clean_content: 'Standup meeting',
+          status: 'TODO',
+          due_date: ymd
+        }
+      ],
+      truncated: false
+    })
+    const handler = vi.fn()
+    window.addEventListener('navigate-to-block', handler)
+    render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const taskBtn = screen.getByText('Standup meeting')
+    await fireEvent.click(taskBtn)
+    expect(handler).toHaveBeenCalled()
+    window.removeEventListener('navigate-to-block', handler)
+  })
 })

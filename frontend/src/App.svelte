@@ -98,7 +98,6 @@
   let activeView = $state('notes')
   const views = [
     { id: 'notes', label: 'Notes', icon: 'description' },
-    { id: 'agenda', label: 'Agenda', icon: 'event_repeat' },
     { id: 'tags', label: 'Tags', icon: 'label' },
     { id: 'calendar', label: 'Calendar', icon: 'calendar_month' }
   ]
