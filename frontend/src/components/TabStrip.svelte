@@ -201,18 +201,6 @@
           onauxclick={(e) => handleAuxClick(e, tab)}
           ondblclick={() => handleDblClick(tab)}
         >
-          {#if showDirtyIndicators && (tab.dirty || tab.saveError)}
-            <span
-              class="tab-save-state"
-              class:error={!!tab.saveError}
-              class:dirty={!tab.saveError}
-              aria-hidden="true"
-            >
-              <span class="material-symbols-outlined text-[12px]">
-                {tab.saveError ? 'error' : 'circle'}
-              </span>
-            </span>
-          {/if}
           <span class="tab-label" class:italic={tab.preview}>{tab.page}</span>
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -220,21 +208,32 @@
                Ctrl+W handlers; this span is a mouse-only convenience and
                MUST NOT have role="button" (that would nest interactive
                elements inside the <button role="tab"> — HTML spec violation). -->
-          <span
-            aria-label="Close tab"
-            title="Close tab"
-            class="tab-close"
-            class:preview-close={tab.preview}
-            onclick={(e) => {
-              e.stopPropagation()
-              onCloseTab(tab.id)
-            }}
-          >
+          <div class="tab-action-slot">
+            {#if showDirtyIndicators && tab.saveError}
+              <span class="tab-save-state error" aria-hidden="true">
+                <span class="material-symbols-outlined text-[12px]">error</span>
+              </span>
+            {:else if showDirtyIndicators && tab.dirty}
+              <span class="dirty-dot" aria-hidden="true"></span>
+            {/if}
             <span
-              class="material-symbols-outlined text-[14px]"
-              aria-hidden="true">close</span
+              aria-label="Close tab"
+              title="Close tab"
+              class="tab-close"
+              class:preview-close={tab.preview}
+              class:has-indicator={showDirtyIndicators &&
+                (tab.dirty || tab.saveError)}
+              onclick={(e) => {
+                e.stopPropagation()
+                onCloseTab(tab.id)
+              }}
             >
-          </span>
+              <span
+                class="material-symbols-outlined text-[14px]"
+                aria-hidden="true">close</span
+              >
+            </span>
+          </div>
         </button>
       {/each}
     </div>
@@ -358,38 +357,82 @@
     font-style: italic;
   }
 
-  .tab-close {
+  .tab-action-slot {
+    position: relative;
+    width: 18px;
+    height: 18px;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
-    height: 18px;
-    border-radius: 4px;
-    color: inherit;
-    opacity: 0.5;
-    cursor: pointer;
-    transition:
-      opacity 120ms ease,
-      background-color 120ms ease;
     flex-shrink: 0;
   }
 
-  .tab-close:hover {
-    opacity: 1;
-    background: var(--color-hover, #1e2128);
+  .dirty-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--color-accent-primary-start, #2dd4bf);
+    transition:
+      transform 120ms ease,
+      opacity 120ms ease;
   }
 
-  /* Preview tabs: hide the close button until hover (industry-standard parity). */
-  .preview-close {
+  .tab-close {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    color: inherit;
+    cursor: pointer;
+    transition:
+      opacity 120ms ease,
+      background-color 120ms ease,
+      transform 120ms ease;
+    flex-shrink: 0;
+  }
+
+  /* Default state: if tab has dirty/error indicator, hide close button and show indicator */
+  .tab-button .tab-close.has-indicator {
     opacity: 0;
+    pointer-events: none;
+    transform: scale(0.6);
   }
 
-  .tab-button:hover .preview-close {
+  /* Preview tabs: hide close button by default if not dirty */
+  .tab-button.preview .tab-close:not(.has-indicator) {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* Pinned tabs: show close button by default if not dirty */
+  .tab-button:not(.preview) .tab-close:not(.has-indicator) {
     opacity: 0.5;
+    pointer-events: auto;
   }
 
-  .tab-button:hover .preview-close:hover {
-    opacity: 1;
+  /* Hover state on the tab button */
+  .tab-button:hover .dirty-dot {
+    opacity: 0;
+    transform: scale(0);
+  }
+
+  .tab-button:hover .tab-save-state.error {
+    opacity: 0;
+    transform: scale(0);
+  }
+
+  .tab-button:hover .tab-close {
+    opacity: 0.5;
+    pointer-events: auto;
+    transform: scale(1);
+  }
+
+  /* Hover state directly on the close button */
+  .tab-close:hover {
+    opacity: 1 !important;
+    background: var(--color-hover, #1e2128);
   }
 
   /* Tab drag-to-reorder drop indicators (#175). A vertical accent line at
@@ -421,40 +464,22 @@
     z-index: 10;
   }
 
-  /* Per-tab dirty/save-state indicators (#167). The dirty dot uses
-     --text-muted; the error glyph uses --status-danger. Both are icons
-     (not color alone) + the tab's title/tooltip carries the state text
-     for AT users. */
+  /* Per-tab dirty/save-state indicators (#167). The dirty dot uses CSS shapes;
+     the error glyph uses --status-danger. Both are accessible via tooltips/aria-labels. */
   .tab-save-state {
+    position: absolute;
+    inset: 0;
     display: flex;
     align-items: center;
+    justify-content: center;
     flex-shrink: 0;
     line-height: 1;
-  }
-
-  .tab-save-state.dirty {
-    color: var(--color-text-muted, #8b8b94);
-    animation: dirty-pulse 2s ease-in-out infinite;
+    transition:
+      transform 120ms ease,
+      opacity 120ms ease;
   }
 
   .tab-save-state.error {
     color: var(--color-status-danger, #f43f5e);
-  }
-
-  @keyframes dirty-pulse {
-    0%,
-    100% {
-      opacity: 0.6;
-    }
-    50% {
-      opacity: 1;
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .tab-save-state.dirty {
-      animation: none;
-      opacity: 0.8;
-    }
   }
 </style>

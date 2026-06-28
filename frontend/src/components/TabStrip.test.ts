@@ -351,14 +351,11 @@ describe('TabStrip (#142)', () => {
     const tabs = [
       mkTab({ notebook: 'W', section: '', page: 'A' }, { dirty: true })
     ]
-    render(TabStrip, {
+    const { container } = render(TabStrip, {
       props: defaultProps({ tabs, activeTabId: 'tab-A' })
     })
-    const glyph = screen.getByText('circle')
+    const glyph = container.querySelector('.dirty-dot')
     expect(glyph).toBeInTheDocument()
-    expect(glyph.closest('.tab-save-state')?.classList.contains('dirty')).toBe(
-      true
-    )
   })
 
   it('save-failed tab shows the error glyph (#167)', () => {
@@ -380,10 +377,10 @@ describe('TabStrip (#142)', () => {
 
   it('clean tab shows no save-state glyph (#167)', () => {
     const tabs = [mkTab({ notebook: 'W', section: '', page: 'A' })]
-    render(TabStrip, {
+    const { container } = render(TabStrip, {
       props: defaultProps({ tabs, activeTabId: 'tab-A' })
     })
-    expect(screen.queryByText('circle')).toBeNull()
+    expect(container.querySelector('.dirty-dot')).toBeNull()
     expect(screen.queryByText('error')).toBeNull()
   })
 
@@ -393,8 +390,8 @@ describe('TabStrip (#142)', () => {
     ]
     const props = defaultProps({ tabs, activeTabId: 'tab-A' })
     props.showDirtyIndicators = false
-    render(TabStrip, { props })
-    expect(screen.queryByText('circle')).toBeNull()
+    const { container } = render(TabStrip, { props })
+    expect(container.querySelector('.dirty-dot')).toBeNull()
   })
 
   it('dirty tab tooltip includes unsaved edits hint (#167)', () => {
