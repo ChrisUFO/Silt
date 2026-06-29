@@ -1471,7 +1471,7 @@ func TestSearch_FTS5SmokeAndSync(t *testing.T) {
 	dm := indexSearchable(t)
 	// The triggers must have kept blocks_fts in sync: a search for "sprint"
 	// returns rows from both indexed pages without an explicit rebuild.
-	res, err := dm.SearchBlocksPaged("sprint", 0, 10)
+	res, err := dm.SearchBlocksPaged("sprint", 0, 10, SearchFilters{})
 	if err != nil {
 		t.Fatalf("SearchBlocksPaged: %v", err)
 	}
@@ -1482,7 +1482,7 @@ func TestSearch_FTS5SmokeAndSync(t *testing.T) {
 
 func TestSearch_RankingPutsMostRelevantFirst(t *testing.T) {
 	dm := indexSearchable(t)
-	res, err := dm.SearchBlocksPaged("sprint planning", 0, 10)
+	res, err := dm.SearchBlocksPaged("sprint planning", 0, 10, SearchFilters{})
 	if err != nil {
 		t.Fatalf("SearchBlocksPaged: %v", err)
 	}
@@ -1497,7 +1497,7 @@ func TestSearch_RankingPutsMostRelevantFirst(t *testing.T) {
 
 func TestSearch_SnippetContainsHighlightMarkers(t *testing.T) {
 	dm := indexSearchable(t)
-	res, err := dm.SearchBlocksPaged("weather", 0, 10)
+	res, err := dm.SearchBlocksPaged("weather", 0, 10, SearchFilters{})
 	if err != nil {
 		t.Fatalf("SearchBlocksPaged: %v", err)
 	}
@@ -1516,7 +1516,7 @@ func TestSearch_MultiTermIsImplicitAND(t *testing.T) {
 	dm := indexSearchable(t)
 	// "sprint weather" must AND: only blocks containing BOTH survive. No
 	// single block has both terms, so the result set is empty.
-	res, err := dm.SearchBlocksPaged("sprint weather", 0, 10)
+	res, err := dm.SearchBlocksPaged("sprint weather", 0, 10, SearchFilters{})
 	if err != nil {
 		t.Fatalf("SearchBlocksPaged: %v", err)
 	}
@@ -1524,7 +1524,7 @@ func TestSearch_MultiTermIsImplicitAND(t *testing.T) {
 		t.Errorf("AND of disjoint terms should return 0, got %d", res.Total)
 	}
 	// "sprint review" matches a2 only.
-	res, err = dm.SearchBlocksPaged("sprint review", 0, 10)
+	res, err = dm.SearchBlocksPaged("sprint review", 0, 10, SearchFilters{})
 	if err != nil {
 		t.Fatalf("SearchBlocksPaged: %v", err)
 	}
@@ -1548,7 +1548,7 @@ func TestSearch_PerPageGroupingCapsResultsPerPage(t *testing.T) {
 	if err := dm.IndexFileBlocks("vault", "NB", "", "PG", blocks, nil); err != nil {
 		t.Fatal(err)
 	}
-	res, err := dm.SearchBlocksPaged("alpha", 0, 50)
+	res, err := dm.SearchBlocksPaged("alpha", 0, 50, SearchFilters{})
 	if err != nil {
 		t.Fatalf("SearchBlocksPaged: %v", err)
 	}
@@ -1561,7 +1561,7 @@ func TestSearch_PaginationAndHasMore(t *testing.T) {
 	dm := indexSearchable(t)
 	// "sprint" matches a1, a2 (page A) + b1 (page B). After per-page grouping
 	// (<=3/page) all three survive. Page size 2 → HasMore on the first page.
-	page1, err := dm.SearchBlocksPaged("sprint", 0, 2)
+	page1, err := dm.SearchBlocksPaged("sprint", 0, 2, SearchFilters{})
 	if err != nil {
 		t.Fatalf("page1: %v", err)
 	}
@@ -1574,7 +1574,7 @@ func TestSearch_PaginationAndHasMore(t *testing.T) {
 	if page1.Total < 3 {
 		t.Errorf("total expected >=3, got %d", page1.Total)
 	}
-	page2, err := dm.SearchBlocksPaged("sprint", 2, 2)
+	page2, err := dm.SearchBlocksPaged("sprint", 2, 2, SearchFilters{})
 	if err != nil {
 		t.Fatalf("page2: %v", err)
 	}
@@ -1595,7 +1595,7 @@ func TestSearch_PaginationAndHasMore(t *testing.T) {
 
 func TestSearch_EmptyQueryReturnsEmpty(t *testing.T) {
 	dm := indexSearchable(t)
-	res, err := dm.SearchBlocksPaged("   ", 0, 10)
+	res, err := dm.SearchBlocksPaged("   ", 0, 10, SearchFilters{})
 	if err != nil {
 		t.Fatalf("SearchBlocksPaged: %v", err)
 	}
@@ -1615,7 +1615,7 @@ func TestSearch_TagHydrationSurvivesFTS(t *testing.T) {
 	if err := dm.IndexFileBlocks("vault", "Work", "", "Daily", []parser.ParsedBlock{b}, []string{"dev/release"}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := dm.SearchBlocksPaged("release", 0, 10)
+	res, err := dm.SearchBlocksPaged("release", 0, 10, SearchFilters{})
 	if err != nil {
 		t.Fatalf("SearchBlocksPaged: %v", err)
 	}
@@ -1633,7 +1633,7 @@ func TestSearch_RebuildFTSIndexRepairs(t *testing.T) {
 	if err := dm.RebuildFTSIndex(); err != nil {
 		t.Fatalf("RebuildFTSIndex: %v", err)
 	}
-	res, err := dm.SearchBlocksPaged("sprint", 0, 10)
+	res, err := dm.SearchBlocksPaged("sprint", 0, 10, SearchFilters{})
 	if err != nil {
 		t.Fatalf("SearchBlocksPaged after rebuild: %v", err)
 	}
@@ -1651,19 +1651,19 @@ func TestSearch_UpdateReplacesOldFTSContent(t *testing.T) {
 	if err := dm.IndexFileBlocks("vault", "NB", "", "PG", []parser.ParsedBlock{orig}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if res, _ := dm.SearchBlocksPaged("needle", 0, 10); res.Total != 1 {
+	if res, _ := dm.SearchBlocksPaged("needle", 0, 10, SearchFilters{}); res.Total != 1 {
 		t.Fatalf("pre-update: expected 1 needle, got %d", res.Total)
 	}
 	updated := parser.ParsedBlock{ID: orig.ID, Type: parser.BlockNote, CleanText: "the needle is gone now replaced by thread", LineNumber: 1}
 	if err := dm.IndexFileBlocks("vault", "NB", "", "PG", []parser.ParsedBlock{updated}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if res, _ := dm.SearchBlocksPaged("needle", 0, 10); res.Total == 0 {
+	if res, _ := dm.SearchBlocksPaged("needle", 0, 10, SearchFilters{}); res.Total == 0 {
 		// "needle" still present in the updated text, so this should still hit.
 		t.Errorf("update lost the FTS row entirely")
 	}
 	// A term that was ONLY in the old text must no longer match.
-	if res, _ := dm.SearchBlocksPaged("haystack", 0, 10); res.Total != 0 {
+	if res, _ := dm.SearchBlocksPaged("haystack", 0, 10, SearchFilters{}); res.Total != 0 {
 		t.Errorf("stale FTS row: 'haystack' still matches after update (total=%d)", res.Total)
 	}
 }
@@ -1735,7 +1735,7 @@ func TestSearch_UnicodeContentMatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	// accented-Latin term that the old filter would have stripped to "caf"/"resum".
-	res, err := dm.SearchBlocksPaged("café", 0, 10)
+	res, err := dm.SearchBlocksPaged("café", 0, 10, SearchFilters{})
 	if err != nil {
 		t.Fatalf("SearchBlocksPaged: %v", err)
 	}

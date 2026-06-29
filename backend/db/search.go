@@ -14,6 +14,26 @@ import (
 // monopolize the result list. Tunable; 3 keeps the modal diverse.
 const searchMaxPerGroup = 3
 
+// SearchFilters narrows a SearchBlocksPaged query (#186 global enhancements).
+// Empty fields mean "no filter on this dimension". Sort is "relevance" (bm25,
+// the default) or "recency" (file_date DESC, a per-block date proxy — blocks
+// carry their own date in the identity comment). VaultOnly scopes the search
+// to in-vault blocks (excludes linked-notebook sources) — the scope control
+// on the global search.
+type SearchFilters struct {
+	Notebook  string `json:"notebook"`
+	Section   string `json:"section"`
+	Tag       string `json:"tag"`
+	Type      string `json:"type"`      // TASK / NOTE / HEADER / CODE / TABLE / DETAILS / CALLOUT
+	Sort      string `json:"sort"`      // "" | "relevance" | "recency"
+	VaultOnly bool   `json:"vaultOnly"` // exclude linked-notebook sources (source != 'vault')
+}
+
+// hasFilters is true when any narrowing dimension is set.
+func (f SearchFilters) hasFilters() bool {
+	return f.Notebook != "" || f.Section != "" || f.Tag != "" || f.Type != ""
+}
+
 // buildFTSQuery turns a free-text user query into a safe FTS5 MATCH
 // expression. The index uses tokenize='unicode61', so non-ASCII content
 // (CJK, accented Latin, Cyrillic, …) IS tokenized and searchable — the query
@@ -47,7 +67,7 @@ func buildFTSQuery(query string) string {
 // thin wrapper over SearchBlocksPaged returning the first page (offset 0,
 // limit 50) for backwards compatibility with the original single-shot binding.
 func (dm *DatabaseManager) SearchBlocks(query string) ([]parser.TaskResult, error) {
-	res, err := dm.SearchBlocksPaged(query, 0, 50)
+	res, err := dm.SearchBlocksPaged(query, 0, 50, SearchFilters{})
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +92,7 @@ const searchFlatCap = 500
 // notebook/section/page) is applied in Go because FTS5 helper functions
 // cannot survive a window-function subquery wrap. Tag hydration is a single
 // secondary SELECT (no N+1).
-func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int) (parser.SearchResult, error) {
+func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, filters SearchFilters) (parser.SearchResult, error) {
 	query = strings.TrimSpace(query)
 	if query == "" || offset < 0 || limit <= 0 {
 		return parser.SearchResult{Results: []parser.TaskResult{}, Total: 0, Offset: offset, Limit: limit}, nil
@@ -82,20 +102,59 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int) (p
 		return parser.SearchResult{Results: []parser.TaskResult{}, Total: 0, Offset: offset, Limit: limit}, nil
 	}
 
+	// Build the dynamic WHERE + ORDER BY from the filters. All user input is
+	// parameterized (never string-interpolated) — a synced vault's tag/notebook
+	// name can't inject SQL.
+	var where []string
+	var args []any
+	where = append(where, "blocks_fts MATCH ?")
+	args = append(args, fts)
+	if filters.Notebook != "" {
+		where = append(where, "b.notebook = ?")
+		args = append(args, filters.Notebook)
+	}
+	if filters.Section != "" {
+		where = append(where, "b.section = ?")
+		args = append(args, filters.Section)
+	}
+	if filters.Type != "" {
+		where = append(where, "b.type = ?")
+		args = append(args, filters.Type)
+	}
+	if filters.Tag != "" {
+		// Match the exact tag OR any descendant (hierarchical: "work" matches
+		// "work/project"). IN-subquery keeps it one clause.
+		where = append(where, "b.id IN (SELECT block_id FROM tags WHERE raw_path = ? OR raw_path LIKE ?)")
+		args = append(args, filters.Tag, filters.Tag+"/%")
+	}
+	if filters.VaultOnly {
+		// Scope: in-vault blocks only (exclude linked-notebook sources).
+		where = append(where, "b.source = 'vault'")
+	}
+	orderClause := "bm25(blocks_fts) AS rank"
+	order := "rank"
+	if filters.Sort == "recency" {
+		// file_date is the per-block date (YYYY-MM-DD); most-recent first, with
+		// bm25 as the tiebreaker.
+		orderClause = "b.file_date DESC, bm25(blocks_fts) AS rank"
+		order = "b.file_date DESC, rank"
+	}
+
 	pageQuery := `
 		SELECT b.id, b.parent_id, b.notebook, b.section, b.page, b.file_date, b.depth,
 		       b.raw_content, b.clean_content, b.line_number,
 		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''),
 		       COALESCE(t.due_date, ''), COALESCE(t.priority, 0),
-		       snippet(blocks_fts, 0, '<mark>', '</mark>', '...', 12),
-		       bm25(blocks_fts) AS rank
+		       snippet(blocks_fts, 0, '<mark>', '</mark>', '...', 20),
+		       ` + orderClause + `
 		FROM blocks_fts
 		JOIN blocks b ON b.rowid = blocks_fts.rowid
 		LEFT JOIN tasks t ON b.id = t.block_id
-		WHERE blocks_fts MATCH ?
-		ORDER BY rank
+		WHERE ` + strings.Join(where, " AND ") + `
+		ORDER BY ` + order + `
 		LIMIT ?`
-	rows, err := dm.db.Query(pageQuery, fts, searchFlatCap)
+	args = append(args, searchFlatCap)
+	rows, err := dm.db.Query(pageQuery, args...)
 	if err != nil {
 		return parser.SearchResult{}, fmt.Errorf("failed to search blocks: %w", err)
 	}

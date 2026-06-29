@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"silt/backend/config"
+	"silt/backend/db"
 	"silt/backend/parser"
 	"sort"
 	"strings"
@@ -403,7 +404,11 @@ func (a *App) SearchBlocks(query string) ([]parser.TaskResult, error) {
 // SearchBlocksPaged runs the FTS5 search and returns a ranked, paginated
 // envelope with highlighted snippets, the total match count, and a HasMore
 // flag. offset/limit control the page (defaults applied by the caller).
-func (a *App) SearchBlocksPaged(query string, offset, limit int) (parser.SearchResult, error) {
+// SearchBlocksPaged runs the FTS5 global search with optional filters (#186
+// global enhancements: notebook/section/tag/type/sort/scope). The frontend
+// SearchModal drives this; an empty SearchFilters reproduces the original
+// unfiltered behavior (whole vault + linked notebooks, bm25 relevance).
+func (a *App) SearchBlocksPaged(query string, offset, limit int, filters db.SearchFilters) (parser.SearchResult, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {
@@ -416,7 +421,7 @@ func (a *App) SearchBlocksPaged(query string, offset, limit int) (parser.SearchR
 	var res parser.SearchResult
 	var err error
 	a.coordinator.WithDBRead(func() {
-		res, err = a.db.SearchBlocksPaged(query, offset, limit)
+		res, err = a.db.SearchBlocksPaged(query, offset, limit, filters)
 	})
 
 	return res, err
