@@ -707,3 +707,29 @@ The jsdom-untestable paths are pinned here.
 | 3 | In a task line, type `@alice` and confirm; confirm again as `@bob` | The task's owner becomes `alice`, then `bob` (the `[owner:: …]` token is written/updated, not duplicated); mentioning `@alice` in a regular paragraph inserts the chip with no owner write-back (#329). |
 | 4 | Switch vaults while a Kanban/Calendar sidebar is mounted | No "missing session token" error; the new vault opens with default scope/filters/focusDate (not the previous vault's) (#326 items 1, 5). |
 | 5 | Press `Ctrl+Shift+B` while editing, and again with the sidebar collapsed | Focus jumps into the active sidebar's first control; if collapsed it expands first (#326 item 8). |
+
+# Inline Drag Handle — Manual Matrix Additions (#339)
+
+`#339` retired the `@tiptap/extension-drag-handle` floating grip (which
+rendered on top of the existing inline span and produced two stacked icons
+on every hovered block) and replaced it with a custom ProseMirror extension
+(`SiltInlineDragHandle`, `frontend/src/lib/editor/siltInlineDragHandle.ts`)
+that turns the inline span — which every block-level NodeView was already
+rendering — into the real drag trigger. Unit tests cover the pure helpers
+(`resolveDraggedBlockPosition`, `buildBlockSlice`, `buildNodeDragSelection`,
+`computeDragImageOffset`) and the extension registration contract; the
+HTML5 dragstart dispatch path is gated here because jsdom cannot drive it
+(`AGENTS.md` rule).
+
+## Manual Verification Matrix (`wails dev`)
+
+| # | Scenario | Expected |
+|---|---|---|
+| 1 | Hover each block type (Note, Task, Header, Embed) | Exactly ONE drag-handle glyph visible per hovered block — no more stacked icons; the handle shows on hover with `cursor: grab` and `aria-hidden="true"` (mouse-only affordance; keyboard path is Alt+↑/↓). |
+| 2 | Grab a note block's inline grip and drag it three positions down | The block lands in the new position; on-disk markdown order updates; the `id=` identity and `[key:: …]` metadata are intact; the depth guides position over the new row. |
+| 3 | Grab a task's inline grip and drag | Reorder lands; `[ ]` / `[x]` status and `[owner:: …]`/`[due_date:: …]` tokens are preserved verbatim; the inline drag-end does NOT toggle the task's `cycleStatus` checkbox (the row-level click is the checkbox; the grip drag is the move). |
+| 4 | Grab a header's inline grip and drag | Reorder lands; the header's level (h1-h6) and alignment are preserved; the next h1/h2 split (if any) is unaffected. |
+| 5 | Grab an embed block's inline grip and drag (openable and read-only variants) | Reorder lands; in openable cards the click-to-open handler still fires on plain click; in read-only cards the rendering-mode icon still triggers its in-place action. Neither variant triggers the delete button by accident. |
+| 6 | Press `Alt+↑` / `Alt+↓` repeatedly while a block is selected | Keyboard reorder still moves blocks (the `SiltBlockKeymaps` path); the inline grip does not capture `Alt` keys; no regression to `#330`. |
+| 7 | `Esc` mid-drag (during the `dragstart` → released before `drop`) | Drag cancels — no reorder on the original position; the cursor reverts to `grab`; `BlockIndentOnDrop`'s depth-guide overlay fades. |
+| 8 | Inspector / DevTools: open the editor and check the DOM for `[data-drag-handle]` spans | Every block-level NodeView (Note / Task / Header / Embed) renders exactly one span with `draggable="true"`; there is NO floating `.silt-drag-handle` overlay outside the editor surface (the old floating div is gone — `frontend/src/index.css` no longer contains `.silt-drag-handle` rules; `frontend/package.json` no longer depends on `@tiptap/extension-drag-handle`). |

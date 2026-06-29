@@ -50,7 +50,9 @@ const siltInlineDragHandleKey = new PluginKey('siltInlineDragHandle')
  * `dragIndentDrop.ts` enforces the same top-level-only invariant.
  */
 export function resolveDraggedBlockPosition(
-  doc: { forEach: (cb: (child: any, offset: number) => boolean | void) => void },
+  doc: {
+    forEach: (cb: (child: any, offset: number) => boolean | void) => void
+  },
   blockId: string
 ): { pos: number; node: any } | null {
   let found: { pos: number; node: any } | null = null
@@ -204,7 +206,11 @@ function handleDragStart(view: EditorView, event: DragEvent): void {
   const nodeSel = selection instanceof NodeSelection ? selection : undefined
   // Cast `view.dragging` — the runtime accepts `{slice, move, node}` even
   // though the public `.d.ts` only types `slice` + `move`.
-  ;(view as unknown as { dragging: { slice: Slice; move: boolean; node: NodeSelection | undefined } }).dragging = {
+  ;(
+    view as unknown as {
+      dragging: { slice: Slice; move: boolean; node: NodeSelection | undefined }
+    }
+  ).dragging = {
     slice,
     move: true,
     node: nodeSel

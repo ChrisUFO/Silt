@@ -25,9 +25,9 @@ describe('resolveDraggedBlockPosition — pure helper', () => {
   // The real `ProseMirror.Node.forEach` walks doc children, calling the
   // callback with `(child, offset)`. We mimic it with a tiny shim so the
   // pure function can be tested without standing up a full editor.
-  function fakeDoc(
-    blocks: Array<{ id: string | null; type?: string }>
-  ): { forEach: (cb: (child: any, offset: number) => boolean | void) => void } {
+  function fakeDoc(blocks: Array<{ id: string | null; type?: string }>): {
+    forEach: (cb: (child: any, offset: number) => boolean | void) => void
+  } {
     let offset = 0
     const children = blocks.map((b) => ({
       type: { name: b.type ?? 'noteBlock' },
@@ -78,7 +78,10 @@ describe('resolveDraggedBlockPosition — pure helper', () => {
     const fake = {
       forEach(cb: (child: any, off: number) => boolean | void) {
         cb({ type: { name: 'noteBlock' }, nodeSize: 2 }, offset)
-        cb({ type: { name: 'noteBlock' }, attrs: { id: 'real' }, nodeSize: 2 }, offset + 2)
+        cb(
+          { type: { name: 'noteBlock' }, attrs: { id: 'real' }, nodeSize: 2 },
+          offset + 2
+        )
       }
     }
     expect(resolveDraggedBlockPosition(fake, 'real')?.pos).toBe(2)
@@ -113,7 +116,9 @@ describe('buildBlockSlice — pure helper', () => {
       extensions: [StarterKit],
       content: {
         type: 'doc',
-        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'one' }] }]
+        content: [
+          { type: 'paragraph', content: [{ type: 'text', text: 'one' }] }
+        ]
       }
     })
     const doc = editor.state.doc
@@ -201,11 +206,17 @@ describe('computeDragImageOffset — pure helper (defensive against broken getBo
   })
 
   it('returns (0, 0) when handleRect.left is Infinity', () => {
-    expect(computeDragImageOffset(100, 200, Infinity, 20)).toEqual({ x: 0, y: 0 })
+    expect(computeDragImageOffset(100, 200, Infinity, 20)).toEqual({
+      x: 0,
+      y: 0
+    })
   })
 
   it('returns (0, 0) when blockRect.width is -Infinity (detached DOM edge case)', () => {
-    expect(computeDragImageOffset(100, -Infinity, 130, 20)).toEqual({ x: 0, y: 0 })
+    expect(computeDragImageOffset(100, -Infinity, 130, 20)).toEqual({
+      x: 0,
+      y: 0
+    })
   })
 
   it('handles a zero-width block gracefully', () => {
