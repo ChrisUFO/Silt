@@ -49,6 +49,7 @@
   import SelectionBubble from './editor/SelectionBubble.svelte'
   import TableContextToolbar from './editor/TableContextToolbar.svelte'
   import TableSizePicker from './editor/TableSizePicker.svelte'
+  import MathLatexPopover from './editor/MathLatexPopover.svelte'
   import { DEFAULT_COLOR_PALETTE, resolveColor } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { clampToViewport } from '../lib/editor/popoverPositioning'
@@ -204,6 +205,19 @@
   let showTableSizePicker = $state(false)
   let tableSizeCoords = $state<{ left: number; top: number } | null>(null)
 
+  // LaTeX equation popover (Phase 5 / #328). Replaces window.prompt for both
+  // the /math slash command (block create) and click-to-edit on a math node
+  // (inline or block). The popover is owned here so it renders as a sibling of
+  // the editor surface — same layering model as the link/color/table popovers
+  // — and math NodeViews request editing via the silt:edit-math window event
+  // (passing their own latex/displayMode/coords/update callback in the detail).
+  let mathPopover = $state<{
+    latex: string
+    displayMode: boolean
+    coords: { left: number; top: number }
+    onCommit: (latex: string) => void
+  } | null>(null)
+
   // View mode (#171) is managed by the parent container.
 
   // First-run tip: dismissed when 'formatting_tip_v1' is in dismissed_tips.
@@ -281,6 +295,42 @@
     showTableSizePicker = false
     tableSizeCoords = null
     editorInstance?.chain().focus().run()
+  }
+
+  // --- LaTeX equation popover (Phase 5 / #328) -----------------------------
+  // EDIT site: a math NodeView dispatches silt:edit-math with its latex,
+  // displayMode, DOM-derived coords, and an onCommit that calls its own
+  // updateAttributes. CREATE site (/math) opens the popover directly below.
+  function onEditMath(e: Event): void {
+    const detail = (e as CustomEvent).detail as {
+      latex: string
+      displayMode: boolean
+      coords: { left: number; top: number }
+      onCommit: (latex: string) => void
+    } | null
+    if (!detail) return
+    mathPopover = {
+      latex: detail.latex,
+      displayMode: detail.displayMode,
+      coords: detail.coords,
+      onCommit: detail.onCommit
+    }
+  }
+
+  function commitMathPopover(latex: string): void {
+    const cb = mathPopover?.onCommit
+    mathPopover = null
+    cb?.(latex)
+    if (editorInstance && !editorInstance.isDestroyed) {
+      editorInstance.commands.focus()
+    }
+  }
+
+  function cancelMathPopover(): void {
+    mathPopover = null
+    if (editorInstance && !editorInstance.isDestroyed) {
+      editorInstance.commands.focus()
+    }
   }
 
   // --- Color picker popover (#170) -----------------------------------------
@@ -744,6 +794,7 @@
   window.addEventListener('silt:change-block-type', onChangeBlockType)
   window.addEventListener('silt:set-block-align', onSetBlockAlign)
   window.addEventListener('silt:open-color-picker', onOpenColorPicker)
+  window.addEventListener('silt:edit-math', onEditMath)
   window.addEventListener('scroll', onEditorScroll, true)
   document.addEventListener('click', onDocumentClick)
 
@@ -764,6 +815,7 @@
     window.removeEventListener('silt:change-block-type', onChangeBlockType)
     window.removeEventListener('silt:set-block-align', onSetBlockAlign)
     window.removeEventListener('silt:open-color-picker', onOpenColorPicker)
+    window.removeEventListener('silt:edit-math', onEditMath)
     window.removeEventListener('scroll', onEditorScroll, true)
     document.removeEventListener('click', onDocumentClick)
   })
@@ -891,10 +943,22 @@
     } else if (commandId === 'code-block') {
       insertCodeBlock(editorInstance as any)
     } else if (commandId === 'math') {
-      // Best-effort entry: prompt for the LaTeX, then insert the block
-      // equation. A rich inline LaTeX editor is a tracked follow-up.
-      const latex = window.prompt('LaTeX equation:', 'a^2 + b^2 = c^2')
-      if (latex !== null) insertBlockMath(editorInstance as any, latex)
+      // Open the LaTeX popover (block mode); on commit, insert a block
+      // equation at the selection via the same insertBlockMath path the old
+      // prompt used. The popover (with live preview) replaces window.prompt.
+      if (!editorInstance || editorInstance.isDestroyed) return
+      try {
+        const { selection } = editorInstance.state
+        const c = editorInstance.view.coordsAtPos(selection.from)
+        mathPopover = {
+          latex: '',
+          displayMode: true,
+          coords: { left: c.left, top: c.bottom },
+          onCommit: (l: string) => insertBlockMath(editorInstance as any, l)
+        }
+      } catch {
+        /* no selection coords → don't open the popover */
+      }
     } else if (commandId === 'details') {
       insertDetails(editorInstance as any)
     } else if (commandId === 'table') {
@@ -1500,6 +1564,15 @@
       top={tableSizeCoords.top}
       onConfirm={confirmTableSize}
       onCancel={cancelTableSize}
+    />
+  {/if}
+  {#if mathPopover}
+    <MathLatexPopover
+      latex={mathPopover.latex}
+      displayMode={mathPopover.displayMode}
+      coords={mathPopover.coords}
+      onCommit={commitMathPopover}
+      onCancel={cancelMathPopover}
     />
   {/if}
 </div>

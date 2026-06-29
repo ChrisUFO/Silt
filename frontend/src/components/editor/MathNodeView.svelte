@@ -42,15 +42,29 @@
     }
   })
 
-  // Click opens a prompt pre-filled with the raw LaTeX — both an edit affordance
-  // and a way to copy the source (#191). null = Cancel (no change). Clearing a
-  // previously-non-empty equation to '' is guarded (use delete to remove the
-  // node) so a stray clear+OK can't silently wipe it.
-  function editLatex(): void {
-    const next = window.prompt('LaTeX:', latex)
-    if (next === null) return
-    if (next === '' && latex !== '') return
-    updateAttributes({ latex: next })
+  // Click opens the LaTeX popover (Phase 5 / #328) pre-filled with the raw
+  // source — both an edit affordance and a way to view/copy the LaTeX. The
+  // popover itself is owned by TipTapEditor so it renders outside the editable
+  // surface; this NodeView hands over its latex/displayMode, DOM-derived
+  // coords, and an updateAttributes callback via the silt:edit-math event. An
+  // empty equation opens the popover for fresh entry; deletion is via Backspace
+  // on the node (the popover's Commit is disabled for empty source).
+  function editLatex(e: MouseEvent): void {
+    const target = e.currentTarget as HTMLElement | null
+    const rect = target?.getBoundingClientRect()
+    const coords = rect
+      ? { left: rect.left, top: rect.bottom }
+      : { left: 100, top: 100 }
+    window.dispatchEvent(
+      new CustomEvent('silt:edit-math', {
+        detail: {
+          latex,
+          displayMode,
+          coords,
+          onCommit: (next: string) => updateAttributes({ latex: next })
+        }
+      })
+    )
   }
 </script>
 
