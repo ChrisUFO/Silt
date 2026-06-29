@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -56,6 +57,33 @@ type EditorConfig struct {
 	// DefaultViewMode controls whether pages open in "edit" (TipTap WYSIWYG)
 	// or "source" (raw markdown) mode (#171). Default "edit".
 	DefaultViewMode *string `yaml:"default_view_mode,omitempty" json:"default_view_mode,omitempty"`
+	// SpellcheckEnabled gates the inline typo-js spellcheck layer (#196).
+	// Default true — matches every competing note app; markdown purists can
+	// disable from Settings → Editor. Stored as *bool so "unset" stays
+	// distinguishable from "explicitly false" through the Load → normalize
+	// path. Spellcheck is a pure view-layer decoration; the on-disk file is
+	// never modified by it.
+	SpellcheckEnabled *bool `yaml:"spellcheck_enabled,omitempty" json:"spellcheck_enabled,omitempty"`
+	// SpellcheckLanguage selects the Hunspell dictionary (#196). v1 ships
+	// en-US bundled; the value must name a dictionary present under
+	// frontend/public/dictionaries/<lang>/. Default "en-US".
+	SpellcheckLanguage *string `yaml:"spellcheck_language,omitempty" json:"spellcheck_language,omitempty"`
+	// TypewriterMode keeps the active line at a fixed vertical ratio of the
+	// editor viewport (#187). Default false (opt-in) — it pairs naturally
+	// with FocusMode but is independently togglable. Pure scroll-presentation;
+	// zero content/schema/on-disk impact.
+	TypewriterMode *bool `yaml:"typewriter_mode,omitempty" json:"typewriter_mode,omitempty"`
+	// TypewriterModeRatio is the viewport fraction (0–1) at which the active
+	// line is held when TypewriterMode is on (#187). Default 0.5 (center,
+	// matching iA Writer). normalize() clamps to [0.1, 0.9].
+	TypewriterModeRatio *float64 `yaml:"typewriter_mode_ratio,omitempty" json:"typewriter_mode_ratio,omitempty"`
+	// CustomDictionary is the per-vault list of user-added spellcheck words
+	// (#196). Lives in the YAML tier (ARCHITECTURE §0 rule 2 — per-vault UI
+	// prefs), NOT a separate file and NOT SQLite (it is user intent).
+	// normalize() guarantees non-nil, de-duplicated, trimmed, lowercased,
+	// sorted. A linked notebook may carry its own co-located override
+	// (arrays replace, §3.1) so an external notebook travels with its words.
+	CustomDictionary []string `yaml:"custom_dictionary,omitempty" json:"custom_dictionary,omitempty"`
 }
 
 // ParsingConfig holds the task-parse rules. The task regexes themselves
@@ -241,6 +269,11 @@ func Defaults() SystemConfig {
 			ShowWordCount:           boolPtr(false),
 			FocusMode:               boolPtr(false),
 			DefaultViewMode:         stringPtr("edit"),
+			SpellcheckEnabled:       boolPtr(true),
+			SpellcheckLanguage:      stringPtr("en-US"),
+			TypewriterMode:          boolPtr(false),
+			TypewriterModeRatio:     float64Ptr(0.5),
+			CustomDictionary:        []string{},
 		},
 		Parsing: ParsingConfig{
 			AutoInjectUUID:      true,
@@ -303,6 +336,18 @@ func Defaults() SystemConfig {
 			// Formatting toolbar toggle and focus mode toggle (#168 Phase 3).
 			"toggle_format_toolbar": "Ctrl+Shift+F",
 			"toggle_focus_mode":     "Ctrl+Shift+D",
+			// Sprint 17 — Search, Find/Replace & Writing Aids.
+			// find_in_page (Ctrl+F) and replace (Ctrl+H) are the universal
+			// in-editor find/replace bindings (VS Code/Docs/Office). global_replace
+			// (Ctrl+Shift+H) escalates replace to cross-vault (VS Code "replace in
+			// files"). toggle_typewriter_mode (Ctrl+Shift+Y) pairs with
+			// toggle_focus_mode (Ctrl+Shift+D) as the writing-mode toggles.
+			// Spellcheck deliberately has NO hotkey — it's wavy-underline +
+			// right-click + a FormatToolbar button (see SPECS.md).
+			"find_in_page":           "Ctrl+F",
+			"replace":                "Ctrl+H",
+			"global_replace":         "Ctrl+Shift+H",
+			"toggle_typewriter_mode": "Ctrl+Shift+Y",
 		},
 		Plugins: PluginsConfig{
 			Active:   []string{"silt-agenda", "silt-calendar", "silt-kanban"},
@@ -611,7 +656,67 @@ func normalize(cfg SystemConfig) SystemConfig {
 		v := strings.TrimSpace(*cfg.Editor.DefaultViewMode)
 		if v != "edit" && v != "source" {
 			cfg.Editor.DefaultViewMode = stringPtr("edit")
+		} else {
+			cfg.Editor.DefaultViewMode = stringPtr(v)
 		}
+	}
+	// SpellcheckEnabled: nil → true (#196). Matches every competing note app;
+	// markdown purists disable from Settings → Editor.
+	if cfg.Editor.SpellcheckEnabled == nil {
+		cfg.Editor.SpellcheckEnabled = boolPtr(true)
+	}
+	// SpellcheckLanguage: nil → "en-US" (#196). A non-empty value must name a
+	// dictionary shipped under frontend/public/dictionaries/<lang>/; an empty
+	// or whitespace-only value collapses to the default rather than failing
+	// the whole config load (defensive — a hand-edited blank shouldn't abort).
+	if cfg.Editor.SpellcheckLanguage == nil {
+		cfg.Editor.SpellcheckLanguage = stringPtr("en-US")
+	} else {
+		v := strings.TrimSpace(*cfg.Editor.SpellcheckLanguage)
+		if v == "" {
+			v = "en-US"
+		}
+		cfg.Editor.SpellcheckLanguage = stringPtr(v)
+	}
+	// TypewriterMode: nil → false (#187). Opt-in distraction-free scroll.
+	if cfg.Editor.TypewriterMode == nil {
+		cfg.Editor.TypewriterMode = boolPtr(false)
+	}
+	// TypewriterModeRatio: nil → 0.5 (iA Writer default; #187). Clamp to
+	// [0.1, 0.9] so the active line stays meaningfully on-screen — 0.0 would
+	// pin it to the very top edge, 1.0 to the very bottom.
+	if cfg.Editor.TypewriterModeRatio == nil {
+		cfg.Editor.TypewriterModeRatio = float64Ptr(0.5)
+	} else {
+		r := *cfg.Editor.TypewriterModeRatio
+		if r < 0.1 {
+			r = 0.1
+		}
+		if r > 0.9 {
+			r = 0.9
+		}
+		cfg.Editor.TypewriterModeRatio = float64Ptr(r)
+	}
+	// CustomDictionary: the per-vault spellcheck word list (#196). Normalize
+	// to a non-nil, de-duplicated, trimmed, lowercased, sorted slice so the
+	// IPC layer never serializes null and lookups are deterministic. Case is
+	// flattened because Hunspell lookups are case-insensitive for en-US and
+	// the list is a set, not an order-preserving collection.
+	if cfg.Editor.CustomDictionary == nil {
+		cfg.Editor.CustomDictionary = []string{}
+	} else {
+		seen := make(map[string]bool, len(cfg.Editor.CustomDictionary))
+		out := make([]string, 0, len(cfg.Editor.CustomDictionary))
+		for _, w := range cfg.Editor.CustomDictionary {
+			w = strings.ToLower(strings.TrimSpace(w))
+			if w == "" || seen[w] {
+				continue
+			}
+			seen[w] = true
+			out = append(out, w)
+		}
+		sort.Strings(out)
+		cfg.Editor.CustomDictionary = out
 	}
 	return cfg
 }
@@ -623,6 +728,10 @@ func boolPtr(b bool) *bool { return &b }
 // stringPtr is a small helper for the Defaults() block so *string fields can
 // be initialized inline without a temporary variable.
 func stringPtr(s string) *string { return &s }
+
+// float64Ptr is a small helper for the Defaults() block so *float64 fields can
+// be initialized inline without a temporary variable.
+func float64Ptr(f float64) *float64 { return &f }
 
 // writeFileAtomic writes data to a sibling temp file, fsyncs it, then renames
 // it over path. Kept local (rather than reusing parser.WriteFileAtomic) so the

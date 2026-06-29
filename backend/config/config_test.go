@@ -971,3 +971,180 @@ func TestLoad_LegacyOpenTabsMissingViewMode(t *testing.T) {
 		t.Errorf("legacy open_tabs entry view_mode should default to empty (Edit), got %q", cfg.UI.OpenTabs[0].ViewMode)
 	}
 }
+
+// --- Sprint 17: search / find-replace / writing aids config ---
+
+// TestDefaults_SearchWritingAids confirms the Sprint 17 editor config fields
+// and hotkeys ship with the documented defaults.
+func TestDefaults_SearchWritingAids(t *testing.T) {
+	d := Defaults()
+	// Editor fields.
+	if d.Editor.SpellcheckEnabled == nil || *d.Editor.SpellcheckEnabled != true {
+		t.Errorf("defaults spellcheck_enabled should be *true, got %v", d.Editor.SpellcheckEnabled)
+	}
+	if d.Editor.SpellcheckLanguage == nil || *d.Editor.SpellcheckLanguage != "en-US" {
+		t.Errorf("defaults spellcheck_language should be *\"en-US\", got %v", d.Editor.SpellcheckLanguage)
+	}
+	if d.Editor.TypewriterMode == nil || *d.Editor.TypewriterMode != false {
+		t.Errorf("defaults typewriter_mode should be *false, got %v", d.Editor.TypewriterMode)
+	}
+	if d.Editor.TypewriterModeRatio == nil || *d.Editor.TypewriterModeRatio != 0.5 {
+		t.Errorf("defaults typewriter_mode_ratio should be *0.5, got %v", d.Editor.TypewriterModeRatio)
+	}
+	if d.Editor.CustomDictionary == nil {
+		t.Errorf("defaults custom_dictionary should be non-nil empty slice, got nil")
+	}
+	if len(d.Editor.CustomDictionary) != 0 {
+		t.Errorf("defaults custom_dictionary should be empty, got %v", d.Editor.CustomDictionary)
+	}
+	// Sprint 17 hotkeys.
+	hkCases := map[string]string{
+		"find_in_page":           "Ctrl+F",
+		"replace":                "Ctrl+H",
+		"global_replace":         "Ctrl+Shift+H",
+		"toggle_typewriter_mode": "Ctrl+Shift+Y",
+	}
+	for key, want := range hkCases {
+		if got, ok := d.Hotkeys[key]; !ok {
+			t.Errorf("defaults hotkeys missing %q", key)
+		} else if got != want {
+			t.Errorf("defaults hotkey %q: got %q, want %q", key, got, want)
+		}
+	}
+	// Spellcheck must NOT have a hotkey by design (wavy underline + right-click
+	// + toolbar button). Pin this so a future change can't silently add one.
+	if _, ok := d.Hotkeys["spellcheck_suggest"]; ok {
+		t.Errorf("spellcheck must have no hotkey by design; found %q", d.Hotkeys["spellcheck_suggest"])
+	}
+}
+
+// TestNormalize_SearchWritingAids confirms *bool/*string/*float64 normalization
+// for the Sprint 17 fields: nil → defaults; explicit values survive.
+func TestNormalize_SearchWritingAids(t *testing.T) {
+	// nil → defaults.
+	cfg := normalize(SystemConfig{})
+	if cfg.Editor.SpellcheckEnabled == nil || *cfg.Editor.SpellcheckEnabled != true {
+		t.Errorf("normalize spellcheck_enabled nil → *true, got %v", cfg.Editor.SpellcheckEnabled)
+	}
+	if cfg.Editor.SpellcheckLanguage == nil || *cfg.Editor.SpellcheckLanguage != "en-US" {
+		t.Errorf("normalize spellcheck_language nil → *\"en-US\", got %v", cfg.Editor.SpellcheckLanguage)
+	}
+	if cfg.Editor.TypewriterMode == nil || *cfg.Editor.TypewriterMode != false {
+		t.Errorf("normalize typewriter_mode nil → *false, got %v", cfg.Editor.TypewriterMode)
+	}
+	if cfg.Editor.TypewriterModeRatio == nil || *cfg.Editor.TypewriterModeRatio != 0.5 {
+		t.Errorf("normalize typewriter_mode_ratio nil → *0.5, got %v", cfg.Editor.TypewriterModeRatio)
+	}
+	if cfg.Editor.CustomDictionary == nil || len(cfg.Editor.CustomDictionary) != 0 {
+		t.Errorf("normalize custom_dictionary nil → empty non-nil slice, got %v", cfg.Editor.CustomDictionary)
+	}
+
+	// Explicit values survive.
+	scOff := false
+	cfg = normalize(SystemConfig{Editor: EditorConfig{SpellcheckEnabled: &scOff}})
+	if cfg.Editor.SpellcheckEnabled == nil || *cfg.Editor.SpellcheckEnabled != false {
+		t.Errorf("normalize should preserve explicit spellcheck false, got %v", cfg.Editor.SpellcheckEnabled)
+	}
+	twOn := true
+	cfg = normalize(SystemConfig{Editor: EditorConfig{TypewriterMode: &twOn}})
+	if cfg.Editor.TypewriterMode == nil || *cfg.Editor.TypewriterMode != true {
+		t.Errorf("normalize should preserve explicit typewriter true, got %v", cfg.Editor.TypewriterMode)
+	}
+	lang := "en-GB"
+	cfg = normalize(SystemConfig{Editor: EditorConfig{SpellcheckLanguage: &lang}})
+	if cfg.Editor.SpellcheckLanguage == nil || *cfg.Editor.SpellcheckLanguage != "en-GB" {
+		t.Errorf("normalize should preserve explicit language, got %v", cfg.Editor.SpellcheckLanguage)
+	}
+
+	// Empty/whitespace language collapses to default (defensive — a hand-edited
+	// blank must not break spellcheck).
+	empty := "   "
+	cfg = normalize(SystemConfig{Editor: EditorConfig{SpellcheckLanguage: &empty}})
+	if cfg.Editor.SpellcheckLanguage == nil || *cfg.Editor.SpellcheckLanguage != "en-US" {
+		t.Errorf("normalize empty language → \"en-US\", got %v", cfg.Editor.SpellcheckLanguage)
+	}
+}
+
+// TestNormalize_TypewriterRatioClamp confirms the ratio is clamped to [0.1, 0.9]
+// so the active line stays meaningfully on-screen.
+func TestNormalize_TypewriterRatioClamp(t *testing.T) {
+	cases := []struct {
+		in, want float64
+	}{
+		{0.0, 0.1},  // below floor → clamped up
+		{0.05, 0.1}, // below floor
+		{0.1, 0.1},  // floor boundary
+		{0.3, 0.3},  // in-range passes through
+		{0.5, 0.5},  // default
+		{0.9, 0.9},  // ceiling boundary
+		{0.95, 0.9}, // above ceiling → clamped down
+		{1.0, 0.9},  // above ceiling
+		{-0.5, 0.1}, // negative → floor
+	}
+	for _, c := range cases {
+		r := c.in
+		cfg := normalize(SystemConfig{Editor: EditorConfig{TypewriterModeRatio: &r}})
+		got := *cfg.Editor.TypewriterModeRatio
+		if got != c.want {
+			t.Errorf("normalize ratio %v: got %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// TestNormalize_CustomDictionary confirms the custom word list is normalized to
+// a non-nil, de-duplicated, trimmed, lowercased, sorted slice.
+func TestNormalize_CustomDictionary(t *testing.T) {
+	cfg := normalize(SystemConfig{Editor: EditorConfig{CustomDictionary: []string{
+		"  TypeScript  ", // trimmed
+		"typescript",     // dup (after trim+lowercase)
+		"OAuth",          // lowercased
+		"",               // empty dropped
+		"   ",            // whitespace dropped
+		"git",
+		"API", // lowercased → "api"
+	}}})
+	want := []string{"api", "git", "oauth", "typescript"}
+	if !reflect.DeepEqual(cfg.Editor.CustomDictionary, want) {
+		t.Errorf("custom_dictionary normalize:\n got  %v\n want %v", cfg.Editor.CustomDictionary, want)
+	}
+}
+
+// TestSearchWritingAids_RoundTrip confirms the Sprint 17 editor fields survive
+// Save → Load with byte-for-byte fidelity.
+func TestSearchWritingAids_RoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	original := Defaults()
+	scOff := false
+	twOn := true
+	ratio := 0.35
+	lang := "en-GB"
+	original.Editor.SpellcheckEnabled = &scOff
+	original.Editor.SpellcheckLanguage = &lang
+	original.Editor.TypewriterMode = &twOn
+	original.Editor.TypewriterModeRatio = &ratio
+	original.Editor.CustomDictionary = []string{"typescript", "oauth", "git"}
+
+	if err := Save(tmp, original); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Editor.SpellcheckEnabled == nil || *loaded.Editor.SpellcheckEnabled != false {
+		t.Errorf("spellcheck_enabled round-trip: got %v", loaded.Editor.SpellcheckEnabled)
+	}
+	if loaded.Editor.SpellcheckLanguage == nil || *loaded.Editor.SpellcheckLanguage != "en-GB" {
+		t.Errorf("spellcheck_language round-trip: got %v", loaded.Editor.SpellcheckLanguage)
+	}
+	if loaded.Editor.TypewriterMode == nil || *loaded.Editor.TypewriterMode != true {
+		t.Errorf("typewriter_mode round-trip: got %v", loaded.Editor.TypewriterMode)
+	}
+	if loaded.Editor.TypewriterModeRatio == nil || *loaded.Editor.TypewriterModeRatio != 0.35 {
+		t.Errorf("typewriter_mode_ratio round-trip: got %v", loaded.Editor.TypewriterModeRatio)
+	}
+	want := []string{"git", "oauth", "typescript"} // sorted by normalize
+	if !reflect.DeepEqual(loaded.Editor.CustomDictionary, want) {
+		t.Errorf("custom_dictionary round-trip:\n got  %v\n want %v", loaded.Editor.CustomDictionary, want)
+	}
+}
