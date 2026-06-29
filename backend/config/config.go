@@ -280,11 +280,20 @@ func Defaults() SystemConfig {
 			DefaultTaskPriority: 3,
 		},
 		Hotkeys: map[string]string{
-			"open_search":          "Ctrl+P",
-			"open_command_palette": "Ctrl+Slash",
+			// Sprint 17 hotkey realignment (convention-anchored; see SPECS.md
+			// "Keyboard Shortcuts"). Windows/Linux only.
+			// open_search: cross-vault global search → Ctrl+Shift+F (the VS
+			// Code / Sublime / Notepad++ "find in files" convention; Office/Docs
+			// have no cross-file search). Frees Ctrl+P for future Print.
+			"open_search": "Ctrl+Shift+F",
+			// open_command_palette → Alt+Q (Office "Tell Me" / search-the-app
+			// convention). Frees Ctrl+/ for other use.
+			"open_command_palette": "Alt+Q",
 			"toggle_sidebar":       "Ctrl+B",
 			"focus_sidebar":        "Ctrl+Shift+B",
-			"cycle_view_layout":    "Alt+Tab",
+			// cycle_view_layout → Ctrl+Alt+V. Alt+Tab is the OS window-switcher
+			// on Windows/Linux (captured before the app sees it) and never fired.
+			"cycle_view_layout":    "Ctrl+Alt+V",
 			"indent_block":         "Tab",
 			"unindent_block":       "Shift+Tab",
 			"open_template_picker": "Ctrl+Shift+T",
@@ -303,7 +312,7 @@ func Defaults() SystemConfig {
 			"format_bold":        "Ctrl+B",
 			"format_italic":      "Ctrl+I",
 			"format_underline":   "Ctrl+U",
-			"format_strike":      "Ctrl+Shift+X",
+			"format_strike":      "Alt+Shift+5",
 			"format_code":        "Ctrl+E",
 			"format_link":        "Ctrl+K",
 			"format_highlight":   "Ctrl+Shift+H",
@@ -334,7 +343,9 @@ func Defaults() SystemConfig {
 			// View mode toggle (#171). Standard source/view toggle binding.
 			"toggle_view_mode": "Ctrl+Shift+V",
 			// Formatting toolbar toggle and focus mode toggle (#168 Phase 3).
-			"toggle_format_toolbar": "Ctrl+Shift+F",
+			// toggle_format_toolbar → Ctrl+F1 (Office "toggle ribbon" convention);
+			// frees Ctrl+Shift+F for global search (open_search above).
+			"toggle_format_toolbar": "Ctrl+F1",
 			"toggle_focus_mode":     "Ctrl+Shift+D",
 			// Sprint 17 — Search, Find/Replace & Writing Aids.
 			// find_in_page (Ctrl+F) and replace (Ctrl+H) are the universal

@@ -13,9 +13,9 @@ export interface ParsedHotkey {
 
 // Config bindings may use KeyboardEvent.code-style names ("Slash", "Period")
 // whose corresponding KeyboardEvent.key is a different character ("/", ".").
-// Without normalization, "Ctrl+Slash" parses to key "slash" and never matches
-// e.key "/" (the shipped open_command_palette default would silently fail).
-// Map the common named tokens to their KeyboardEvent.key value (lower-cased).
+// Without normalization, a binding like "Ctrl+Slash" would parse to key
+// "slash" and never match e.key "/". Map the common named tokens to their
+// KeyboardEvent.key value (lower-cased) so either spelling works.
 const KEY_ALIASES: Record<string, string> = {
   slash: '/',
   backslash: '\\',

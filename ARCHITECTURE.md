@@ -1083,6 +1083,31 @@ text/background color (#170), and the source/edit view toggle (#171) are all
 additive to clean_text — the Go parser sees formatted text as opaque and
 requires zero parser changes.
 
+**Markdown dialect (Sprint 17).** Silt's on-disk base dialect is **GFM
+(CommonMark + GFM)** with a documented set of Silt-specific extensions layered
+on top (Obsidian callouts, Dataview `[key:: value]` metadata, Smart Graph
+`((uuid))`/`{{embed:uuid}}` refs, block-identity comments, `<sub>`/`<sup>`
+HTML for sub/super, `$math$`, `[^footnotes]`). Pandoc is a downstream
+converter (`pandoc -f gfm`), not a dialect; Pandoc-native authoring is a
+future plugin (#335). See SPECS.md "Markdown Dialect" for the full rationale
+and the reversibility analysis. Sub/super use `<sub>`/`<sup>` HTML (not
+Pandoc's `~x~`/`^x^`, which render as literal text on GitHub).
+
+**Hotkey scheme (Sprint 17 realignment).** Hotkey defaults live in one place —
+`config.go` `Defaults()` — and every display surface (slash-registry hints,
+FormatToolbar/TableContextToolbar tooltips, `aria-keyshortcuts`) derives from
+`settings.config.hotkeys` via `resolveHotkeyDisplay` (settings/hotkeys.ts), so
+a user remap is reflected everywhere with no drift. The defaults are
+convention-anchored (see SPECS.md sample): Google Docs wins ties over MS
+Office; Office/Docs win over code editors for shared actions; VS Code/Sublime/
+Notepad++ fill gaps where Office/Docs have no opinion. Windows/Linux only
+(`Ctrl` everywhere). Spellcheck deliberately has no hotkey (wavy underline +
+right-click + a FormatToolbar button). The vault scaffolder no longer
+duplicates hotkeys into the scaffolded config.yaml — `Load()` decodes over
+`Defaults()`, which is the single source. Paste is not in the hotkey map:
+`Ctrl+V` is ProseMirror's native rich paste, `Ctrl+Shift+V` inserts the
+clipboard as plain text (PlainPaste extension, lib/editor/plainPaste.ts).
+
 
 9. Performance Budgets & System Tray
 

@@ -273,7 +273,7 @@ func TestValidateHotkeys(t *testing.T) {
 		hotkeys map[string]string
 		wantErr bool
 	}{
-		{"valid single", map[string]string{"open_search": "Ctrl+P"}, false},
+		{"valid single", map[string]string{"open_search": "Ctrl+Shift+F"}, false},
 		{"valid multi-modifier + named", map[string]string{"x": "Ctrl+Shift+Slash"}, false},
 		{"empty allowed (disabled)", map[string]string{"open_search": ""}, false},
 		{"stray empty segment tolerated", map[string]string{"open_search": "Ctrl++P"}, false},

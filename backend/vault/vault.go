@@ -316,19 +316,6 @@ parsing:
   auto_inject_uuid: true
   default_task_priority: 3
 
-# Key-Binding Map
-hotkeys:
-  open_search: "Ctrl+P"
-  open_command_palette: "Ctrl+Slash"
-  toggle_sidebar: "Ctrl+B"
-  cycle_view_layout: "Alt+Tab"
-  indent_block: "Tab"
-  unindent_block: "Shift+Tab"
-  open_template_picker: "Ctrl+Shift+T"
-  next_tab: "Ctrl+Tab"
-  prev_tab: "Ctrl+Shift+Tab"
-  close_tab: "Ctrl+W"
-
 # Plugin Registry
 plugins:
   active:

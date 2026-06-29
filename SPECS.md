@@ -653,6 +653,41 @@ The `silt-attachments` plugin lets users attach arbitrary files to notes.
 
 Global settings are managed locally in a human-readable file located at Notebooks/.system/config.yaml. The schema defines global application defaults, plugin configurations, hotkeys, and parsing logic.
 
+## Markdown Dialect
+
+**Silt's on-disk base dialect is GFM (CommonMark + GFM).** Markdown files are the
+source of truth and must render correctly on GitHub, in Obsidian, in VS Code
+preview, and through Pandoc — only GFM satisfies all four. Pandoc is a
+**downstream converter**, not a dialect: any user can run `pandoc -f gfm` to
+publish a note to LaTeX/PDF/Word with zero format change.
+
+**Silt Markdown** = GFM base + a documented set of app-specific extensions that
+already live on disk today:
+
+- Obsidian callouts (`> [!variant]`)
+- Dataview-style inline metadata (`[key:: value]`)
+- Smart Graph block references (`((uuid))`) and embeds (`{{embed:uuid}}`)
+- Block-identity comments (`<!-- id: uuid @ YYYY-MM-DD -->`)
+- `@[mentions]`
+- Sub/super: `<sub>`/`<sup>` HTML tags (NOT Pandoc's `~x~`/`^x^`, which render
+  as literal text on GitHub). Silt already emits the HTML form.
+- Math (`$x$` / `$$x$$`) — de-facto on GitHub/Obsidian
+- Footnotes (`[^1]`) — de-facto on GitHub since 2021
+
+**Sub/super rationale:** GFM reserves `~` for `~~` strikethrough, so Pandoc's
+`~sub~`/`^sup^` shows as literal text on GitHub. HTML `<sub>`/`<sup>` is the
+interop-safe choice (renders on GitHub, Obsidian, VS Code, and through Pandoc).
+The `Ctrl+,` / `Ctrl+.` editor hotkeys toggle the existing HTML marks.
+
+**Future Pandoc-native authoring** (Pandoc dialect mode + an in-app `pandoc`
+export pipeline) is deferred to a future plugin — the "Obsidian route": the base
+stays GFM, a plugin opts in per file/notebook. Tracked in issue #335. Revisit
+when ~15–30% of users are active academic publishers (citations + footnotes +
+multi-line math + LaTeX/PDF export). The governing tiebreaker for future format
+questions is "what does GFM do?"; the council's reversibility analysis
+(GFM→Pandoc is additive, Pandoc→GFM is destructive) means GFM is strictly the
+more recoverable base if ever wrong.
+
 ## Inline Formatting (#168, #169, #170, #171, #173)
 
 Silt supports nine inline marks, block-level alignment, text/background color,
@@ -800,6 +835,20 @@ editor:
   show_word_count: false      # opt-in word count in editor status
   focus_mode: false           # dim non-active paragraphs
   default_view_mode: "edit"   # "edit" or "source" (#171)
+  # Sprint 17 — Search, Find/Replace & Writing Aids (#186, #185, #196, #187).
+  # Inline spellcheck (#196): typo-js + a ProseMirror decoration layer. Default
+  # on; purists disable. v1 ships en-US only — multi-language packs, domain
+  # word lists, and custom-dictionary import/export are Sprint 34 (#336–#338).
+  spellcheck_enabled: true
+  spellcheck_language: "en-US"
+  # Typewriter mode (#187): keeps the active line at a fixed viewport ratio.
+  # Default off; ratio clamped to [0.1, 0.9].
+  typewriter_mode: false
+  typewriter_mode_ratio: 0.5
+  # Per-vault custom spellcheck words (rule 2: per-vault UI prefs in YAML, NOT
+  # a new file tier). De-duped + trimmed + lowercased + sorted on normalize. A
+  # linked notebook may carry its own co-located override (arrays replace, §3.1).
+  custom_dictionary: []
 
 # Task Parse Rules
 # The task checkbox/metadata regexes are fixed in the binary (parser package)
@@ -810,11 +859,22 @@ parsing:
   auto_inject_uuid: true
   default_task_priority: 3
 
-# Key-Binding Map
+# Key-Binding Map. Defaults are convention-anchored (see "Keyboard Shortcuts"
+# in ARCHITECTURE.md): Google Docs wins ties over MS Office; Office/Docs win
+# over code editors for shared actions; VS Code/Sublime/Notepad++ fill gaps
+# where Office/Docs have no opinion. Windows/Linux only (Ctrl everywhere).
+# Spellcheck deliberately has NO hotkey (wavy underline + right-click + a
+# FormatToolbar button). Paste is not listed: Ctrl+V = rich (ProseMirror
+# native), Ctrl+Shift+V = plain (PlainPaste extension strips formatting).
 hotkeys:
-  open_search: "Ctrl+P"
-  open_command_palette: "Ctrl+Slash"
-  cycle_view_layout: "Alt+Tab"
+  # Sprint 17 realignment. open_search → Ctrl+Shift+F (the cross-file search
+  # convention; Office/Docs are single-document). Frees Ctrl+P for future Print.
+  open_search: "Ctrl+Shift+F"
+  # open_command_palette → Alt+Q (Office "Tell Me" / search-the-app convention).
+  open_command_palette: "Alt+Q"
+  # cycle_view_layout → Ctrl+Alt+V (Alt+Tab is the OS window-switcher and never
+  # reached the app on Windows/Linux).
+  cycle_view_layout: "Ctrl+Alt+V"
   indent_block: "Tab"
   unindent_block: "Shift+Tab"
   open_template_picker: "Ctrl+Shift+T"
@@ -833,7 +893,7 @@ hotkeys:
   format_bold: "Ctrl+B"
   format_italic: "Ctrl+I"
   format_underline: "Ctrl+U"
-  format_strike: "Ctrl+Shift+X"
+  format_strike: "Alt+Shift+5"
   format_code: "Ctrl+E"
   format_link: "Ctrl+K"
   format_highlight: "Ctrl+Shift+H"
@@ -861,6 +921,19 @@ hotkeys:
   table_insert_col_right: "Ctrl+Shift+Right"
   # View mode toggle (#171).
   toggle_view_mode: "Ctrl+Shift+V"
+  # toggle_format_toolbar → Ctrl+F1 (Office "toggle ribbon" convention); frees
+  # Ctrl+Shift+F for global search (open_search above). focus_mode (#168) dims
+  # non-active paragraphs.
+  toggle_format_toolbar: "Ctrl+F1"
+  toggle_focus_mode: "Ctrl+Shift+D"
+  # Sprint 17 — Search, Find/Replace & Writing Aids. find_in_page (Ctrl+F) and
+  # replace (Ctrl+H) are the universal in-editor bindings; global_replace
+  # (Ctrl+Shift+H) escalates replace across the vault; toggle_typewriter_mode
+  # (Ctrl+Shift+Y) pairs with toggle_focus_mode (Ctrl+Shift+D).
+  find_in_page: "Ctrl+F"
+  replace: "Ctrl+H"
+  global_replace: "Ctrl+Shift+H"
+  toggle_typewriter_mode: "Ctrl+Shift+Y"
 # Editor-scoped shortcuts (heading, alignment, quote, details, table, format
 # marks) are config-driven at editor-creation time (#311). Remap them here;
 # the editor honors the remapped binding on the next page load (live remap

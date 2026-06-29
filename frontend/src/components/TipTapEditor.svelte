@@ -10,6 +10,7 @@
   import { FocusLockManager } from '../lib/editor/useFocusLock'
   import { BlockIndentOnDrop } from '../lib/editor/dragIndentDrop'
   import { SiltInlineDragHandle } from '../lib/editor/siltInlineDragHandle'
+  import { PlainPaste } from '../lib/editor/plainPaste'
   import {
     SiltBlockExtensionsWithNodeViews,
     SiltInlineMarkExtensions,
@@ -656,6 +657,9 @@
     SiltInlineDragHandle,
     BlockIndentOnDrop,
     SiltBlockKeymaps,
+    // Ctrl+Shift+V inserts the clipboard as plain text (strips formatting);
+    // Ctrl+V (no shift) falls through to ProseMirror's native rich-HTML paste.
+    PlainPaste,
     Placeholder.configure({
       placeholder: 'Type / for commands, or start writing…'
     }),

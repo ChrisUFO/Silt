@@ -926,7 +926,7 @@
     showSettings = true
   }
 
-  // Ordered view cycle for the cycle_view_layout hotkey (default Alt+Tab).
+  // Ordered view cycle for the cycle_view_layout hotkey (default Ctrl+Alt+V).
   // If the current view is not in the list (e.g. a plugin view), jump to
   // 'notes' as the anchor.
   function cycleView() {
