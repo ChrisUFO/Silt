@@ -771,6 +771,34 @@ body {
   background: var(--color-accent-primary-start, #4f7cff);
   width: 2px;
 }
+/* Indent-on-drop indicator (#330). A single fixed-position overlay drawn by
+   the BlockIndentOnDrop plugin (dragIndentDrop.ts) during dragover. The
+   element itself is the horizontal landing line at the drop boundary; the
+   ::before pseudo-element is the vertical depth guide at the resolved
+   indent column (positioned via the --silt-drop-depth-* custom properties
+   the plugin sets inline). Uses the same accent token as the drag handle
+   and the dropcursor so the affordance reads as one family. Pointer-events
+   are none so it never steals the drag. */
+[data-silt-drop-indicator] {
+  display: none;
+  position: fixed;
+  pointer-events: none;
+  z-index: 9999;
+  border-top: 2px solid var(--color-accent-primary-start, #4f7cff);
+  box-shadow: 0 0 6px var(--color-accent-primary-glow, rgba(20, 184, 166, 0.15));
+  background: transparent;
+}
+[data-silt-drop-indicator]::before {
+  content: '';
+  position: fixed;
+  top: var(--silt-drop-depth-top, 0);
+  left: var(--silt-drop-depth-left, 0);
+  height: var(--silt-drop-depth-height, 0);
+  width: 2px;
+  background: var(--color-accent-primary-start, #4f7cff);
+  box-shadow: 0 0 6px var(--color-accent-primary-glow, rgba(20, 184, 166, 0.15));
+  border-radius: 1px;
+}
 .silt-code-body {
   position: relative;
   margin: 0;

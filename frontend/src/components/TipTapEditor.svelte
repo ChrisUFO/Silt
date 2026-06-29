@@ -9,6 +9,7 @@
   import { DragHandle } from '@tiptap/extension-drag-handle'
   import { AutosaveManager } from '../lib/editor/useAutosave'
   import { FocusLockManager } from '../lib/editor/useFocusLock'
+  import { BlockIndentOnDrop } from '../lib/editor/dragIndentDrop'
   import {
     SiltBlockExtensionsWithNodeViews,
     SiltInlineMarkExtensions,
@@ -630,8 +631,7 @@
     // Drag-to-reorder handle (#181). A framework-agnostic DOM grip positioned
     // by the extension over the hovered block; native ProseMirror drop reorders
     // the whole block. Alt+Up/Down (SiltBlockKeymaps) is the keyboard
-    // equivalent. Indent-on-drop is a tracked follow-up (needs manual webview
-    // verification, which AGENTS.md forbids automating).
+    // equivalent.
     DragHandle.configure({
       render: () => {
         const el = document.createElement('div')
@@ -649,6 +649,16 @@
         return el
       }
     }),
+    // Notion-style indent-on-drop + drop-zone indicator (#330, #181
+    // follow-up). Watches ProseMirror's handleDrop: when a top-level block
+    // is dragged, snaps the dropped block's depth to the horizontal drop
+    // position and shows a depth-guide indicator during dragover. Returns
+    // false on any uncertainty so native PM drop (reorder-only) still
+    // runs — never a partial dispatch. The depth math is a pure helper
+    // (dragIndentDrop.ts:resolveDropDepth) unit-tested in jsdom; the
+    // interactive drag path is gated on the TESTING.md manual matrix
+    // (HTML5 drag/drop can't be driven from jsdom per AGENTS.md).
+    BlockIndentOnDrop,
     SiltBlockKeymaps,
     Placeholder.configure({
       placeholder: 'Type / for commands, or start writing…'
