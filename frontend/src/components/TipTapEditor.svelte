@@ -9,6 +9,7 @@
   import { AutosaveManager } from '../lib/editor/useAutosave'
   import { FocusLockManager } from '../lib/editor/useFocusLock'
   import { BlockIndentOnDrop } from '../lib/editor/dragIndentDrop'
+  import { SiltInlineDragHandle } from '../lib/editor/siltInlineDragHandle'
   import {
     SiltBlockExtensionsWithNodeViews,
     SiltInlineMarkExtensions,
@@ -652,6 +653,7 @@
     // (HTML5 drag/drop can't be driven from jsdom per AGENTS.md).
     // The drag-init side is SiltInlineDragHandle (#339) — see
     // frontend/src/lib/editor/siltInlineDragHandle.ts.
+    SiltInlineDragHandle,
     BlockIndentOnDrop,
     SiltBlockKeymaps,
     Placeholder.configure({

@@ -10,33 +10,21 @@
   let bullet = $derived(node.attrs.bullet || '')
   let quote = $derived(node.attrs.quote || '')
   let depth = $derived(node.attrs.depth || 0)
-
-  let dragHandleEl: HTMLElement | null = $state(null)
-
-  $effect(() => {
-    if (dragHandleEl) {
-      const wrapper = dragHandleEl.closest('[data-node-view-wrapper]')
-      const parentEl = wrapper?.parentElement
-      if (parentEl) {
-        parentEl.setAttribute('data-depth', String(depth))
-        if (node.attrs.id) {
-          parentEl.setAttribute('data-id', node.attrs.id)
-        }
-      }
-    }
-  })
 </script>
 
 <NodeViewWrapper
   class="group flex items-start gap-3 py-1 min-h-[32px]"
   data-align={align}
   data-depth={depth}
+  data-id={node.attrs.id}
 >
   <span
-    bind:this={dragHandleEl}
-    class="material-symbols-outlined text-text-muted/30 hover:text-primary transition-all duration-150 cursor-move mt-0.5 select-none text-[18px] opacity-0"
+    class="silt-drag-handle-inline material-symbols-outlined text-text-muted hover:text-primary transition-colors duration-150 mt-0.5 select-none text-[18px] opacity-0 group-hover:opacity-100"
     class:group-hover:opacity-100={!isEmpty}
     spellcheck="false"
+    draggable="true"
+    aria-hidden="true"
+    title="Drag to move block (Alt+Up/Down to move by keyboard)"
     data-drag-handle
   >
     drag_indicator

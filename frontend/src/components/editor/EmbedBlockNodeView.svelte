@@ -40,7 +40,7 @@
   }
 </script>
 
-<NodeViewWrapper>
+<NodeViewWrapper data-id={node.attrs.id}>
   <!--
     Card is always a <div> with an explicit role: role="button" when openable
     (so it has a nonnegative tabindex and the click-to-open handler), or
@@ -101,10 +101,12 @@
         <span class="material-symbols-outlined text-[18px]">delete</span>
       </button>
       <span
-        class="material-symbols-outlined text-text-muted text-[16px] cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+        class="silt-drag-handle-inline material-symbols-outlined text-text-muted text-[16px] opacity-0 group-hover:opacity-100 transition-opacity duration-150"
         title="Drag to reorder"
         aria-label="Drag handle"
         spellcheck="false"
+        draggable="true"
+        aria-hidden="true"
         data-drag-handle
       >
         drag_indicator
@@ -157,10 +159,12 @@
         <span class="material-symbols-outlined text-[18px]">delete</span>
       </button>
       <span
-        class="material-symbols-outlined text-text-muted text-[16px] cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+        class="silt-drag-handle-inline material-symbols-outlined text-text-muted text-[16px] opacity-0 group-hover:opacity-100 transition-opacity duration-150"
         title="Drag to reorder"
         aria-label="Drag handle"
         spellcheck="false"
+        draggable="true"
+        aria-hidden="true"
         data-drag-handle
       >
         drag_indicator

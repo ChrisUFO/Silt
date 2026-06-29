@@ -749,6 +749,19 @@ body {
   background: var(--color-accent-primary-start, #4f7cff);
   width: 2px;
 }
+/* Inline drag handle (#339). The Notion-style grip rendered inside every
+   block-level NodeView (Note / Task / Header / Embed). SiltInlineDragHandle
+   listens for dragstart on `[data-drag-handle]` and populates `view.dragging`
+   so BlockIndentOnDrop (#330) and native reorder both work. Cursor is grab
+   on hover / grabbing while the user drags; the surrounding Tailwind classes
+   handle fade-in + tint via group-hover. */
+.silt-drag-handle-inline {
+  cursor: grab;
+  -webkit-user-drag: element;
+}
+.silt-drag-handle-inline:active {
+  cursor: grabbing;
+}
 /* Indent-on-drop indicator (#330). A single fixed-position overlay drawn by
    the BlockIndentOnDrop plugin (dragIndentDrop.ts) during dragover. The
    element itself is the horizontal landing line at the drop boundary; the

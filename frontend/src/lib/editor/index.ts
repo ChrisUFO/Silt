@@ -17,6 +17,13 @@ export {
 } from './schema'
 export { SiltBlockExtensionsWithNodeViews } from './nodeViews'
 export { blocksToDoc, docToBlocks } from './converters'
+export {
+  SiltInlineDragHandle,
+  resolveDraggedBlockPosition,
+  buildBlockSlice,
+  buildNodeDragSelection,
+  computeDragImageOffset
+} from './siltInlineDragHandle'
 export { UniqueBlockIds, freshId } from './uniqueIdPlugin'
 export {
   SiltBlockKeymaps,
