@@ -35,8 +35,6 @@
     page: string
     matches: Match[]
     accepted: boolean // per-page accept-all toggle
-    source: string // 'vault' | 'linked:...'
-    skipped: boolean // read-only linked notebook — can't apply
   }
 
   let groups = $state<PageGroup[]>([])
@@ -87,11 +85,7 @@
             section: r.section,
             page: r.page,
             matches: [],
-            accepted: true,
-            source: '', // source isn't on the search result; treat vault pages
-            // as writable. (Linked notebooks are read-only — a follow-up can
-            // thread the source through the search result to flag them.)
-            skipped: false
+            accepted: true
           })
         }
         const grp = byPage.get(key)!
@@ -135,14 +129,9 @@
     }
     let pagesChanged = 0
     let replacements = 0
-    let skipped = 0
     const newLog: typeof revertLog = []
     try {
       for (const grp of groups) {
-        if (grp.skipped) {
-          skipped += grp.matches.length
-          continue
-        }
         const acceptedMatches = grp.matches.filter((m) => m.accepted)
         if (acceptedMatches.length === 0) continue
         // Fetch the page's full block list (the search result is a subset).
@@ -184,7 +173,7 @@
       revertLog = [...revertLog, ...newLog]
       statusMessage = `Replaced ${replacements} across ${pagesChanged} page${
         pagesChanged === 1 ? '' : 's'
-      }${skipped ? `; skipped ${skipped} (read-only)` : ''}`
+      }`
     } catch (e) {
       statusMessage = `Apply failed: ${e}`
     } finally {
@@ -209,10 +198,7 @@
   }
 
   const totalAccepted = $derived(
-    groups.reduce(
-      (n, g) => n + g.matches.filter((m) => m.accepted && !g.skipped).length,
-      0
-    )
+    groups.reduce((n, g) => n + g.matches.filter((m) => m.accepted).length, 0)
   )
   const canPreview = $derived(
     !!findText.trim() &&

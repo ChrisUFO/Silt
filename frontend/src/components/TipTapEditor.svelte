@@ -15,7 +15,8 @@
   import {
     Spellcheck,
     requestSpellcheckRecheck,
-    findMisspellingAt
+    findMisspellingAt,
+    findMisspellingAtOrAfter
   } from '../lib/editor/spellcheck/SpellcheckExtension'
   import {
     loadDictionary,
@@ -833,11 +834,16 @@
   function openSpellMenuAt(
     editor: Editor,
     pos: number,
-    coords: { x: number; y: number }
+    coords: { x: number; y: number },
+    useFallback = false
   ): void {
-    const m = findMisspellingAt(editor, pos)
+    // Right-click (useFallback=false): only open if the user clicked ON a
+    // misspelled word. Toolbar button (useFallback=true): if the cursor isn't
+    // on a misspelling, jump to the next one so the button isn't a silent no-op.
+    const m =
+      findMisspellingAt(editor, pos) ??
+      (useFallback ? findMisspellingAtOrAfter(editor, pos) : null)
     if (!m) return
-    // Offset the anchor below the word so the popover sits under it.
     spellMenu = {
       word: m.word,
       range: { from: m.from, to: m.to },
@@ -864,7 +870,7 @@
         | { x: number; y: number }
         | undefined
       const head = editor.state.selection.head
-      openSpellMenuAt(editor, head, detail ?? { x: 100, y: 100 })
+      openSpellMenuAt(editor, head, detail ?? { x: 100, y: 100 }, true)
     }
     dom.addEventListener('contextmenu', onContext)
     window.addEventListener('silt:open-spellcheck', onOpenBtn)

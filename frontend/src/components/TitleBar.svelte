@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import logo from '../assets/logo.svg'
+  import { settings } from '../settings/store.svelte'
+  import { resolveHotkeyDisplay } from '../settings/hotkeys'
   import {
     WindowMinimise,
     WindowToggleMaximise,
@@ -120,7 +122,13 @@
     <button
       onclick={onSearchClick}
       aria-label="Search"
-      title="Search (Ctrl+Shift+F)"
+      title={`Search${(() => {
+        const h = resolveHotkeyDisplay(
+          'open_search',
+          settings.config?.hotkeys ?? {}
+        )
+        return h ? ` (${h})` : ''
+      })()}`}
       class="flex items-center justify-center h-9 w-9 rounded-lg text-text-muted hover:text-text-primary hover:bg-hover transition-colors cursor-pointer border-none bg-transparent focus:outline-none"
     >
       <span class="material-symbols-outlined text-[20px]">search</span>

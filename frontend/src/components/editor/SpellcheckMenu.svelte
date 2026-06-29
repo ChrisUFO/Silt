@@ -70,15 +70,39 @@
       onClose()
     }
   }
+
+  let menuEl = $state<HTMLDivElement | null>(null)
+  // Clamp the menu to the viewport so right-clicks near the screen edge don't
+  // push it off-screen. The $effect reads `anchor` reactively + measures the
+  // element after render to compute the clamped position.
+  let clampedAnchor = $state({ x: 0, y: 0 })
+
+  $effect(() => {
+    if (!menuEl) return
+    const { x: ax, y: ay } = anchor
+    const rect = menuEl.getBoundingClientRect()
+    let x = ax
+    let y = ay
+    if (x + rect.width > window.innerWidth) {
+      x = window.innerWidth - rect.width - 8
+    }
+    if (y + rect.height > window.innerHeight) {
+      y = window.innerHeight - rect.height - 8
+    }
+    clampedAnchor = { x: Math.max(8, x), y: Math.max(8, y) }
+  })
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
 <div
+  bind:this={menuEl}
   class="spell-menu"
   role="menu"
   aria-label="Spelling suggestions"
-  style="left:{Math.round(anchor.x)}px; top:{Math.round(anchor.y)}px;"
+  style="left:{Math.round(clampedAnchor.x)}px; top:{Math.round(
+    clampedAnchor.y
+  )}px;"
   tabindex="-1"
 >
   {#if suggestions.length === 0}
