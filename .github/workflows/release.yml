@@ -224,18 +224,15 @@ jobs:
           go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-      # frontend/wailsjs/ is gitignored — a fresh checkout has none. The build
-      # scripts call `npm run build` (vite), which imports from wailsjs; without
-      # regeneration the build fails with "Could not resolve ../../wailsjs/...".
-      # Mirror ci.yml: placeholder dist → npm install → npm run generate.
-      - name: Regenerate Wails bindings (gitignored on fresh checkout)
+      # frontend/wailsjs/ is gitignored — a fresh checkout has none. `npm
+      # install` triggers the `prepare` script, which regenerates the bindings
+      # and seeds a placeholder frontend/dist/.gitkeep so the subsequent vite
+      # build can write the real assets. Same flow as ci.yml.
+      - name: Install frontend dependencies (regenerates wailsjs/)
         shell: bash
         run: |
           cd frontend
           npm install
-          mkdir -p ../frontend/dist
-          printf '<!doctype html><html><head><title>ci</title></head><body></body></html>' > ../frontend/dist/index.html
-          npm run generate
 
       # --- platform-specific native build deps ---
       - name: Install Linux deps (webkit2gtk-4.1 + GTK)

@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "format": "prettier --write \"src/**/*.{ts,svelte,css}\"",
-    "generate": "cd .. && wails generate module"
+    "generate": "node scripts/regenerate-bindings.mjs",
+    "prepare": "node scripts/regenerate-bindings.mjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.1.2",

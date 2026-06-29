@@ -70,7 +70,7 @@ remains:
 
 Do **not** attempt to resolve conflict markers in the lockfile by hand.
 
-## Wails bindings — keep them fresh
+## Wails bindings — auto-regenerated on `npm install`
 
 The Go→JS IPC layer is **generated**: every method exported on `App` in
 `app.go` is reflected into `frontend/wailsjs/go/main/App.{js,d.ts}` and the
@@ -79,17 +79,21 @@ generated files; they must match the live Go signatures or the frontend calls a
 function that does not exist (or with the wrong arg shape).
 
 `frontend/wailsjs/` is **gitignored** — it is a build artifact, never
-committed. So every developer (and CI) regenerates it locally:
+committed. Binding regeneration is now automatic:
 
-```sh
-cd frontend
-npm run generate      # runs `wails generate module`
-```
+- `npm install` runs the `prepare` script (`scripts/regenerate-bindings.mjs`),
+  which calls `wails generate module` from the project root. A fresh clone
+  produces a working `frontend/wailsjs/` without a manual step, so a newly-
+  added Go method can never silently drift from the frontend imports a user
+  has.
 
-Run this after you add, remove, rename, or change the signature of a
-Wails-bound method on `App`, so your local frontend imports resolve.
-**Any time you edit Go bindings, run `npm run generate`** before the frontend
-will type-check/build against the new signatures.
+If the `wails` CLI is not on `PATH` (e.g. a brand-new machine that hasn't run
+`go install github.com/wailsapp/wails/v2/cmd/wails@latest` yet), the script
+prints a one-line pointer and exits 0 — `npm install` is never blocked by an
+unrelated dev-tool install.
+
+You can also run `npm run generate` explicitly at any time to force a refresh
+(it calls the same script with the same skip-tolerant behavior).
 
 CI (`.github/workflows/ci.yml`) regenerates the bindings fresh on every run as
 part of the build, then runs `svelte-check` + `vite build` — that is the real

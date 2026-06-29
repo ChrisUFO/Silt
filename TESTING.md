@@ -2,7 +2,8 @@
 
 > See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the contribution workflow,
 > pre-push hook setup (`git config core.hooksPath .githooks`), and the
-> `npm run generate` Wails-binding regeneration step.
+> auto-regenerating `npm install` (via the `prepare` script —
+> `npm run generate` is now an explicit-refresh alias).
 
 ## Automated Tests
 

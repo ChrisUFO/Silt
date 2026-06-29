@@ -5,14 +5,14 @@ name: CI
 #
 # Note on generated assets: both `frontend/dist/` (the vite build output) and
 # `frontend/wailsjs/` (the Go→JS binding stubs) are gitignored build artifacts.
-# They are NOT committed, so a fresh CI checkout has neither. CI regenerates
-# them in the right order before any step that consumes them:
-#   1. placeholder frontend/dist  (lets `wails generate module` compile the
-#      //go:embed all:frontend/dist directive)
-#   2. npm run generate           (writes frontend/wailsjs from live Go sigs)
-#   3. npm run build              (real vite build → real frontend/dist, and
+# They are NOT committed, so a fresh CI checkout has neither. The flow below
+# regenerates them in the right order before any step that consumes them:
+#   1. npm install                (the `prepare` script seeds a placeholder
+#                                  frontend/dist/.gitkeep AND regenerates
+#                                  frontend/wailsjs/ from live Go App sigs)
+#   2. npm run build              (real vite build → real frontend/dist, and
 #                                  resolves the wailsjs imports)
-#   4. npm run check / go build / go test
+#   3. npm run check / go build / go test
 
 on:
   push:
@@ -52,20 +52,11 @@ jobs:
         # npm install (not ci) because the lockfile is generated on Windows
         # and may not include all Linux-specific optional dependencies
         # (e.g. @esbuild/linux-x64). npm install resolves missing platform
-        # packages; npm ci requires a perfectly synced lockfile.
+        # packages; npm ci requires a perfectly synced lockfile. The `prepare`
+        # script also regenerates frontend/wailsjs/ from the live Go App
+        # signatures (CONTRIBUTING.md §"Wails bindings"), and seeds a
+        # placeholder frontend/dist/.gitkeep that lets `vite build` overwrite.
         run: npm install
-
-      - name: Placeholder frontend/dist
-        # `wails generate module` compiles main.go, whose //go:embed
-        # all:frontend/dist requires the directory to exist. Drop a minimal
-        # placeholder so generation can run before the real vite build.
-        run: |
-          mkdir -p frontend/dist
-          printf '<!doctype html><html><head><title>ci</title></head><body></body></html>' > frontend/dist/index.html
-
-      - name: Regenerate Wails bindings
-        working-directory: frontend
-        run: npm run generate
 
       - name: Build frontend (vite)
         working-directory: frontend
