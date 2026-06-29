@@ -247,6 +247,7 @@ func Defaults() SystemConfig {
 			"open_search":          "Ctrl+P",
 			"open_command_palette": "Ctrl+Slash",
 			"toggle_sidebar":       "Ctrl+B",
+			"focus_sidebar":        "Ctrl+Shift+B",
 			"cycle_view_layout":    "Alt+Tab",
 			"indent_block":         "Tab",
 			"unindent_block":       "Shift+Tab",

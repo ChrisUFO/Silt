@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import {
     IsVaultInitialized,
     InitializeVault,
@@ -499,6 +499,29 @@
       const detail = (e as CustomEvent).detail
       openSettings(typeof detail === 'string' ? detail : 'general')
     }
+    // Move keyboard focus into the active sidebar (#326 item 8). Expands the
+    // sidebar if collapsed, then focuses the first focusable element inside it
+    // (a tree node, a smart-list radio, a scope radio, or a search input —
+    // whichever the active sidebar surfaces first). Ctrl+Shift+B is not a
+    // format shortcut, so it fires globally even while the editor is focused.
+    async function focusSidebar() {
+      if (sidebarCollapsed) {
+        sidebarCollapsed = false
+        manuallyCollapsed = false
+      }
+      await tick()
+      // One rAF so the expand's width transition has started and the target
+      // is laid out before we focus it.
+      requestAnimationFrame(() => {
+        const aside = document.querySelector<HTMLElement>('[data-sidebar]')
+        if (!aside) return
+        const focusable = aside.querySelector<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+        )
+        focusable?.focus()
+      })
+    }
+
     function handleGlobalKeyDown(e: KeyboardEvent) {
       // Config-driven global shortcuts. Read live from the settings store so
       // edits made in Settings → General take effect after Save (no rebind
@@ -541,6 +564,10 @@
         e.preventDefault()
         sidebarCollapsed = !sidebarCollapsed
         manuallyCollapsed = sidebarCollapsed
+      }
+      if (matchHotkey(e, hotkeys.focus_sidebar)) {
+        e.preventDefault()
+        void focusSidebar()
       }
       if (matchHotkey(e, hotkeys.cycle_view_layout)) {
         e.preventDefault()

@@ -48,6 +48,9 @@ func TestDefaults_Populated(t *testing.T) {
 	if _, ok := d.Hotkeys["open_search"]; !ok {
 		t.Errorf("defaults hotkeys missing open_search")
 	}
+	if _, ok := d.Hotkeys["focus_sidebar"]; !ok {
+		t.Errorf("defaults hotkeys missing focus_sidebar (#326 item 8)")
+	}
 	if len(d.Plugins.Active) == 0 {
 		t.Errorf("defaults plugins.active must be populated")
 	}
