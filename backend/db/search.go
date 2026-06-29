@@ -29,11 +29,6 @@ type SearchFilters struct {
 	VaultOnly bool   `json:"vaultOnly"` // exclude linked-notebook sources (source != 'vault')
 }
 
-// hasFilters is true when any narrowing dimension is set.
-func (f SearchFilters) hasFilters() bool {
-	return f.Notebook != "" || f.Section != "" || f.Tag != "" || f.Type != ""
-}
-
 // buildFTSQuery turns a free-text user query into a safe FTS5 MATCH
 // expression. The index uses tokenize='unicode61', so non-ASCII content
 // (CJK, accented Latin, Cyrillic, …) IS tokenized and searchable — the query

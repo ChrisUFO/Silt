@@ -213,7 +213,8 @@
   let toolbarEl: HTMLElement | null = $state(null)
 
   const LINK_IDX = BUTTONS.length
-  const ALIGN_START = LINK_IDX + 1
+  const SPELLCHECK_IDX = LINK_IDX + 1
+  const ALIGN_START = SPELLCHECK_IDX + 1
   const INSERT_START = ALIGN_START + ALIGN_BUTTONS.length
   const COLOR_START = INSERT_START + INSERT_BUTTONS.length
   let clearIdx = $derived(COLOR_START + (colorEnabled ? 2 : 0))
@@ -301,6 +302,8 @@
       aria-label="Check spelling"
       title="Check spelling (open suggestions for the misspelled word at the cursor)"
       data-tb
+      tabindex={rovingIdx === SPELLCHECK_IDX ? 0 : -1}
+      onfocus={() => (rovingIdx = SPELLCHECK_IDX)}
       onclick={() => {
         const rect = editor?.view.dom.getBoundingClientRect()
         const sel = editor?.view.coordsAtPos(editor.state.selection.head)

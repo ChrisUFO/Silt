@@ -119,12 +119,11 @@
   <div class="flex items-center gap-2 flex-shrink-0 h-full pr-2">
     <button
       onclick={onSearchClick}
-      class="bg-surface border border-border-muted rounded-lg pl-3 pr-8 py-1.5 items-center gap-2 cursor-pointer text-text-muted hover:border-accent-primary-start transition-all duration-200 hidden sm:flex w-72"
+      aria-label="Search"
+      title="Search (Ctrl+Shift+F)"
+      class="flex items-center justify-center h-9 w-9 rounded-lg text-text-muted hover:text-text-primary hover:bg-hover transition-colors cursor-pointer border-none bg-transparent focus:outline-none"
     >
-      <span class="material-symbols-outlined text-[18px]">search</span>
-      <span class="text-[12px] font-label-sm whitespace-nowrap"
-        >Search… (Ctrl+P)</span
-      >
+      <span class="material-symbols-outlined text-[20px]">search</span>
     </button>
 
     <div class="w-px h-6 bg-border-muted mx-1"></div>

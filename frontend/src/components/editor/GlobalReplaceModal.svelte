@@ -164,7 +164,10 @@
           const after = applyReplace(before, matcher)
           if (before !== after) {
             b.clean_text = after
-            b.raw_text = after
+            // Do NOT overwrite raw_text — the renderer (RenderFileContent)
+            // re-derives the bullet/checkbox prefix from the original raw_text.
+            // Overwriting it with the clean replacement strips the prefix →
+            // silent data corruption (list bullets vanish on save).
             changed = true
             replacements++
           }
@@ -217,7 +220,7 @@
 </script>
 
 <div
-  class="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[150] flex items-start justify-center pt-20"
+  class="fixed inset-0 bg-black/50 z-[150] flex items-start justify-center pt-20"
 >
   <button
     tabindex="-1"
@@ -231,7 +234,7 @@
     aria-label="Find and replace across vault"
     tabindex="-1"
     class="relative w-full max-w-3xl glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[600px]"
-    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 80%, transparent);"
+    style="background: color-mix(in srgb, var(--color-panel) 95%, transparent);"
   >
     <div class="px-4 py-3 border-b border-border-muted bg-void/30 space-y-2">
       <div class="flex items-center gap-2">
@@ -293,6 +296,10 @@
           aria-label="Close">✕</button
         >
       </div>
+      <p class="text-[11px] text-text-muted font-body-md px-1">
+        Replaces every occurrence in accepted blocks, not just the previewed
+        snippet.
+      </p>
     </div>
 
     <div class="flex-1 overflow-y-auto custom-scrollbar">
