@@ -379,7 +379,7 @@
 </script>
 
 <aside
-  class="flex flex-col gap-4 px-2 py-1"
+  class="flex flex-col gap-4 px-3 py-3"
   aria-label="Calendar sidebar"
   data-test-calendar-sidebar
 >

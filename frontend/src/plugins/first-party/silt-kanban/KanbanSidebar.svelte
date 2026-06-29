@@ -17,10 +17,7 @@
   // updates this sidebar's checkboxes.
   import { onMount, tick } from 'svelte'
   import type { PluginContext, PluginManifest } from '../../sdk'
-  import {
-    settings,
-    updatePluginSetting
-  } from '../../../settings/store.svelte'
+  import { settings, updatePluginSetting } from '../../../settings/store.svelte'
   import type { SavedBoard, Scope, KanbanFilters } from './types'
   import {
     getKanbanState,
@@ -44,7 +41,12 @@
   let liveOverride = $derived(getKanbanState().scopeUserOverride)
 
   // Saved boards — persisted under `plugins.plugin_settings.silt-kanban.boards[]`.
+  // Cap the persisted set so the sidebar stays scannable and config.yaml
+  // doesn't grow unbounded (#326 item 3). commitNewBoard no-ops at the cap
+  // rather than silently evicting an old board.
+  const MAX_BOARDS = 50
   let savedBoards = $state<SavedBoard[]>([])
+  let atLimit = $derived(savedBoards.length >= MAX_BOARDS)
   let newBoardName = $state('')
   let newBoardComposing = $state(false)
   let saveError = $state('')
@@ -53,13 +55,12 @@
   // Sidebar's notebook-create modal which auto-focuses its input.
   let newBoardInput = $state<HTMLInputElement | null>(null)
 
-  // Owners and tags — queried once on mount for the filter quick-toggles.
-  // We deliberately keep these as plain lists (not reactive); adding a new
-  // owner/tag to the vault is rare and the user can refresh via the
-  // sidebar's manual refresh button if needed.
-  let owners = $state<string[]>([])
-  let tags = $state<string[]>([])
-  let listsError = $state('')
+  // Owners and tags — board-scoped option lists bridged into shared state
+  // by Kanban.svelte (#326 item 2). Reading them here as $derived means
+  // the quick-toggles always match the current board (no vault-wide
+  // query, no toggle that filters to nothing).
+  let owners = $derived(getKanbanState().boardOwners)
+  let tags = $derived(getKanbanState().boardTags)
 
   function loadFromSettings() {
     const raw = settings.config?.plugins?.plugin_settings?.['silt-kanban']
@@ -95,9 +96,7 @@
       filters.tags.join('|')
     ].join('\u0000')
   }
-  let liveFingerprint = $derived(
-    boardFingerprint(liveScope, liveFilters)
-  )
+  let liveFingerprint = $derived(boardFingerprint(liveScope, liveFilters))
   function isBoardActive(b: SavedBoard): boolean {
     return boardFingerprint(b.scope, b.filters) === liveFingerprint
   }
@@ -125,26 +124,8 @@
     return true
   }
 
-  async function loadOwnerTagLists() {
-    try {
-      const ownersRes = await ctx.sqliteQuery(
-        `SELECT DISTINCT owner FROM tasks WHERE owner IS NOT NULL AND owner != '' ORDER BY owner ASC`
-      )
-      owners = (ownersRes.rows as Array<{ owner: string }>)
-        .map((r) => r.owner)
-        .filter(Boolean)
-      const tagsRes = await ctx.sqliteQuery(
-        `SELECT DISTINCT level_0 FROM tags WHERE level_0 IS NOT NULL AND level_0 != '' ORDER BY level_0 ASC`
-      )
-      tags = (tagsRes.rows as Array<{ level_0: string }>).map((r) => r.level_0)
-    } catch (e) {
-      listsError = e instanceof Error ? e.message : String(e)
-    }
-  }
-
   onMount(() => {
     loadFromSettings()
-    void loadOwnerTagLists()
   })
 
   async function persistBoards(next: SavedBoard[]) {
@@ -154,6 +135,9 @@
   }
 
   async function commitNewBoard() {
+    // Cap the persisted set (#326 item 3). No-op at the limit rather than
+    // silently evicting an old board the user may still want.
+    if (atLimit) return
     const name = newBoardName.trim()
     if (!name) {
       newBoardComposing = false
@@ -238,20 +222,23 @@
       e.key === 'ArrowLeft'
     ) {
       e.preventDefault()
-      const dir: 1 | -1 = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1
+      const dir: 1 | -1 =
+        e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1
       const next = nextEnabledIdx(scopeFocusIdx, dir)
       const nextScope = SCOPES[next]
-      if (nextScope) document
-        .querySelector<HTMLElement>(`[data-scope-radio="${nextScope}"]`)
-        ?.focus()
+      if (nextScope)
+        document
+          .querySelector<HTMLElement>(`[data-scope-radio="${nextScope}"]`)
+          ?.focus()
       return
     }
     if (e.key === 'Home') {
       e.preventDefault()
       const first = SCOPES.findIndex((s) => !isScopeDisabled(s))
-      if (first >= 0) document
-        .querySelector<HTMLElement>(`[data-scope-radio="${SCOPES[first]}"]`)
-        ?.focus()
+      if (first >= 0)
+        document
+          .querySelector<HTMLElement>(`[data-scope-radio="${SCOPES[first]}"]`)
+          ?.focus()
       return
     }
     if (e.key === 'End') {
@@ -263,9 +250,10 @@
           break
         }
       }
-      if (last >= 0) document
-        .querySelector<HTMLElement>(`[data-scope-radio="${SCOPES[last]}"]`)
-        ?.focus()
+      if (last >= 0)
+        document
+          .querySelector<HTMLElement>(`[data-scope-radio="${SCOPES[last]}"]`)
+          ?.focus()
       return
     }
     if (e.key === 'Enter' || e.key === ' ') {
@@ -277,9 +265,9 @@
       // any cursor drift. Per WAI-ARIA APG radiogroup guidance, a
       // disabled radio must NOT respond to activation.
       const target = e.currentTarget as HTMLElement | null
-      const targetScope = target?.getAttribute('data-scope-radio') as
-        | Scope
-        | null
+      const targetScope = target?.getAttribute(
+        'data-scope-radio'
+      ) as Scope | null
       if (targetScope && !isScopeDisabled(targetScope)) setScope(targetScope)
       return
     }
@@ -322,14 +310,17 @@
     const has = liveFilters.tags.includes(t)
     setFilters({
       ...liveFilters,
-      tags: has ? liveFilters.tags.filter((x) => x !== t) : [...liveFilters.tags, t]
+      tags: has
+        ? liveFilters.tags.filter((x) => x !== t)
+        : [...liveFilters.tags, t]
     })
   }
 
   // Columns footer — read-only column summary from the user's config.
   let columns = $derived(
-    ((settings.config?.plugins?.plugin_settings?.['silt-kanban']
-      ?.columns as string[] | undefined) ?? ['TODO', 'DOING', 'DONE'])
+    (settings.config?.plugins?.plugin_settings?.['silt-kanban']?.columns as
+      | string[]
+      | undefined) ?? ['TODO', 'DOING', 'DONE']
   )
 
   // Live-aria region announces filter changes (mirrors CalendarSidebar's
@@ -346,14 +337,17 @@
       lastMsgJson = j
       const f = liveFilters
       liveMessage = `Scope: ${liveScope}. Active filters: ${
-        f.owners.length + f.priorities.length + (f.dueDate ? 1 : 0) + f.tags.length
+        f.owners.length +
+        f.priorities.length +
+        (f.dueDate ? 1 : 0) +
+        f.tags.length
       }. ${savedBoards.length} saved boards.`
     }
   })
 </script>
 
 <aside
-  class="flex flex-col gap-4 px-2 py-1"
+  class="flex flex-col gap-4 px-3 py-3"
   aria-label="Kanban sidebar"
   data-test-kanban-sidebar
 >
@@ -434,7 +428,13 @@
         <li>
           <button
             type="button"
+            disabled={atLimit}
+            aria-disabled={atLimit}
+            title={atLimit
+              ? 'Reached the 50-board limit — delete one to add another'
+              : undefined}
             onclick={() => {
+              if (atLimit) return
               newBoardComposing = true
               // Focus the input after Svelte commits the new DOM node.
               // tick() awaits the next microtask so the {#if} block has
@@ -442,11 +442,20 @@
               void tick().then(() => newBoardInput?.focus())
             }}
             data-testid="new-board"
-            class="w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-accent-primary-start cursor-pointer border border-dashed border-border-muted bg-transparent transition-colors"
+            class="w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-accent-primary-start cursor-pointer border border-dashed border-border-muted bg-transparent transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-text-muted"
           >
             <span class="material-symbols-outlined text-[12px]">add</span>
             Save current…
           </button>
+          {#if atLimit}
+            <p
+              class="px-2 mt-1 text-text-muted text-[10px] font-body-md"
+              role="status"
+              data-testid="board-limit-hint"
+            >
+              Reached the 50-board limit — delete one to add another
+            </p>
+          {/if}
         </li>
       {/if}
     </ul>
@@ -504,8 +513,7 @@
               <span
                 class="material-symbols-outlined text-[12px] text-accent-primary-start"
                 title="Manual override — click Follow in the board header to track navigation"
-                aria-label="Manual scope override"
-                >push_pin</span
+                aria-label="Manual scope override">push_pin</span
               >
             {/if}
           </button>
@@ -526,7 +534,9 @@
       <!-- Owners -->
       {#if owners.length > 0}
         <div>
-          <p class="px-2 text-[10px] font-label-sm-bold text-text-muted uppercase tracking-widest mb-1">
+          <p
+            class="px-2 text-[10px] font-label-sm-bold text-text-muted uppercase tracking-widest mb-1"
+          >
             Owners
           </p>
           <ul class="space-y-0.5">
@@ -538,7 +548,7 @@
                 >
                   <input
                     type="checkbox"
-                    checked={checked}
+                    {checked}
                     onchange={() => toggleOwner(o)}
                     data-testid={`owner-${o}`}
                     class="rounded border-border-muted bg-surface"
@@ -553,7 +563,9 @@
 
       <!-- Priorities -->
       <div>
-        <p class="px-2 text-[10px] font-label-sm-bold text-text-muted uppercase tracking-widest mb-1">
+        <p
+          class="px-2 text-[10px] font-label-sm-bold text-text-muted uppercase tracking-widest mb-1"
+        >
           Priority
         </p>
         <ul class="space-y-0.5">
@@ -565,7 +577,7 @@
               >
                 <input
                   type="checkbox"
-                  checked={checked}
+                  {checked}
                   onchange={() => togglePriority(p)}
                   data-testid={`priority-${p}`}
                   class="rounded border-border-muted bg-surface"
@@ -581,10 +593,16 @@
 
       <!-- Due-date quick-pick -->
       <div>
-        <p class="px-2 text-[10px] font-label-sm-bold text-text-muted uppercase tracking-widest mb-1">
+        <p
+          class="px-2 text-[10px] font-label-sm-bold text-text-muted uppercase tracking-widest mb-1"
+        >
           Due
         </p>
-        <ul role="radiogroup" aria-label="Due-date quick-pick" class="space-y-0.5">
+        <ul
+          role="radiogroup"
+          aria-label="Due-date quick-pick"
+          class="space-y-0.5"
+        >
           {#each [{ v: '', l: 'All' }, { v: 'overdue', l: 'Overdue' }, { v: 'today', l: 'Today' }, { v: 'week', l: 'This Week' }, { v: 'none', l: 'No Date' }] as opt (opt.v)}
             <li>
               <button
@@ -592,7 +610,8 @@
                 role="radio"
                 aria-checked={liveFilters.dueDate === opt.v}
                 data-testid={`due-${opt.v || 'all'}`}
-                onclick={() => setDueDateChip(opt.v as KanbanFilters['dueDate'])}
+                onclick={() =>
+                  setDueDateChip(opt.v as KanbanFilters['dueDate'])}
                 class="w-full flex items-center gap-2 px-2 py-1 rounded text-[12px] font-body-md cursor-pointer border-none bg-transparent text-left
                   {liveFilters.dueDate === opt.v
                   ? 'bg-accent-primary-glow text-accent-primary-start'
@@ -613,7 +632,9 @@
       <!-- Tags -->
       {#if tags.length > 0}
         <div>
-          <p class="px-2 text-[10px] font-label-sm-bold text-text-muted uppercase tracking-widest mb-1">
+          <p
+            class="px-2 text-[10px] font-label-sm-bold text-text-muted uppercase tracking-widest mb-1"
+          >
             Tags
           </p>
           <ul class="space-y-0.5">
@@ -625,7 +646,7 @@
                 >
                   <input
                     type="checkbox"
-                    checked={checked}
+                    {checked}
                     onchange={() => toggleTag(t)}
                     data-testid={`tag-${t}`}
                     class="rounded border-border-muted bg-surface"
@@ -665,12 +686,6 @@
       {columns.join(' · ')}
     </p>
   </section>
-
-  {#if listsError}
-    <p class="px-2 text-error text-[11px] font-body-md" role="alert">
-      {listsError}
-    </p>
-  {/if}
 
   <div class="sr-only" aria-live="polite">{liveMessage}</div>
 </aside>

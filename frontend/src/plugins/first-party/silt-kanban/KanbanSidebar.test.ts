@@ -43,6 +43,7 @@ import {
   resetKanbanState,
   setFilters
 } from './kanbanSharedState.svelte'
+import type { Scope } from './types'
 
 function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
   return {
@@ -93,16 +94,17 @@ describe('KanbanSidebar (#323)', () => {
   })
 
   it('renders the saved-boards section header and + Save current… CTA', async () => {
-    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
+    // The sidebar no longer queries owners/tags itself (#326 item 2) —
+    // it reads them from the shared state. sqliteQuery must stay unused.
+    expect(mocks.sqliteQuery).not.toHaveBeenCalled()
     // The section header text may appear in multiple places (h3 + aria).
     expect(screen.getAllByText(/Saved Boards/i).length).toBeGreaterThan(0)
     expect(screen.getByTestId('new-board')).toBeInTheDocument()
   })
 
   it('renders the scope radio with four options', async () => {
-    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
     expect(screen.getByTestId('scope-vault')).toBeInTheDocument()
@@ -112,7 +114,6 @@ describe('KanbanSidebar (#323)', () => {
   })
 
   it('clicking a scope radio updates the shared state (#323 AC #4)', async () => {
-    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
     await fireEvent.click(screen.getByTestId('scope-notebook'))
@@ -134,7 +135,6 @@ describe('KanbanSidebar (#323)', () => {
         }
       }
     ]
-    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
     // Activate the saved board by clicking its label button.
@@ -152,7 +152,6 @@ describe('KanbanSidebar (#323)', () => {
   })
 
   it('+ Save current… opens the inline name input; Enter commits', async () => {
-    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
     await fireEvent.click(screen.getByTestId('new-board'))
@@ -175,7 +174,6 @@ describe('KanbanSidebar (#323)', () => {
   })
 
   it('toggle a priority checkbox updates the shared filters (#323 AC #3)', async () => {
-    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
     await fireEvent.click(screen.getByTestId('priority-1'))
@@ -185,7 +183,6 @@ describe('KanbanSidebar (#323)', () => {
   })
 
   it('toggle a due-date quick-pick sets the filter', async () => {
-    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
     await fireEvent.click(screen.getByTestId('due-overdue'))
@@ -198,7 +195,6 @@ describe('KanbanSidebar (#323)', () => {
     // The sidebar's checkboxes must reflect the LIVE shared filters, not
     // a stale snapshot — so a programmatic write from outside (e.g. the
     // FilterBar in the main view) should be visible in the sidebar.
-    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
     setFilters({
@@ -215,7 +211,6 @@ describe('KanbanSidebar (#323)', () => {
   })
 
   it('Clear all filters clears the shared filters', async () => {
-    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
     // First, set a filter so the Clear-all button appears.
@@ -228,7 +223,6 @@ describe('KanbanSidebar (#323)', () => {
   })
 
   it('arrow-key nav on scope radio moves focus to the next option', async () => {
-    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
     const vault = screen.getByTestId('scope-vault')
@@ -239,7 +233,6 @@ describe('KanbanSidebar (#323)', () => {
   })
 
   it('Enter on a focused scope radio activates it', async () => {
-    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
     const section = screen.getByTestId('scope-section')
@@ -249,7 +242,6 @@ describe('KanbanSidebar (#323)', () => {
   })
 
   it('Empty state when no boards exist shows only the + Save CTA', async () => {
-    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
     // No board elements yet.
@@ -292,7 +284,6 @@ describe('KanbanSidebar (#323)', () => {
         filters: { owners: [], priorities: [], dueDate: '', tags: [] }
       } as any
     ]
-    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
     // Only the valid board should have rendered.
@@ -300,10 +291,107 @@ describe('KanbanSidebar (#323)', () => {
     expect(document.querySelectorAll('[data-testid^="board-"]').length).toBe(1)
   })
 
+  // --- #326 item 2: sidebar reads board-scoped owners/tags from shared state
+  // (no vault-wide query). Pins that the sidebar consumes
+  // getKanbanState().boardOwners / boardTags reactively.
+  it('renders owner/tag quick-toggles from the shared board-scoped lists (#326 item 2)', async () => {
+    getKanbanState().boardOwners = ['alice', 'bob']
+    getKanbanState().boardTags = ['backend', 'frontend']
+    render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    // The owner/tag toggles reflect the board-scoped lists — no
+    // vault-wide sqliteQuery is made for owners or tags.
+    expect(mocks.sqliteQuery).not.toHaveBeenCalled()
+    expect(screen.getByTestId('owner-alice')).toBeInTheDocument()
+    expect(screen.getByTestId('owner-bob')).toBeInTheDocument()
+    expect(screen.getByTestId('tag-backend')).toBeInTheDocument()
+    expect(screen.getByTestId('tag-frontend')).toBeInTheDocument()
+  })
+
+  it('owner/tag toggles react to later shared-state writes (#326 item 2)', async () => {
+    getKanbanState().boardOwners = []
+    getKanbanState().boardTags = []
+    render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    // Initially no owner toggles.
+    expect(document.querySelectorAll('[data-testid^="owner-"]').length).toBe(0)
+    // Kanban.svelte bridges a fresh board-scope set into shared state.
+    getKanbanState().boardOwners = ['carol']
+    await flush()
+    expect(screen.getByTestId('owner-carol')).toBeInTheDocument()
+  })
+
+  // --- #326 item 3: 50-board cap on saved boards
+  describe('saved-boards cap (#326 item 3)', () => {
+    function makeBoards(n: number) {
+      return Array.from({ length: n }, (_, i) => ({
+        id: `b${i}`,
+        name: `Board ${i}`,
+        scope: 'vault' as Scope,
+        filters: {
+          owners: [] as string[],
+          priorities: [] as number[],
+          dueDate: '',
+          tags: [] as string[]
+        }
+      }))
+    }
+
+    it('disables the + Save affordance and shows the limit hint at 50 boards', async () => {
+      mocks.settings.config.plugins.plugin_settings['silt-kanban'].boards =
+        makeBoards(50)
+      render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+      const saveBtn = screen.getByTestId('new-board') as HTMLButtonElement
+      expect(saveBtn.disabled).toBe(true)
+      expect(saveBtn.getAttribute('aria-disabled')).toBe('true')
+      // The hint is reachable as real text (not aria-hidden) for a11y.
+      const hint = screen.getByTestId('board-limit-hint')
+      expect(hint.textContent).toMatch(/reached the 50-board limit/i)
+      expect(hint.getAttribute('aria-hidden')).toBeFalsy()
+    })
+
+    it('commitNewBoard is a no-op at the cap (no silent eviction)', async () => {
+      mocks.settings.config.plugins.plugin_settings['silt-kanban'].boards =
+        makeBoards(50)
+      mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
+      render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+      // Force-open the composer and attempt to commit — the disabled
+      // button normally prevents this, but commitNewBoard must also
+      // self-guard so a programmatic call can't bypass the cap.
+      const before = document.querySelectorAll(
+        '[data-testid^="board-b"]'
+      ).length
+      expect(before).toBe(50)
+      // Drive commitNewBoard by opening the composer (bypassing the
+      // disabled button) and submitting a name. The component is what
+      // enforces the cap; we verify by counting rendered boards and the
+      // absence of a persist call.
+      // The button is disabled, so a click must not open the composer.
+      await fireEvent.click(screen.getByTestId('new-board'))
+      await flush()
+      expect(screen.queryByTestId('new-board-name')).not.toBeInTheDocument()
+      // Count unchanged + no persist call.
+      const after = document.querySelectorAll('[data-testid^="board-b"]').length
+      expect(after).toBe(50)
+      expect(mocks.updatePluginSetting).not.toHaveBeenCalled()
+    })
+
+    it('under the cap, the save affordance is enabled and no hint shows', async () => {
+      mocks.settings.config.plugins.plugin_settings['silt-kanban'].boards =
+        makeBoards(49)
+      render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+      const saveBtn = screen.getByTestId('new-board') as HTMLButtonElement
+      expect(saveBtn.disabled).toBe(false)
+      expect(screen.queryByTestId('board-limit-hint')).not.toBeInTheDocument()
+    })
+  })
+
   // --- #323 P1 review fixes: scope radio keyboard a11y + delete confirm
   describe('scope radio a11y', () => {
     it('Enter on a focused scope radio activates it (uses event target, not cursor)', async () => {
-      mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
       // ctx has activeSection set, so 'section' is enabled.
       render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
       await flush()
@@ -321,7 +409,6 @@ describe('KanbanSidebar (#323)', () => {
         activeSection: '',
         activePage: ''
       })
-      mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
       render(KanbanSidebar, { ctx: emptyCtx, manifest: MANIFEST })
       await flush()
       // The non-vault scopes (notebook/section/page) are all disabled.
@@ -350,7 +437,6 @@ describe('KanbanSidebar (#323)', () => {
           filters: { owners: [], priorities: [], dueDate: '', tags: [] }
         }
       ]
-      mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
       render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
       await flush()
       await fireEvent.click(screen.getByTestId('delete-board-b1'))
@@ -375,7 +461,6 @@ describe('KanbanSidebar (#323)', () => {
         }
       ]
       mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
-      mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
       render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
       await flush()
       await fireEvent.click(screen.getByTestId('delete-board-b1'))

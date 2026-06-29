@@ -179,4 +179,28 @@ describe('kanbanSharedState (#323)', () => {
       expect(s.scopeUserOverride).toBe(true)
     })
   })
+
+  // #326 item 2: the board-scoped owner/tag lists live on the shared
+  // state so the sidebar can read them instead of querying. reset must
+  // clear them so a stale board's options can't leak into the next vault
+  // (the same invariant resetKanbanState already enforces for scope /
+  // filters / override).
+  describe('boardOwners / boardTags (#326 item 2)', () => {
+    it('default to empty arrays after reset', () => {
+      const s = getKanbanState()
+      expect(s.boardOwners).toEqual([])
+      expect(s.boardTags).toEqual([])
+    })
+
+    it('resetKanbanState clears boardOwners / boardTags', () => {
+      const s = getKanbanState()
+      s.boardOwners = ['alice', 'bob']
+      s.boardTags = ['backend']
+      expect(getKanbanState().boardOwners).toEqual(['alice', 'bob'])
+      expect(getKanbanState().boardTags).toEqual(['backend'])
+      resetKanbanState()
+      expect(getKanbanState().boardOwners).toEqual([])
+      expect(getKanbanState().boardTags).toEqual([])
+    })
+  })
 })

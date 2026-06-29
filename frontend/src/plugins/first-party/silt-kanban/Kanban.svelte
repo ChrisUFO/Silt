@@ -293,6 +293,16 @@
     return [...set].sort()
   })
 
+  // Bridge the board-scoped option lists into the shared state so the
+  // sidebar can render owner/tag quick-toggles that match the current
+  // board instead of running its own vault-wide queries (#326 item 2).
+  // The FilterBar still consumes `allOwners`/`allTags` directly above;
+  // this $effect only mirrors the same derivations into the shared store.
+  $effect(() => {
+    getKanbanState().boardOwners = allOwners
+    getKanbanState().boardTags = allTags
+  })
+
   // Breadcrumb showing the active scope context.
   let scopeCrumb = $derived.by(() => {
     switch (scope) {
