@@ -81,16 +81,30 @@ func shouldOpenDevtools() bool {
 	return cfg.UI.OpenDevtoolsOnStartup != nil && *cfg.UI.OpenDevtoolsOnStartup
 }
 
+func clearCacheOnVersionChange(cacheDir, currentVersion string) {
+	markerFile := filepath.Join(cacheDir, ".silt-version")
+	stored, err := os.ReadFile(markerFile)
+	if err == nil && strings.TrimSpace(string(stored)) == currentVersion {
+		return
+	}
+	os.RemoveAll(cacheDir)
+	if err := os.MkdirAll(cacheDir, 0700); err != nil {
+		return
+	}
+	os.WriteFile(markerFile, []byte(currentVersion), 0644)
+}
+
 func main() {
 	app := NewApp()
 
-	// Version-scoped WebView2 user data so a version upgrade never inherits
-	// a corrupted EBWebView cache from a previous install (#342).
-	webviewDataDir := filepath.Join(os.Getenv("APPDATA"), "Silt", "webview2", appVersion)
+	// Single WebView2 cache folder, cleared on version change to prevent
+	// stale EBWebView corruption from carrying over across upgrades (#342).
+	webviewCacheDir := filepath.Join(os.Getenv("APPDATA"), "Silt", "webview2")
 	if os.Getenv("APPDATA") == "" {
 		home, _ := os.UserHomeDir()
-		webviewDataDir = filepath.Join(home, ".config", "silt", "webview2", appVersion)
+		webviewCacheDir = filepath.Join(home, ".config", "silt", "webview2")
 	}
+	clearCacheOnVersionChange(webviewCacheDir, appVersion)
 
 	err := wails.Run(&options.App{
 		Title:            "Silt",
@@ -105,7 +119,7 @@ func main() {
 			OpenInspectorOnStartup: shouldOpenDevtools(),
 		},
 		Windows: &windows.Options{
-			WebviewUserDataPath: webviewDataDir,
+			WebviewUserDataPath: webviewCacheDir,
 		},
 		// OS-level window paint colour shown before the webview renders,
 		// resolved from the active theme mode's bg.void so there is no
