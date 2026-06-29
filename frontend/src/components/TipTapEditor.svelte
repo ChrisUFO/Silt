@@ -14,12 +14,14 @@
   import { Search } from '../lib/editor/search/searchExtension'
   import {
     Spellcheck,
-    requestSpellcheckRecheck
+    requestSpellcheckRecheck,
+    findMisspellingAt
   } from '../lib/editor/spellcheck/SpellcheckExtension'
   import {
     loadDictionary,
     setCustomWords
   } from '../lib/editor/spellcheck/dictionary'
+  import SpellcheckMenu from './editor/SpellcheckMenu.svelte'
   import {
     SiltBlockExtensionsWithNodeViews,
     SiltInlineMarkExtensions,
@@ -805,6 +807,61 @@
       .catch(() => {})
   })
 
+  // Spellcheck corrections menu (#196). Right-click on a misspelled word opens
+  // the suggestions popover. Disabled when spellcheck is off (no decorations to
+  // click). The menu is also opened by the FormatToolbar spellcheck button via
+  // the `silt:open-spellcheck` window event (finds the misspelling at/after the
+  // cursor) — keeps the toolbar decoupled from the editor internals.
+  let spellMenu = $state<{
+    word: string
+    range: { from: number; to: number }
+    anchor: { x: number; y: number }
+  } | null>(null)
+
+  function openSpellMenuAt(
+    editor: Editor,
+    pos: number,
+    coords: { x: number; y: number }
+  ): void {
+    const m = findMisspellingAt(editor, pos)
+    if (!m) return
+    // Offset the anchor below the word so the popover sits under it.
+    spellMenu = {
+      word: m.word,
+      range: { from: m.from, to: m.to },
+      anchor: coords
+    }
+  }
+
+  $effect(() => {
+    const editor = editorInstance
+    if (!editor) return
+    if (settings.config?.editor?.spellcheck_enabled === false) return
+    const dom = editor.view.dom as HTMLElement
+    const onContext = (e: MouseEvent) => {
+      if (settings.config?.editor?.spellcheck_enabled === false) return
+      const pos = editor.view.posAtCoords({ left: e.clientX, top: e.clientY })
+      if (pos == null) return
+      const m = findMisspellingAt(editor, pos.pos)
+      if (!m) return
+      e.preventDefault()
+      openSpellMenuAt(editor, pos.pos, { x: e.clientX, y: e.clientY })
+    }
+    const onOpenBtn = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        | { x: number; y: number }
+        | undefined
+      const head = editor.state.selection.head
+      openSpellMenuAt(editor, head, detail ?? { x: 100, y: 100 })
+    }
+    dom.addEventListener('contextmenu', onContext)
+    window.addEventListener('silt:open-spellcheck', onOpenBtn)
+    return () => {
+      dom.removeEventListener('contextmenu', onContext)
+      window.removeEventListener('silt:open-spellcheck', onOpenBtn)
+    }
+  })
+
   // Global event listeners for cross-component hotkeys.
   function onOpenLinkInput(): void {
     openLinkInput()
@@ -1314,6 +1371,15 @@
       {selectionEmpty}
       {selectionCoords}
     />
+    {#if spellMenu && editorInstance}
+      <SpellcheckMenu
+        editor={editorInstance}
+        word={spellMenu.word}
+        range={spellMenu.range}
+        anchor={spellMenu.anchor}
+        onClose={() => (spellMenu = null)}
+      />
+    {/if}
     {#if cursorInTable && editorInstance}
       <TableContextToolbar editor={editorInstance} />
     {/if}

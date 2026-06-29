@@ -20,6 +20,9 @@ let currentLang = ''
 /** Custom words (lowercased) resolved for the active notebook. */
 const customWords = new Set<string>()
 
+/** Session-only ignores (the "Ignore" menu action). Cleared on reload. */
+const sessionIgnores = new Set<string>()
+
 /** Word → correctly-spelled cache so unchanged tokens skip Hunspell. */
 const cache = new Map<string, boolean>()
 
@@ -75,16 +78,25 @@ export function setCustomWords(words: string[]): void {
   cache.clear()
 }
 
-/** Whether `word` is known-correct (custom dict OR Hunspell). */
+/** Whether `word` is known-correct (custom dict OR session-ignore OR Hunspell). */
 export function checkWord(word: string): boolean {
   if (!dict) return true // not loaded yet — don't flag (avoids a false wave)
   const lower = word.toLowerCase()
-  if (customWords.has(lower)) return true
+  if (customWords.has(lower) || sessionIgnores.has(lower)) return true
   const cached = cache.get(lower)
   if (cached !== undefined) return cached
   const result = dict.check(lower)
   cache.set(lower, result)
   return result
+}
+
+/** Ignore a word for the current session only (the "Ignore" menu action). */
+export function ignoreWordSession(word: string): void {
+  const lower = word.trim().toLowerCase()
+  if (lower) {
+    sessionIgnores.add(lower)
+    cache.delete(lower)
+  }
 }
 
 /** Top-N Hunspell suggestions for a misspelled word (empty if none). */

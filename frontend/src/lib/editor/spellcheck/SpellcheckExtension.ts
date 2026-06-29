@@ -164,3 +164,45 @@ export const Spellcheck = Extension.create({
 export function requestSpellcheckRecheck(editor: Editor): void {
   editor.view.dispatch(editor.state.tr.setMeta(RECHECK_META, true))
 }
+
+export interface Misspelling {
+  word: string
+  from: number
+  to: number
+}
+
+/** The misspelling decoration whose range contains `pos`, or null. */
+export function findMisspellingAt(
+  editor: Editor,
+  pos: number
+): Misspelling | null {
+  const set = key.getState(editor.state) as DecorationSet | undefined
+  if (!set) return null
+  const decos = set.find(0, editor.state.doc.content.size)
+  const d = decos.find(
+    (deco: { from: number; to: number }) => deco.from <= pos && deco.to >= pos
+  )
+  if (!d) return null
+  return {
+    word: editor.state.doc.textBetween(d.from, d.to, ''),
+    from: d.from,
+    to: d.to
+  }
+}
+
+/** The first misspelling at/after `pos`, wrapping to the first in the doc. */
+export function findMisspellingAtOrAfter(
+  editor: Editor,
+  pos: number
+): Misspelling | null {
+  const set = key.getState(editor.state) as DecorationSet | undefined
+  if (!set) return null
+  const decos = set.find(0, editor.state.doc.content.size)
+  const d = decos.find((deco: { from: number }) => deco.from >= pos) ?? decos[0]
+  if (!d) return null
+  return {
+    word: editor.state.doc.textBetween(d.from, d.to, ''),
+    from: d.from,
+    to: d.to
+  }
+}

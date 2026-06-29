@@ -295,6 +295,30 @@
     >
       <span class="material-symbols-outlined" aria-hidden="true">link</span>
     </button>
+    <button
+      type="button"
+      class="toolbar-btn"
+      aria-label="Check spelling"
+      title="Check spelling (open suggestions for the misspelled word at the cursor)"
+      data-tb
+      onclick={() => {
+        const rect = editor?.view.dom.getBoundingClientRect()
+        const sel = editor?.view.coordsAtPos(editor.state.selection.head)
+        window.dispatchEvent(
+          new CustomEvent('silt:open-spellcheck', {
+            detail: sel
+              ? { x: sel.left, y: sel.bottom + 4 }
+              : rect
+                ? { x: rect.left + 40, y: rect.top + 40 }
+                : { x: 100, y: 100 }
+          })
+        )
+      }}
+    >
+      <span class="material-symbols-outlined" aria-hidden="true"
+        >spellcheck</span
+      >
+    </button>
   </div>
 
   <span class="toolbar-divider" aria-hidden="true"></span>

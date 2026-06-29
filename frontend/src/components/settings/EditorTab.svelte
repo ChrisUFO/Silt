@@ -10,6 +10,7 @@
   import { displayFamilyName } from '../../theme/fonts'
   import { themeState } from '../../theme/store.svelte'
   import FontSelect from './FontSelect.svelte'
+  import { customDictionary } from '../../lib/editor/spellcheck/customDictionary.svelte'
 
   let draft = $state<SystemConfig | null>(null)
   let lastSaved = $state<SystemConfig | null>(null)
@@ -26,6 +27,12 @@
     if (hasDraft && dirty) return
     draft = deepClone(cfg)
     lastSaved = deepClone(cfg)
+  })
+
+  // Load the custom spellcheck dictionary for the management card (#196). Runs
+  // once on mount; the store keeps it in sync with add/remove via the IPC.
+  $effect(() => {
+    if (settings.config) void customDictionary.load()
   })
 
   function touch() {
@@ -358,7 +365,139 @@
                 Focus mode (dim inactive paragraphs)
               </span>
             </label>
+
+            <label class="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                checked={draft.ui?.open_devtools_on_startup === true}
+                onchange={(e: Event) => {
+                  draftUI().open_devtools_on_startup = (
+                    e.currentTarget as HTMLInputElement
+                  ).checked
+                  touch()
+                }}
+                type="checkbox"
+                class="w-4 h-4 accent-[#10b981] cursor-pointer"
+              />
+              <span class="text-text-primary text-[13px] font-body-md">
+                Open DevTools on startup
+              </span>
+            </label>
+
+            <label class="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                checked={draft.editor?.spellcheck_enabled !== false}
+                onchange={(e: Event) => {
+                  draftEditor().spellcheck_enabled = (
+                    e.currentTarget as HTMLInputElement
+                  ).checked
+                  touch()
+                }}
+                type="checkbox"
+                class="w-4 h-4 accent-[#10b981] cursor-pointer"
+              />
+              <span class="text-text-primary text-[13px] font-body-md">
+                Spellcheck (underline misspelled words)
+              </span>
+            </label>
+
+            <label class="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                checked={draft.editor?.typewriter_mode === true}
+                onchange={(e: Event) => {
+                  draftEditor().typewriter_mode = (
+                    e.currentTarget as HTMLInputElement
+                  ).checked
+                  touch()
+                }}
+                type="checkbox"
+                class="w-4 h-4 accent-[#10b981] cursor-pointer"
+              />
+              <span class="text-text-primary text-[13px] font-body-md">
+                Typewriter mode (keep active line centered)
+              </span>
+            </label>
           </div>
+        </div>
+      </div>
+
+      <!-- Custom spellcheck dictionary (#196). Vault-scoped; edited via the
+           atomic config-RMW IPC in app_spellcheck.go. -->
+      <div
+        class="rounded-xl border border-border-muted bg-surface/5 p-4 space-y-3"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <h3 class="text-text-primary text-[14px] font-label-sm-bold">
+              Custom dictionary
+            </h3>
+            <p class="text-text-muted text-[12px] font-body-md mt-0.5">
+              Words you've added so they aren't flagged. Right-click a
+              misspelled word in the editor → "Add to dictionary", or add one
+              here.
+            </p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <input
+            bind:value={customDictionary.newWord}
+            placeholder="Add a word"
+            onkeydown={(e: KeyboardEvent) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                void customDictionary.add()
+              }
+            }}
+            class="flex-1 px-2.5 py-1.5 rounded-lg bg-void border border-border-muted text-text-primary text-[13px] font-body-md focus:outline-none focus:border-accent-primary-start/60"
+          />
+          <button
+            type="button"
+            onclick={() => void customDictionary.add()}
+            disabled={!customDictionary.newWord.trim()}
+            class="px-3 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-[13px] font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Add
+          </button>
+        </div>
+        <input
+          bind:value={customDictionary.filter}
+          placeholder="Filter words…"
+          class="w-full px-2.5 py-1.5 rounded-lg bg-void border border-border-muted text-text-primary text-[13px] font-body-md focus:outline-none focus:border-accent-primary-start/60"
+        />
+        {#if customDictionary.error}
+          <p class="text-error text-[12px] font-body-md">
+            {customDictionary.error}
+          </p>
+        {/if}
+        <div
+          class="max-h-48 overflow-y-auto rounded-lg border border-border-muted/60"
+        >
+          {#if customDictionary.filtered.length === 0}
+            <p class="text-text-muted text-[12px] font-body-md p-3 text-center">
+              {customDictionary.loading
+                ? 'Loading…'
+                : customDictionary.words.length === 0
+                  ? 'No custom words yet.'
+                  : 'No words match the filter.'}
+            </p>
+          {:else}
+            {#each customDictionary.filtered as word (word)}
+              <div
+                class="flex items-center justify-between px-2.5 py-1.5 hover:bg-surface/20"
+              >
+                <span class="text-text-primary text-[13px] font-body-md"
+                  >{word}</span
+                >
+                <button
+                  type="button"
+                  aria-label="Remove {word}"
+                  title="Remove"
+                  onclick={() => void customDictionary.remove(word)}
+                  class="text-text-muted hover:text-error transition-colors cursor-pointer"
+                  >✕</button
+                >
+              </div>
+            {/each}
+          {/if}
         </div>
       </div>
 
