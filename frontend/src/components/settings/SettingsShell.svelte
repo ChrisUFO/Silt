@@ -6,6 +6,7 @@
   import AppearanceTab from './AppearanceTab.svelte'
   import AboutTab from './AboutTab.svelte'
   import PluginsTab from './PluginsTab.svelte'
+  import DevTab from './DevTab.svelte'
   import { loadConfig, settings } from '../../settings/store.svelte'
   import { loadPlugins } from '../../plugins/loader'
 
@@ -31,6 +32,7 @@
     { id: 'appearance', label: 'Appearance', icon: 'palette' },
     { id: 'hotkeys', label: 'Hotkeys', icon: 'keyboard' },
     { id: 'plugins', label: 'Plugins', icon: 'extension' },
+    { id: 'dev', label: 'Dev', icon: 'code' },
     { id: 'about', label: 'About', icon: 'info' }
   ]
 
@@ -243,6 +245,8 @@
           <HotkeysTab />
         {:else if activeTab === 'plugins'}
           <PluginsTab {activeNotebook} {activeSection} {activePage} />
+        {:else if activeTab === 'dev'}
+          <DevTab />
         {:else if activeTab === 'about'}
           <AboutTab />
         {/if}

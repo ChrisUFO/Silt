@@ -1123,6 +1123,10 @@
 
       <!-- Content viewport -->
       <div class="flex-1 h-full min-w-0 flex flex-col overflow-hidden bg-void">
+        <!-- DEBUG: state badge -->
+        <div class="absolute bottom-2 left-2 z-[999] bg-red-600 text-white text-[10px] font-mono px-2 py-1 rounded opacity-80 pointer-events-none">
+          view={activeView} nb={activeNotebook || '-'} pg={activePage || '-'} tab={activeTabId || '-'} dt={displayedTabs.length} nr={notesReady}
+        </div>
         {#if activeView === 'notes'}
           {#if notesReady}
             <div
