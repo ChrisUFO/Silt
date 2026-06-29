@@ -886,6 +886,81 @@ The Kanban board is a first-party plugin (`silt-kanban`, `frontend/src/plugins/f
 
 Cards are rendered as `role="button"` elements with `aria-grabbed`/`aria-label` and animated with Svelte's native `svelte/animate/flip` (200ms cubic-out, per DESIGN.md §6). HTML5 drag-and-drop drives the data; the FLIP animation repositions remaining cards in the same paint frame. Keyboard users change status with ArrowLeft/ArrowRight directly; Enter/click navigates to the source block. The board supports multi-level scope (vault / notebook / section / page) via a segmented control, with the SQL `WHERE` clause built per scope level.
 
+5.4 Search & Writing Aids (Sprint 17 — #186, #185, #196, #187)
+
+Four editor/search features sharing a common substrate (ProseMirror decorations
++ transactions for in-editor work; the existing FTS5 index + atomic
+`SaveFileBlocks` write path for cross-vault work). All are config-driven,
+per-vault, hot-reloadable, and add zero SQLite schema, zero new write
+primitive, and zero new file tier (the per-vault custom dictionary lives in
+`editor.custom_dictionary` in `config.yaml` — the YAML tier, §0 rule 2).
+
+**In-page find (Ctrl+F, #186)** — `frontend/src/lib/editor/search/searchExtension.ts`
+wraps the official `prosemirror-search` plugin (MIT, by the ProseMirror author).
+A `SearchQuery` carries the term + case/whole-word/regex + a scope `filter`
+that rejects matches inside fenced `codeBlock`s, the inline `code` mark, and
+the `link` mark (URLs); block-identity comments aren't in the editor doc (the
+id is a node attr) so they need no filter. The decoration set rebuilds only on
+doc/selection/query change (the official invalidation strategy — not every
+transaction). `FindBar.svelte` is a `role="toolbar"` overlay with a `1 of N`
+counter (aria-live), prev/next, toggles, Esc-to-close. `getMatchCount` /
+`getActiveMatchIndex` read the decoration set for the counter.
+
+**In-page find & replace (Ctrl+H, #185)** — extends FindBar with a replace row.
+`replaceNextInPage` / `replaceAllInPage` proxy to `prosemirror-search`'s
+commands; Replace All iterates matches in reverse in ONE transaction (one undo
+step). Regex capture-group substitution (`$1`/`$&`) works in-page.
+
+**Global search enhancements (Ctrl+Shift+F, #186 global half)** —
+`SearchBlocksPaged(query, offset, limit, SearchFilters)` adds parameterized
+WHERE (notebook/section/tag/type/scope) + sort (relevance=bm25 |
+recency=file_date DESC) + a 20-token snippet window. Tag matches the exact tag
+OR a hierarchical descendant. `SearchFilters.VaultOnly` scopes to in-vault
+blocks. The SearchModal adds a scope segmented control (Vault | +Linked),
+category filter chips (single-select by block type), a sort toggle, and a live
+count — chips over tabbed categories (the Teams anti-pattern: tabs force a
+type-guess + hide cross-type results). Markdown dialect is GFM (§"Markdown
+Dialect" in SPECS.md); sub/super are `<sub>`/`<sup>` HTML.
+
+**Global replace (Ctrl+Shift+H, #185 global half)** — `GlobalReplaceModal`
+previews FTS5 matches grouped by page (before→after), with per-match + per-page
+accept. Apply iterates accepted pages: `FetchPageBlocks` → replace in
+`clean_text`/`raw_text` → `SaveFileBlocks` (atomic, self-write-tracked,
+re-indexes). A session revert log records the original blocks per page;
+"Undo last" restores. Applies to in-vault pages; linked notebooks are
+read-only (#185 non-goal).
+
+**Inline spellcheck (#196)** — `frontend/src/lib/editor/spellcheck/`:
+`dictionary.ts` wraps `typo-js` (pure-JS Hunspell, BSD) loading the bundled
+`en-US` dictionary from `frontend/public/dictionaries/en-US/` via `fetch`
+(fully local — no network). A per-vault custom-word Set (from
+`editor.custom_dictionary`) is layered over Hunspell; a session-ignore Set
+backs the "Ignore" menu action. `SpellcheckExtension.ts` is a ProseMirror
+decoration plugin that walks text nodes, tokenizes (letters + contractions),
+skips camelCase + ALLCAPS acronyms (false-positive reduction), and skips
+fenced code blocks (ancestor check), inline code + link (the text node's own
+`.marks`), and Dataview `[key:: value]` token RANGES (token-level, not
+whole-node). 300 ms debounced rebuild on doc change; `requestSpellcheckRecheck`
+forces an immediate rebuild (after dict load / custom-word change). The
+`.silt-spell-error` decoration uses `text-decoration: underline wavy
+var(--color-status-danger)` + skip-ink + under (WCAG: color+shape, theme-aware).
+`SpellcheckMenu.svelte` is the corrections popover (top-N suggestions + Add to
+dictionary via the atomic `AddCustomDictionaryWord` IPC + Ignore); right-click
+over a misspelled word opens it, and a FormatToolbar spellcheck button opens it
+for the cursor's word. No hotkey by design (wavy underline + right-click +
+toolbar button). Multi-language packs, domain word lists, and custom-dictionary
+import/export are Sprint 34 (#336–#338).
+
+**Typewriter mode (#187)** — `frontend/src/lib/editor/typewriter/TypewriterModeExtension.ts`
+is a ProseMirror PluginView.update that, on a keyboard-driven selection/doc
+change, sets the scroll container's scrollTop so the cursor lands at
+`editor.typewriter_mode_ratio` (default 0.5). Reads config live (toggle applies
+without reload). Mouse-driven changes filtered out (mousedown flag).
+`handleScrollToSelection` returns true while enabled to suppress ProseMirror's
+native make-visible scroll. Always instant (iA Writer; `prefers-reduced-motion`
+moot). The `SetTypewriterMode` IPC mirrors `SetFocusMode`'s atomic single-field
+toggle.
+
 
 6. Race Conditions, Locking, & Cooldowns
 

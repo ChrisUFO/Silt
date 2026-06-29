@@ -940,6 +940,22 @@ hotkeys:
 # without page navigation is a follow-up — the ProseMirror keymap is immutable
 # at schema build time).
 
+# Global Search Filters (#186) — the SearchBlocksPaged IPC takes a SearchFilters
+# object alongside the query/offset/limit. Empty fields = no filter on that
+# dimension (reproduces the original unfiltered whole-vault+linked search).
+#   type: TASK / NOTE / HEADER / CODE / TABLE / DETAILS / CALLOUT
+#   sort: "" | "relevance" (bm25, default) | "recency" (file_date DESC)
+#   vaultOnly: exclude linked-notebook sources (scope = in-vault only)
+# Tag matches the exact tag OR a hierarchical descendant ("work" → "work/*").
+# All user input is parameterized; a synced vault's tag/notebook name can't
+# inject SQL. The SearchModal drives these via a scope segmented control
+# (Vault | +Linked), category filter chips, and a sort toggle.
+#
+# Global Replace (#185) — the GlobalReplaceModal (Ctrl+Shift+H) previews FTS5
+# matches grouped by page (before→after), applies approved replacements per
+# page via the atomic SaveFileBlocks path, and keeps a session revert log.
+# Applies to in-vault pages; linked notebooks are read-only (non-goal).
+
 # UI Preferences (per-vault)
 ui:
   sidebar_width: 256
