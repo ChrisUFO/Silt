@@ -23,6 +23,7 @@
   import VirtualScrollContainer from './components/VirtualScrollContainer.svelte'
   import TabStrip from './components/TabStrip.svelte'
   import SearchModal from './components/SearchModal.svelte'
+  import GlobalReplaceModal from './components/editor/GlobalReplaceModal.svelte'
   import TagsExplorer from './components/TagsExplorer.svelte'
   import PluginView from './components/PluginView.svelte'
   import SettingsShell from './components/settings/SettingsShell.svelte'
@@ -361,6 +362,7 @@
     }
   }
   let showSearch = $state(false)
+  let showGlobalReplace = $state(false)
   let showSettings = $state(false)
   let settingsTab = $state('general')
   let showTemplatePicker = $state(false)
@@ -570,6 +572,10 @@
         e.preventDefault()
         findBarState.openReplace()
       }
+      if (matchHotkey(e, hotkeys.global_replace)) {
+        e.preventDefault()
+        showGlobalReplace = !showGlobalReplace
+      }
       if (matchHotkey(e, hotkeys.toggle_sidebar)) {
         e.preventDefault()
         sidebarCollapsed = !sidebarCollapsed
@@ -668,20 +674,23 @@
       showTemplatePicker = true
     }
     function handlePageRenamed(e: Event) {
-      const { notebook, section, oldName, newName } = (e as CustomEvent).detail as {
+      const { notebook, section, oldName, newName } = (e as CustomEvent)
+        .detail as {
         notebook: string
         section: string
         oldName: string
         newName: string
       }
       openTabs = openTabs.map((t) =>
-        t.notebook === notebook &&
-        t.section === section &&
-        t.page === oldName
+        t.notebook === notebook && t.section === section && t.page === oldName
           ? { ...t, page: newName }
           : t
       )
-      if (activeNotebook === notebook && activeSection === section && activePage === oldName) {
+      if (
+        activeNotebook === notebook &&
+        activeSection === section &&
+        activePage === oldName
+      ) {
         activePage = newName
       }
     }
@@ -1259,6 +1268,10 @@
       onClose={() => (showSearch = false)}
       onJump={handleSearchResultJump}
     />
+  {/if}
+
+  {#if showGlobalReplace}
+    <GlobalReplaceModal onClose={() => (showGlobalReplace = false)} />
   {/if}
 
   {#if showSettings}
