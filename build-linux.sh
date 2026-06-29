@@ -153,7 +153,7 @@ log_info "Building frontend..."
 rm -rf "$ROOT/build/bin"
 
 log_info "Building with Wails (linux/amd64)..."
-WAILS_ARGS=(build --platform linux/amd64 --clean)
+WAILS_ARGS=(build -devtools --platform linux/amd64 --clean)
 if [[ -n "$WEBKIT_TAG" ]]; then
     WAILS_ARGS+=(-tags "$WEBKIT_TAG")
 fi

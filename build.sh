@@ -137,7 +137,7 @@ rm -rf "$ROOT/build/bin"
 # --clean forces a full Go recompile (clears the build cache) so a stale
 # embed or binary never ships. We skip wiping frontend/dist (done above).
 log_info "Building with Wails..."
-wails build --platform windows/amd64 --nsis --clean
+wails build --platform windows/amd64 --nsis --clean -devtools
 
 BINARY="$ROOT/build/bin/${APP_NAME}.exe"
 if [ ! -f "$BINARY" ]; then
