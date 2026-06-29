@@ -3,8 +3,11 @@ package main
 import (
 	"embed"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 
+	"silt/backend/config"
 	"silt/backend/themes"
 	"silt/backend/vault"
 
@@ -62,6 +65,21 @@ func launchBackgroundColour() *options.RGBA {
 	return &options.RGBA{R: r, G: g, B: b, A: 1}
 }
 
+func shouldOpenDevtools() bool {
+	if strings.EqualFold(os.Getenv("SILT_DEBUG"), "1") {
+		return true
+	}
+	settings, err := vault.LoadSettings()
+	if err != nil || settings.VaultPath == "" {
+		return false
+	}
+	cfg, err := config.Load(settings.VaultPath)
+	if err != nil {
+		return false
+	}
+	return cfg.UI.OpenDevtoolsOnStartup != nil && *cfg.UI.OpenDevtoolsOnStartup
+}
+
 func main() {
 	app := NewApp()
 
@@ -73,6 +91,9 @@ func main() {
 		Frameless:        true,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
+		},
+		Debug: options.Debug{
+			OpenInspectorOnStartup: shouldOpenDevtools(),
 		},
 		// OS-level window paint colour shown before the webview renders,
 		// resolved from the active theme mode's bg.void so there is no

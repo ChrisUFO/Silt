@@ -358,6 +358,23 @@
                 Focus mode (dim inactive paragraphs)
               </span>
             </label>
+
+            <label class="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                checked={draft.ui?.open_devtools_on_startup === true}
+                onchange={(e: Event) => {
+                  draftUI().open_devtools_on_startup = (
+                    e.currentTarget as HTMLInputElement
+                  ).checked
+                  touch()
+                }}
+                type="checkbox"
+                class="w-4 h-4 accent-[#10b981] cursor-pointer"
+              />
+              <span class="text-text-primary text-[13px] font-body-md">
+                Open DevTools on startup
+              </span>
+            </label>
           </div>
         </div>
       </div>

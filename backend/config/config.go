@@ -129,6 +129,9 @@ type UIConfig struct {
 	// Used by the formatting first-run tip (#168). Same persistence tier as
 	// sidebar_width.
 	DismissedTips []string `yaml:"dismissed_tips,omitempty" json:"dismissed_tips,omitempty"`
+	// OpenDevtoolsOnStartup opens the Chromium DevTools inspector on app launch.
+	// Default false. Intended for diagnostics on non-developer machines.
+	OpenDevtoolsOnStartup *bool `yaml:"open_devtools_on_startup,omitempty" json:"open_devtools_on_startup,omitempty"`
 	// Formatting holds inline-formatting-related UI toggles (#168 Phase 3, #170).
 	Formatting FormattingConfig `yaml:"formatting,omitempty" json:"formatting,omitempty"`
 }
