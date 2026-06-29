@@ -19,7 +19,12 @@
 // so the side-effects (event dispatch, persistence) stay in one place.
 
 /** Smart-list filter the user picked from the Calendar sidebar. */
-export type CalendarFilter = 'all' | 'today' | 'upcoming' | 'overdue' | 'completed'
+export type CalendarFilter =
+  | 'all'
+  | 'today'
+  | 'upcoming'
+  | 'overdue'
+  | 'completed'
 
 export interface CalendarFocusState {
   /** Picked from the mini calendar in the sidebar; YYYY-MM-DD. */
@@ -70,8 +75,8 @@ export function clearActiveFilter(): void {
  * Reset to defaults. Production path used on vault switch so a stale
  * focusDate or activeFilter from the previous vault does not dim or
  * jump the cursor in the newly-opened vault. Mirrors the
- * KanbanSharedState.resetKanbanStateForTests contract but is exported
- * under a production name so callers can wire it to lifecycle events.
+ * KanbanSharedState.resetKanbanState contract; both are now wired into
+ * the loader's vault:closing handler (#326 item 1).
  */
 export function resetFocusState(): void {
   _state.focusDate = ''

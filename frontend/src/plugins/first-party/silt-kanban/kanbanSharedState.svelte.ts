@@ -101,8 +101,14 @@ export function applySavedBoard(b: {
   _state.scopeUserOverride = true
 }
 
-/** Test-only: reset to defaults. */
-export function resetKanbanStateForTests(): void {
+/**
+ * Reset the shared Kanban state to defaults. Called by the loader's
+ * vault:closing handler so scope/filters/override from the previous vault
+ * don't linger into the next (#326 item 1) — the settings store is reset by
+ * loadPlugins, but these module-globals are not. Tests reuse the same entry
+ * point (no separate test-only reset — one source of truth).
+ */
+export function resetKanbanState(): void {
   _state.scope = 'vault'
   _state.filters = { ...DEFAULT_FILTERS }
   _state.scopeUserOverride = false

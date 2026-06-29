@@ -180,4 +180,38 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
     await loadPlugins('Personal', '', '')
     expect(loadedPlugins.loadersReady).toBe(true)
   })
+
+  it('vault:closing resets first-party shared state (kanban + focus) #326 item 1', async () => {
+    const { getKanbanState, setScope, setFilters } =
+      await import('./first-party/silt-kanban/kanbanSharedState.svelte')
+    const { getFocusState, setFocusDate, setActiveFilter } =
+      await import('./first-party/silt-calendar/focusState.svelte')
+
+    // Dirty the shared module-globals as if the previous vault left state.
+    setScope('notebook')
+    setFilters({
+      owners: ['alice'],
+      priorities: [1],
+      dueDate: 'today',
+      tags: ['x']
+    })
+    setFocusDate('2026-06-28')
+    setActiveFilter('today')
+
+    expect(vaultClosingCb).toBeTruthy()
+    vaultClosingCb!()
+
+    const k = getKanbanState()
+    expect(k.scope).toBe('vault')
+    expect(k.scopeUserOverride).toBe(false)
+    expect(k.filters).toEqual({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: []
+    })
+    const f = getFocusState()
+    expect(f.focusDate).toBe('')
+    expect(f.activeFilter).toBe('all')
+  })
 })

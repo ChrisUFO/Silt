@@ -13,12 +13,12 @@ import {
   clearScopeOverride,
   applySavedBoard,
   initFromConfig,
-  resetKanbanStateForTests
+  resetKanbanState
 } from './kanbanSharedState.svelte'
 
 describe('kanbanSharedState (#323)', () => {
   beforeEach(() => {
-    resetKanbanStateForTests()
+    resetKanbanState()
   })
 
   describe('getKanbanState()', () => {

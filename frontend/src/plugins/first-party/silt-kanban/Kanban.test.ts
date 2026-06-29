@@ -96,7 +96,7 @@ import { reactiveCtx, setNav, resetNav } from './reactiveCtx.svelte'
 import {
   setScope,
   narrowScopeTo,
-  resetKanbanStateForTests
+  resetKanbanState
 } from './kanbanSharedState.svelte'
 
 function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
@@ -1164,7 +1164,7 @@ describe('Kanban plugin (#19)', () => {
       // is a no-op while the override is set, which would mask the bug).
       await tick()
       await vi.advanceTimersByTimeAsync(0)
-      resetKanbanStateForTests()
+      resetKanbanState()
       await tick()
       await vi.advanceTimersByTimeAsync(0)
       mocks.updatePluginSetting.mockClear()

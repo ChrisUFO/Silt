@@ -16,6 +16,8 @@ import { unregisterPluginSlashCommands } from '../lib/editor/slash-registry'
 import { unregisterPluginSurfaces } from './surfaces'
 import { unregisterPluginDecorations } from '../lib/editor/decorations'
 import { initGrants } from './grants.svelte'
+import { resetKanbanState } from './first-party/silt-kanban/kanbanSharedState.svelte'
+import { resetFocusState } from './first-party/silt-calendar/focusState.svelte'
 import DiskPluginNotice from './DiskPluginNotice.svelte'
 
 // Whether the lifecycle wiring (vault:closing subscription) has been installed.
@@ -247,6 +249,13 @@ function wireLifecycleOnce() {
     // The plugins map is stale after teardown; clear the reactive store.
     loadedPlugins.plugins = new Map()
     loadedPlugins.errors = []
+    // Reset the first-party shared-state module-globals so scope/filters/
+    // focusDate from the previous vault don't linger into the next (#326
+    // item 1). The settings store is reset by the next loadPlugins, but
+    // these reactive modules are not — without this a switched vault opens
+    // with the previous vault's Kanban scope/filter and Calendar focus.
+    resetKanbanState()
+    resetFocusState()
     // Clear all session tokens so the next vault starts fresh (#151).
     for (const [, token] of sessionTokens) {
       UnregisterPluginSession(token).catch(() => {})

@@ -40,7 +40,7 @@ import type { PluginContext, PluginManifest } from '../../sdk'
 import { v2CtxStubs } from '../../test-helpers'
 import {
   getKanbanState,
-  resetKanbanStateForTests,
+  resetKanbanState,
   setFilters
 } from './kanbanSharedState.svelte'
 
@@ -85,7 +85,7 @@ describe('KanbanSidebar (#323)', () => {
     mocks.settings.config.plugins.plugin_settings['silt-kanban'].boards =
       undefined
     mocks.settings.error = ''
-    resetKanbanStateForTests()
+    resetKanbanState()
   })
 
   afterEach(() => {
@@ -138,7 +138,9 @@ describe('KanbanSidebar (#323)', () => {
     render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
     // Activate the saved board by clicking its label button.
-    const boardBtn = document.querySelector<HTMLElement>('[data-testid="board-b1"] button')
+    const boardBtn = document.querySelector<HTMLElement>(
+      '[data-testid="board-b1"] button'
+    )
     expect(boardBtn).toBeTruthy()
     await fireEvent.click(boardBtn!)
     expect(getKanbanState().scope).toBe('notebook')
@@ -276,10 +278,19 @@ describe('KanbanSidebar (#323)', () => {
         id: 'b-bad-owners',
         name: 'BadOwners',
         scope: 'vault',
-        filters: { owners: 'not-an-array', priorities: [], dueDate: '', tags: [] }
+        filters: {
+          owners: 'not-an-array',
+          priorities: [],
+          dueDate: '',
+          tags: []
+        }
       } as any,
       // Missing id — should be dropped.
-      { name: 'NoId', scope: 'vault', filters: { owners: [], priorities: [], dueDate: '', tags: [] } } as any
+      {
+        name: 'NoId',
+        scope: 'vault',
+        filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+      } as any
     ]
     mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
@@ -345,7 +356,9 @@ describe('KanbanSidebar (#323)', () => {
       await fireEvent.click(screen.getByTestId('delete-board-b1'))
       // Confirm was shown.
       expect(confirmSpy).toHaveBeenCalledTimes(1)
-      expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('My Work'))
+      expect(confirmSpy).toHaveBeenCalledWith(
+        expect.stringContaining('My Work')
+      )
       // User cancelled: the board is still rendered.
       expect(screen.getByTestId('board-b1')).toBeInTheDocument()
       confirmSpy.mockRestore()
