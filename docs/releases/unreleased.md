@@ -1,3 +1,4 @@
 # Fixes
 
-- **Drag handles no longer double-render on hover.** A hovered block now shows a single grip icon. Grab it to drag the block into a new position; the keyboard shortcut for the same action (`Alt + ↑` / `Alt + ↓`) is unchanged. Indent-on-drop, the drop-zone indicator, and `Esc` to cancel an in-flight drag continue to work as before.
+- **Right-click "Rename" on a page now opens a modal dialog** (like sections and notebooks do) instead of trying to focus an inline title that may not be mounted yet. Renaming a page through the dialog refreshes the sidebar tree and updates any open tabs pointing to the old page name.
+- **Fixed blank page regression.** A closure-variable deduplication guard in the page-loading effect could prevent the editor from loading page content. Reverted to the simpler, proven pattern.

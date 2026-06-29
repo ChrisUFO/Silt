@@ -87,12 +87,8 @@
     settings.config?.editor?.show_word_count === true
   )
 
-  let lastLoadedPage = ''
-
   $effect(() => {
-    const pageKey = `${notebook}/${section}/${page}`
-    if (notebook && page && pageKey !== lastLoadedPage) {
-      lastLoadedPage = pageKey
+    if (notebook && page) {
       untrack(() => loadPage(true))
     }
   })

@@ -108,12 +108,13 @@
   let showNotebookDropdown = $state(false)
 
   // Creation/rename modal state
-  let createMode = $state<'' | 'notebook' | 'section'>('')
+  let createMode = $state<'' | 'notebook' | 'section' | 'page'>('')
   let editingMode = $state<'create' | 'rename'>('create')
   let renameCtx = $state<{
-    level: 'notebook' | 'section'
+    level: 'notebook' | 'section' | 'page'
     notebook: string
     section?: string
+    page?: string
   } | null>(null)
   let newName = $state('')
   let createError = $state('')
@@ -356,14 +357,15 @@
   }
 
   function openRename(
-    level: 'notebook' | 'section',
+    level: 'notebook' | 'section' | 'page',
     notebook: string,
     section: string | undefined,
-    currentName: string
+    currentName: string,
+    page?: string
   ) {
     createMode = level
     editingMode = 'rename'
-    renameCtx = { level, notebook, section }
+    renameCtx = { level, notebook, section, page }
     newName = currentName
     createError = ''
     setTimeout(() => modalInputEl?.focus(), 0)
@@ -438,6 +440,18 @@
             activeSection = trimmed
             onSelectSection(trimmed)
           }
+        } else if (renameCtx.level === 'page') {
+          await RenamePage(
+            renameCtx.notebook,
+            renameCtx.section ?? '',
+            renameCtx.page ?? '',
+            trimmed
+          )
+          await loadNavigation()
+          if (activePage === renameCtx.page) {
+            activePage = trimmed
+          }
+          window.dispatchEvent(new CustomEvent('page-renamed', { detail: { notebook: renameCtx.notebook, section: renameCtx.section, oldName: renameCtx.page, newName: trimmed } }))
         }
       } else if (createMode === 'notebook') {
         await CreateNotebook(trimmed)
@@ -522,14 +536,7 @@
     const { level, notebook, section, page } = contextMenu
     contextMenu = null
     if (level === 'page' && section !== undefined && page !== undefined) {
-      activeSection = section
-      activePage = page
-      onSelectPage(notebook, section, page)
-      activeView = 'notes'
-      onSelectView('notes')
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('focus-page-title'))
-      }, 100)
+      openRename('page', notebook, section, page, page)
     } else if (level === 'section' && section !== undefined) {
       openRename('section', notebook, section, section)
     } else if (level === 'notebook') {

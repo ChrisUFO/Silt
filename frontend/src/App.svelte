@@ -653,6 +653,24 @@
       templatePickerMode = 'new-page'
       showTemplatePicker = true
     }
+    function handlePageRenamed(e: Event) {
+      const { notebook, section, oldName, newName } = (e as CustomEvent).detail as {
+        notebook: string
+        section: string
+        oldName: string
+        newName: string
+      }
+      openTabs = openTabs.map((t) =>
+        t.notebook === notebook &&
+        t.section === section &&
+        t.page === oldName
+          ? { ...t, page: newName }
+          : t
+      )
+      if (activeNotebook === notebook && activeSection === section && activePage === oldName) {
+        activePage = newName
+      }
+    }
 
     window.addEventListener('keydown', handleGlobalKeyDown)
     window.addEventListener('navigate-to-block', handleNavigateToBlock)
@@ -662,6 +680,7 @@
     window.addEventListener('open-settings', handleOpenSettings)
     window.addEventListener('open-template-picker', handleOpenTemplatePicker)
     window.addEventListener('silt:change-vault', handleSwitchVault)
+    window.addEventListener('page-renamed', handlePageRenamed)
     // `plugins:changed` is a Wails event (Go runtime.EventsEmit), so it must
     // be received via EventsOn — a DOM addEventListener would never fire.
     const offPluginsChanged = EventsOn('plugins:changed', () =>
@@ -736,6 +755,7 @@
         handleOpenTemplatePicker
       )
       window.removeEventListener('silt:change-vault', handleSwitchVault)
+      window.removeEventListener('page-renamed', handlePageRenamed)
       offPluginsChanged()
       offVaultMoved()
       offConfigChangedReload()
