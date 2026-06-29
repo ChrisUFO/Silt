@@ -928,7 +928,7 @@ hotkeys:
   toggle_focus_mode: "Ctrl+Shift+D"
   # Sprint 17 — Search, Find/Replace & Writing Aids. find_in_page (Ctrl+F) and
   # replace (Ctrl+H) are the universal in-editor bindings; global_replace
-  # (Ctrl+Shift+H) escalates replace across the vault; toggle_typewriter_mode
+  # (Ctrl+Shift+G) escalates replace across the vault; toggle_typewriter_mode
   # (Ctrl+Shift+Y) pairs with toggle_focus_mode (Ctrl+Shift+D).
   find_in_page: "Ctrl+F"
   replace: "Ctrl+H"

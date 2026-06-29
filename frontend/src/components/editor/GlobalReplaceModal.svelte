@@ -5,6 +5,11 @@
     SaveFileBlocks
   } from '../../../wailsjs/go/main/App.js'
   import type { config, parser } from '../../../wailsjs/go/models.js'
+  import {
+    buildMatcher,
+    applyReplace,
+    type MatcherOptions
+  } from '../../lib/editor/search/globalReplaceMatcher'
 
   interface Props {
     onClose: () => void
@@ -48,27 +53,15 @@
     }[]
   >([])
 
-  /** Build a global RegExp matcher from the find text + toggles. null if invalid. */
-  function buildMatcher(): RegExp | null {
-    const flags = caseSensitive ? 'g' : 'gi'
-    try {
-      if (regexp) return new RegExp(findText, flags)
-      const esc = findText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      return new RegExp(wholeWord ? `\\b${esc}\\b` : esc, flags)
-    } catch {
-      return null
-    }
-  }
-
-  /** Apply the matcher to a string, returning the replaced result. */
-  function applyReplace(text: string, matcher: RegExp): string {
-    return text.replace(matcher, replaceText)
-  }
-
   /** Preview: search FTS5 for the find term, group matches by page, compute
    *  before/after. Linked-notebook pages are flagged read-only (skipped on apply). */
   async function preview(): Promise<void> {
-    const matcher = buildMatcher()
+    const matcher = buildMatcher({
+      findText,
+      caseSensitive,
+      wholeWord,
+      regexp
+    })
     if (!findText.trim() || !matcher) {
       groups = []
       return
@@ -104,7 +97,7 @@
         const grp = byPage.get(key)!
         // Re-derive the before/after from the snippet's marked-up text.
         const before = (r.snippet || '').replace(/<\/?mark>/g, '')
-        const after = applyReplace(before, matcher)
+        const after = applyReplace(before, matcher, replaceText)
         grp.matches.push({
           blockId: r.id,
           snippet: before,
@@ -130,7 +123,12 @@
   async function apply(): Promise<void> {
     applying = true
     statusMessage = ''
-    const matcher = buildMatcher()
+    const matcher = buildMatcher({
+      findText,
+      caseSensitive,
+      wholeWord,
+      regexp
+    })
     if (!matcher) {
       applying = false
       return
@@ -161,7 +159,7 @@
         for (const b of blocks) {
           if (!matchIds.has(b.id)) continue
           const before = b.clean_text ?? ''
-          const after = applyReplace(before, matcher)
+          const after = applyReplace(before, matcher, replaceText)
           if (before !== after) {
             b.clean_text = after
             // Do NOT overwrite raw_text — the renderer (RenderFileContent)
@@ -216,7 +214,10 @@
       0
     )
   )
-  const canPreview = $derived(!!findText.trim() && !!buildMatcher())
+  const canPreview = $derived(
+    !!findText.trim() &&
+      !!buildMatcher({ findText, caseSensitive, wholeWord, regexp })
+  )
 </script>
 
 <div

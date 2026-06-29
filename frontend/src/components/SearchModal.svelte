@@ -49,8 +49,7 @@
     { id: '', label: 'All' },
     { id: 'TASK', label: 'Tasks' },
     { id: 'NOTE', label: 'Notes' },
-    { id: 'HEADER', label: 'Headings' },
-    { id: 'CODE', label: 'Code' }
+    { id: 'HEADER', label: 'Headings' }
   ]
 
   // Re-run search whenever the query OR a filter changes (debounced). Resets to

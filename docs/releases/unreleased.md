@@ -1,6 +1,6 @@
 # Highlights
 
-- **Find and replace text across your notes.** Press `Ctrl+F` to find within the current note — with live match highlighting, a "1 of N" counter, and case-sensitive / whole-word / regular-expression toggles. Press `Ctrl+H` to find and replace in the current note. Press `Ctrl+Shift+H` to replace a term across every note in the vault at once, with a per-match review before anything changes.
+- **Find and replace text across your notes.** Press `Ctrl+F` to find within the current note — with live match highlighting, a "1 of N" counter, and case-sensitive / whole-word / regular-expression toggles. Press `Ctrl+H` to find and replace in the current note. Press `Ctrl+Shift+G` to replace a term across every note in the vault at once, with a per-match review before anything changes.
 
 # Improvements
 

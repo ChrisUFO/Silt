@@ -350,7 +350,7 @@ func Defaults() SystemConfig {
 			// Sprint 17 — Search, Find/Replace & Writing Aids.
 			// find_in_page (Ctrl+F) and replace (Ctrl+H) are the universal
 			// in-editor find/replace bindings (VS Code/Docs/Office). global_replace
-			// (Ctrl+Shift+H) escalates replace to cross-vault (VS Code "replace in
+			// (Ctrl+Shift+G) escalates replace to cross-vault (VS Code "replace in
 			// files"). toggle_typewriter_mode (Ctrl+Shift+Y) pairs with
 			// toggle_focus_mode (Ctrl+Shift+D) as the writing-mode toggles.
 			// Spellcheck deliberately has NO hotkey — it's wavy-underline +
