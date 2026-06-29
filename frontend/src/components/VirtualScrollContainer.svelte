@@ -4,6 +4,8 @@
   import { EventsOn } from '../../wailsjs/runtime/runtime.js'
   import TipTapEditor from './TipTapEditor.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
+  import FindBar from './editor/FindBar.svelte'
+  import { findBarState } from '../lib/editor/search/findBarState.svelte'
   import type { ParsedBlock } from '../lib/editor'
   import type { Editor } from 'svelte-tiptap'
   import type { ViewMode } from '../lib/tabs'
@@ -331,6 +333,9 @@
 <div
   class="flex-1 flex flex-col min-h-0 h-full overflow-hidden bg-void relative"
 >
+  {#if viewMode === 'edit' && findBarState.open}
+    <FindBar editor={editorInstance!} onClose={() => findBarState.close()} />
+  {/if}
   {#if viewMode === 'edit' && showFormatToolbar}
     <EditorUtilityBar editor={editorInstance} {activeMarks} />
   {/if}

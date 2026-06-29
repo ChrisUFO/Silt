@@ -11,6 +11,7 @@
   import { BlockIndentOnDrop } from '../lib/editor/dragIndentDrop'
   import { SiltInlineDragHandle } from '../lib/editor/siltInlineDragHandle'
   import { PlainPaste } from '../lib/editor/plainPaste'
+  import { Search } from '../lib/editor/search/searchExtension'
   import {
     SiltBlockExtensionsWithNodeViews,
     SiltInlineMarkExtensions,
@@ -660,6 +661,9 @@
     // Ctrl+Shift+V inserts the clipboard as plain text (strips formatting);
     // Ctrl+V (no shift) falls through to ProseMirror's native rich-HTML paste.
     PlainPaste,
+    // In-page find (Ctrl+F) — wraps prosemirror-search; decorations + match
+    // navigation. Cheap when the query is empty (FindBar closed).
+    Search,
     Placeholder.configure({
       placeholder: 'Type / for commands, or start writing…'
     }),

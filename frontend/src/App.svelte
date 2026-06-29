@@ -40,6 +40,7 @@
   import { initTemplates } from './templates/store.svelte'
   import TemplatePicker from './templates/TemplatePicker.svelte'
   import { matchHotkey } from './settings/hotkeys'
+  import { findBarState } from './lib/editor/search/findBarState.svelte'
   import SidebarResizeHandle from './components/SidebarResizeHandle.svelte'
   import PluginModalHost from './components/PluginModalHost.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
@@ -559,6 +560,14 @@
       if (matchHotkey(e, hotkeys.open_search)) {
         e.preventDefault()
         showSearch = !showSearch
+      }
+      if (matchHotkey(e, hotkeys.find_in_page)) {
+        e.preventDefault()
+        findBarState.openFind()
+      }
+      if (matchHotkey(e, hotkeys.replace)) {
+        e.preventDefault()
+        findBarState.openReplace()
       }
       if (matchHotkey(e, hotkeys.toggle_sidebar)) {
         e.preventDefault()

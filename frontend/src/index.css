@@ -1029,3 +1029,19 @@ body {
   -webkit-font-feature-settings: 'liga';
   -webkit-font-smoothing: antialiased;
 }
+
+/* Sprint 17 — in-page find (#186). prosemirror-search emits these decoration
+ * classes; theme them with cyber-ink tokens so they recolor with the active
+ * theme. The active match (the selection's match) gets a stronger fill so it
+ * stands out from the rest. */
+.ProseMirror-search-match {
+  background-color: var(
+    --color-accent-secondary-start,
+    rgba(255, 235, 59, 0.33)
+  );
+  border-radius: 2px;
+}
+.ProseMirror-active-search-match {
+  background-color: var(--color-accent-primary-start, rgba(16, 185, 129, 0.45));
+  border-radius: 2px;
+}
