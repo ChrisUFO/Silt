@@ -363,6 +363,7 @@
   }
   let showSearch = $state(false)
   let showGlobalReplace = $state(false)
+  let globalReplaceQuery = $state('')
   let showSettings = $state(false)
   let settingsTab = $state('general')
   let showTemplatePicker = $state(false)
@@ -934,14 +935,24 @@
   )
 
   $effect(() => {
-    console.log('[Silt] notesReady:', notesReady,
-      '| activeView:', activeView,
-      '| notebook:', activeNotebook,
-      '| section:', activeSection,
-      '| page:', activePage,
-      '| activeTabId:', activeTabId,
-      '| displayedTabs:', displayedTabs.length,
-      '| openTabs:', openTabs.length)
+    console.log(
+      '[Silt] notesReady:',
+      notesReady,
+      '| activeView:',
+      activeView,
+      '| notebook:',
+      activeNotebook,
+      '| section:',
+      activeSection,
+      '| page:',
+      activePage,
+      '| activeTabId:',
+      activeTabId,
+      '| displayedTabs:',
+      displayedTabs.length,
+      '| openTabs:',
+      openTabs.length
+    )
   })
 
   function openSettings(tab: string = '') {
@@ -1147,8 +1158,11 @@
       <!-- Content viewport -->
       <div class="flex-1 h-full min-w-0 flex flex-col overflow-hidden bg-void">
         {#if settings.config?.ui?.open_devtools_on_startup === true}
-          <div class="absolute bottom-2 left-1/2 -translate-x-1/2 z-[999] bg-red-600 text-white text-[10px] font-mono px-2 py-1 rounded opacity-80 pointer-events-none">
-            view={activeView} nb={activeNotebook || '-'} pg={activePage || '-'} tab={activeTabId || '-'} dt={displayedTabs.length} nr={notesReady}
+          <div
+            class="absolute bottom-2 left-1/2 -translate-x-1/2 z-[999] bg-red-600 text-white text-[10px] font-mono px-2 py-1 rounded opacity-80 pointer-events-none"
+          >
+            view={activeView} nb={activeNotebook || '-'} pg={activePage || '-'} tab={activeTabId ||
+              '-'} dt={displayedTabs.length} nr={notesReady}
           </div>
         {/if}
         {#if activeView === 'notes'}
@@ -1267,11 +1281,19 @@
     <SearchModal
       onClose={() => (showSearch = false)}
       onJump={handleSearchResultJump}
+      onReplaceInVault={(q) => {
+        globalReplaceQuery = q
+        showSearch = false
+        showGlobalReplace = true
+      }}
     />
   {/if}
 
   {#if showGlobalReplace}
-    <GlobalReplaceModal onClose={() => (showGlobalReplace = false)} />
+    <GlobalReplaceModal
+      initialQuery={globalReplaceQuery}
+      onClose={() => (showGlobalReplace = false)}
+    />
   {/if}
 
   {#if showSettings}

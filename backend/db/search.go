@@ -118,9 +118,12 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 	}
 	if filters.Tag != "" {
 		// Match the exact tag OR any descendant (hierarchical: "work" matches
-		// "work/project"). IN-subquery keeps it one clause.
-		where = append(where, "b.id IN (SELECT block_id FROM tags WHERE raw_path = ? OR raw_path LIKE ?)")
-		args = append(args, filters.Tag, filters.Tag+"/%")
+		// "work/project"). IN-subquery keeps it one clause. Escape LIKE
+		// wildcards (_ and %) in the tag so literal underscores in tag names
+		// don't over-match (e.g. "sprint_17" wouldn't match "sprintX17").
+		escTag := strings.NewReplacer(`\`, `\\`, `_`, `\_`, `%`, `\%`).Replace(filters.Tag)
+		where = append(where, "b.id IN (SELECT block_id FROM tags WHERE raw_path = ? OR raw_path LIKE ? ESCAPE '\\')")
+		args = append(args, filters.Tag, escTag+"/%")
 	}
 	if filters.VaultOnly {
 		// Scope: in-vault blocks only (exclude linked-notebook sources).

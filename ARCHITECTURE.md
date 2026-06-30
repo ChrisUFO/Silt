@@ -922,7 +922,7 @@ count — chips over tabbed categories (the Teams anti-pattern: tabs force a
 type-guess + hide cross-type results). Markdown dialect is GFM (§"Markdown
 Dialect" in SPECS.md); sub/super are `<sub>`/`<sup>` HTML.
 
-**Global replace (Ctrl+Shift+H, #185 global half)** — `GlobalReplaceModal`
+**Global replace (Ctrl+Shift+G, #185 global half)** — `GlobalReplaceModal`
 previews FTS5 matches grouped by page (before→after), with per-match + per-page
 accept. Apply iterates accepted pages: `FetchPageBlocks` → replace in
 `clean_text`/`raw_text` → `SaveFileBlocks` (atomic, self-write-tracked,

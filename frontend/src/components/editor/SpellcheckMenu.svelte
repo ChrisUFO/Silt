@@ -75,7 +75,7 @@
   // Clamp the menu to the viewport so right-clicks near the screen edge don't
   // push it off-screen. The $effect reads `anchor` reactively + measures the
   // element after render to compute the clamped position.
-  let clampedAnchor = $state({ x: 0, y: 0 })
+  let clampedAnchor = $state({ x: -9999, y: -9999 })
 
   $effect(() => {
     if (!menuEl) return

@@ -23,9 +23,10 @@
   interface Props {
     onClose: () => void
     onJump: (res: TaskResult) => void
+    onReplaceInVault?: (query: string) => void
   }
 
-  let { onClose, onJump }: Props = $props()
+  let { onClose, onJump, onReplaceInVault }: Props = $props()
 
   let query = $state('')
   let results = $state<TaskResult[]>([])
@@ -80,6 +81,9 @@
   })
 
   async function performSearch(q: string, off: number, replace: boolean) {
+    // Capture the full filter state at call time so a stale response (from a
+    // different query OR a toggled chip/scope/sort) is detected on resolution.
+    const sig = `${q}|${typeFilter}|${sortMode}|${scopeVaultOnly}`
     loading = true
     try {
       const res: SearchResult = await SearchBlocksPaged(q, off, pageSize, {
@@ -90,8 +94,9 @@
         sort: sortMode,
         vaultOnly: scopeVaultOnly
       })
-      // Guard against a stale response landing after a newer query/offset/filter.
-      if (query.trim() !== q) return
+      // Guard against a stale response landing after a newer query/filter.
+      if (sig !== `${query.trim()}|${typeFilter}|${sortMode}|${scopeVaultOnly}`)
+        return
       if (replace) {
         results = res.results || []
         selectedIdx = 0
@@ -313,9 +318,18 @@
     </div>
 
     {#if query.trim() && total > 0}
-      <div class="px-5 py-1 text-[11px] text-text-muted font-body-md">
-        {total}
-        {total === 1 ? 'result' : 'results'}
+      <div
+        class="px-5 py-1 text-[11px] text-text-muted font-body-md flex items-center justify-between"
+      >
+        <span>{total} {total === 1 ? 'result' : 'results'}</span>
+        {#if onReplaceInVault}
+          <button
+            type="button"
+            class="text-accent-primary-start hover:brightness-110 cursor-pointer text-[11px] font-label-sm-bold border-none bg-transparent"
+            onclick={() => onReplaceInVault(query.trim())}
+            >Replace in vault…</button
+          >
+        {/if}
       </div>
     {/if}
 

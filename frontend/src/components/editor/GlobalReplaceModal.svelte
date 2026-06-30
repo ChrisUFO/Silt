@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
   import {
     SearchBlocksPaged,
     FetchPageBlocks,
@@ -13,10 +14,11 @@
 
   interface Props {
     onClose: () => void
+    initialQuery?: string
   }
-  let { onClose }: Props = $props()
+  let { onClose, initialQuery = '' }: Props = $props()
 
-  let findText = $state('')
+  let findText = $state(untrack(() => initialQuery))
   let replaceText = $state('')
   let caseSensitive = $state(false)
   let wholeWord = $state(false)
@@ -37,19 +39,25 @@
     accepted: boolean // per-page accept-all toggle
   }
 
+  interface BatchEntry {
+    notebook: string
+    section: string
+    page: string
+    blocks: parser.ParsedBlock[]
+  }
+
   let groups = $state<PageGroup[]>([])
   let loading = $state(false)
   let applying = $state(false)
   let statusMessage = $state('')
-  // Session revert log: original blocks per applied page, for the Undo action.
-  let revertLog = $state<
-    {
-      notebook: string
-      section: string
-      page: string
-      blocks: parser.ParsedBlock[]
-    }[]
-  >([])
+  // True after the user edits find/replace inputs, marking the displayed
+  // m.after values as out of date until Preview is clicked again.
+  let previewStale = $state(false)
+  // Full match count when SearchBlocksPaged truncated the preview (0 otherwise).
+  let truncatedCount = $state(0)
+  // Session revert log: one entry per Apply batch; each batch holds the
+  // original blocks of every page touched in that batch. Undo restores a batch.
+  let revertLog = $state<BatchEntry[][]>([])
 
   /** Preview: search FTS5 for the find term, group matches by page, compute
    *  before/after. Linked-notebook pages are flagged read-only (skipped on apply). */
@@ -62,10 +70,12 @@
     })
     if (!findText.trim() || !matcher) {
       groups = []
+      truncatedCount = 0
       return
     }
     loading = true
     statusMessage = ''
+    truncatedCount = 0
     try {
       const res = await SearchBlocksPaged(findText, 0, 200, {
         notebook: '',
@@ -75,8 +85,13 @@
         sort: '',
         vaultOnly: true
       })
+      const results = res.results || []
+      // res.total is the full match count; results is capped at the page limit.
+      if (res.total > results.length) {
+        truncatedCount = res.total
+      }
       const byPage = new Map<string, PageGroup>()
-      for (const r of res.results || []) {
+      for (const r of results) {
         const key = `${r.notebook}\x00${r.section}\x00${r.page}`
         if (!byPage.has(key)) {
           byPage.set(key, {
@@ -100,6 +115,7 @@
         })
       }
       groups = [...byPage.values()]
+      previewStale = false
     } catch (e) {
       statusMessage = `Preview failed: ${e}`
     } finally {
@@ -129,7 +145,7 @@
     }
     let pagesChanged = 0
     let replacements = 0
-    const newLog: typeof revertLog = []
+    const newLog: BatchEntry[] = []
     try {
       for (const grp of groups) {
         const acceptedMatches = grp.matches.filter((m) => m.accepted)
@@ -170,7 +186,7 @@
           pagesChanged++
         }
       }
-      revertLog = [...revertLog, ...newLog]
+      revertLog = [...revertLog, newLog]
       statusMessage = `Replaced ${replacements} across ${pagesChanged} page${
         pagesChanged === 1 ? '' : 's'
       }`
@@ -181,15 +197,25 @@
     }
   }
 
-  /** Revert the last applied batch by restoring the snapshotted original blocks. */
+  /** Revert the last Apply batch by restoring the snapshotted original blocks
+   *  for every page that was touched in that batch. */
   async function undo(): Promise<void> {
     if (revertLog.length === 0) return
     applying = true
     try {
-      const last = revertLog[revertLog.length - 1]
-      await SaveFileBlocks(last.notebook, last.section, last.page, last.blocks)
+      const lastBatch = revertLog[revertLog.length - 1]
+      for (const entry of lastBatch) {
+        await SaveFileBlocks(
+          entry.notebook,
+          entry.section,
+          entry.page,
+          entry.blocks
+        )
+      }
       revertLog = revertLog.slice(0, -1)
-      statusMessage = 'Reverted the last applied page.'
+      statusMessage = `Reverted last apply (${lastBatch.length} page${
+        lastBatch.length === 1 ? '' : 's'
+      }).`
     } catch (e) {
       statusMessage = `Undo failed: ${e}`
     } finally {
@@ -204,6 +230,19 @@
     !!findText.trim() &&
       !!buildMatcher({ findText, caseSensitive, wholeWord, regexp })
   )
+
+  // Invalidate the displayed m.after values when the user edits any input that
+  // the replacements are derived from. groups.length is read untracked so that
+  // populating or clearing the list itself does not flip the stale flag.
+  $effect(() => {
+    replaceText
+    caseSensitive
+    wholeWord
+    regexp
+    untrack(() => {
+      if (groups.length > 0) previewStale = true
+    })
+  })
 </script>
 
 <div
@@ -290,6 +329,16 @@
     </div>
 
     <div class="flex-1 overflow-y-auto custom-scrollbar">
+      {#if truncatedCount > 0}
+        <div
+          class="px-4 py-2 text-[12px] text-text-muted bg-void/20 border-b border-border-muted/60"
+          role="status"
+          aria-live="polite"
+        >
+          Showing first {groups.length} pages — {truncatedCount} total matches. Refine
+          your search to replace all.
+        </div>
+      {/if}
       {#if groups.length === 0}
         <div
           class="text-text-muted text-center py-10 font-body-md select-none text-[13px]"
@@ -361,18 +410,30 @@
       >
       <div class="flex items-center gap-2">
         {#if revertLog.length > 0}
+          {@const lastBatch = revertLog[revertLog.length - 1]}
           <button
             type="button"
             onclick={undo}
             disabled={applying}
             class="px-3 py-1.5 rounded-lg text-text-muted hover:text-text-primary text-[13px] font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40"
-            >Undo last</button
           >
+            Restore last apply ({lastBatch.length}
+            {lastBatch.length === 1 ? 'page' : 'pages'})
+          </button>
+        {/if}
+        {#if previewStale}
+          <span
+            class="text-[11px] text-text-muted italic"
+            role="status"
+            aria-live="polite"
+          >
+            Preview is stale — click Preview to refresh
+          </span>
         {/if}
         <button
           type="button"
           onclick={apply}
-          disabled={totalAccepted === 0 || applying}
+          disabled={totalAccepted === 0 || applying || previewStale}
           class="px-4 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-[13px] font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >{applying
             ? 'Applying…'

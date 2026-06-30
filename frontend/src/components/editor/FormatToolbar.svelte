@@ -273,7 +273,7 @@
         tabindex={rovingIdx === i ? 0 : -1}
         onclick={() => handleClick(btn)}
         onfocus={() => (rovingIdx = i)}
-        title={btn.label}
+        title={hk(btn.hotkey) ? `${btn.label} (${hk(btn.hotkey)})` : btn.label}
       >
         <span class="material-symbols-outlined" aria-hidden="true"
           >{btn.icon}</span
@@ -339,7 +339,7 @@
         tabindex={rovingIdx === ALIGN_START + i ? 0 : -1}
         onclick={() => handleAlign(btn.id)}
         onfocus={() => (rovingIdx = ALIGN_START + i)}
-        title={btn.label}
+        title={hk(btn.hotkey) ? `${btn.label} (${hk(btn.hotkey)})` : btn.label}
       >
         <span class="material-symbols-outlined" aria-hidden="true"
           >{btn.icon}</span
