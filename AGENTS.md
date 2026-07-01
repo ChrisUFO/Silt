@@ -53,3 +53,7 @@ Repo-specific rules that augment the global `~/.config/opencode/AGENTS.md`.
   for the canonical pattern). Never hit real IPC in a test.
 - Keep `PLAN.md` as a temporary planning artifact — never stage, commit, or
   push it (it is `.gitignore`d).
+- **Merge PRs with a merge commit, not a squash.** git-cliff derives the
+  changelog from the surviving Conventional Commits; squashing drops them
+  (and a non-conventional squash subject yields blank release notes). See
+  CONTRIBUTING.md "Branching & commits".
