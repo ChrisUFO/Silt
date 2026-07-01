@@ -84,18 +84,19 @@ type OpenTabsResult struct {
 // tab for a missing page. The on-disk tree is the source of truth, not the
 // persisted tab list (same philosophy as the SQLite index).
 func (a *App) GetOpenTabs() (OpenTabsResult, error) {
+	// Lock order: vaultMu before configMu (app.go invariant). Read vaultPath
+	// first under vaultMu, then the persisted tabs under configMu. The two
+	// reads are independent, so the order is free — establish it consistently
+	// to honour the invariant and avoid an AB-BA inversion with any binding
+	// that takes both locks.
+	a.vaultMu.RLock()
+	vaultPath := a.vaultPath
+	a.vaultMu.RUnlock()
+
 	a.configMu.RLock()
 	tabs := append([]config.TabRef(nil), a.cfg.UI.OpenTabs...)
 	active := a.cfg.UI.ActiveTab
 	a.configMu.RUnlock()
-
-	// vaultPath is vaultMu-guarded (per the App struct docstring). Read it
-	// under the correct mutex in a short critical section. We must NOT hold
-	// vaultMu while calling ListNavigation below (it takes its own
-	// vaultMu.RLock, and recursive RLock deadlocks if a writer is waiting).
-	a.vaultMu.RLock()
-	vaultPath := a.vaultPath
-	a.vaultMu.RUnlock()
 
 	if vaultPath == "" {
 		return OpenTabsResult{OpenTabs: []config.TabRef{}}, nil
