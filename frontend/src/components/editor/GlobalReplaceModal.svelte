@@ -174,7 +174,8 @@
       (e) => targetKeys.has(e.key) && e.isDirty()
     )
     const unflushable = new Set<string>()
-    if (dirtyEditors.length > 0) {
+    const flushedAny = dirtyEditors.length > 0
+    if (flushedAny) {
       const results = await Promise.all(
         dirtyEditors.map(async (e) => ({ key: e.key, clean: await e.flush() }))
       )
@@ -186,6 +187,7 @@
     let pagesChanged = 0
     let replacements = 0
     let openPagesTouched = 0
+    let skippedUnflushable = 0
     const newLog: BatchEntry[] = []
     try {
       for (const grp of groups) {
@@ -196,13 +198,12 @@
         // guarantees a future filter relaxation can't silently let a replace
         // touch a read-only external mount.
         if (grp.source !== 'vault') {
-          statusMessage = `Skipped linked-notebook page "${grp.page}" — global replace is vault-scoped.`
           continue
         }
         // A dirty editor that couldn't flush (save error) is skipped: writing
         // it from disk content would silently discard the user's unsaved edits.
         if (unflushable.has(grp.key)) {
-          statusMessage = `Skipped "${grp.page}" — its unsaved edits couldn't be saved first. Retry after resolving the save error.`
+          skippedUnflushable++
           continue
         }
         // Fetch the page's full block list (the search result is a subset).
@@ -231,15 +232,19 @@
           }
         }
         if (changed) {
-          await SaveFileBlocks(grp.notebook, grp.section, grp.page, blocks)
-          // Force any mounted editor for this page to reload the replaced
-          // content instead of holding a stale buffer (#345). Safe because a
-          // dirty editor was flushed above; a clean editor has nothing to lose.
+          // Arm the editor's one-shot external-reload flag BEFORE the write.
+          // SaveFileBlocks emits `block:changed` (and returns) before the
+          // frontend reload runs, but the flag must already be set when the
+          // editor's sync $effect fires so it bypasses the focused-edit guard.
+          // Setting it after the await would let the reload consume/clear an
+          // absent flag, then re-arm a flag with no matching reload — leaking
+          // until a LATER unrelated block:changed clobbered the user's edits.
           const editor = getEditor(grp.key)
           if (editor) {
             editor.forceExternalReload()
             openPagesTouched++
           }
+          await SaveFileBlocks(grp.notebook, grp.section, grp.page, blocks)
           // Record the page only after it has persisted, so a mid-batch
           // failure leaves newLog holding exactly the written pages.
           newLog.push({
@@ -253,9 +258,16 @@
       }
       statusMessage = `Replaced ${replacements} across ${pagesChanged} page${
         pagesChanged === 1 ? '' : 's'
+      }${
+        skippedUnflushable > 0
+          ? `; skipped ${skippedUnflushable} page${
+              skippedUnflushable === 1 ? '' : 's'
+            } with unsaved edits that couldn't be saved first`
+          : ''
       }`
       // Surface when the replace touched a page the user has open, so the
-      // reload is never a silent surprise (#345).
+      // reload is never a silent surprise (#345). Only claim edits were saved
+      // first when a flush actually ran.
       if (openPagesTouched > 0) {
         pushNotification({
           kind: 'info',
@@ -263,7 +275,13 @@
             replacements === 1 ? '' : 'es'
           } in ${openPagesTouched} open page${
             openPagesTouched === 1 ? '' : 's'
-          }. Your unsaved edits were saved first.`
+          }.${flushedAny ? ' Your unsaved edits were saved first.' : ''}${
+            skippedUnflushable > 0
+              ? ` ${skippedUnflushable} page${
+                  skippedUnflushable === 1 ? '' : 's'
+                } skipped (unsaved edits couldn't be saved).`
+              : ''
+          }`
         })
       }
     } catch (e) {

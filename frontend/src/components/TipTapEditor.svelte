@@ -699,6 +699,10 @@
     content: initialDoc,
     onUpdate: () => {
       if (suppressUpdate) return
+      // The user typed: any stale "force reload on next external change" flag
+      // is voided — a user edit makes the buffer authoritative again and must
+      // never be clobbered by a leaked pendingExternalReload (#345).
+      pendingExternalReload = false
       detectSlashCommand()
       isLastBlock = editorInstance
         ? editorInstance.state.doc.childCount <= 1

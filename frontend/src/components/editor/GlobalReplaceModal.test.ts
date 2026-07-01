@@ -357,33 +357,42 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
     mocks.FetchPageBlocks.mockResolvedValue([block('b1', 'foo bar')])
     mocks.SaveFileBlocks.mockResolvedValue(undefined)
 
-    // Register a fake dirty editor for the target page.
-    const flushed = vi.fn(async () => true)
-    const forceExternalReload = vi.fn()
+    // Register a fake dirty editor for the target page. Record the call order
+    // across flush / forceExternalReload / SaveFileBlocks to assert the
+    // lifecycle fix (#345): the reload flag must arm BEFORE the write so the
+    // editor's sync $effect consumes it on the block:changed reload rather than
+    // the flag leaking and later clobbering an unrelated edit.
+    const order: string[] = []
     let dirty = true
     registerEditor({
       key: 'vault\x00notes\x00page1',
       isDirty: () => dirty,
       flush: async () => {
-        flushed()
-        dirty = false // flush persisted the buffer → now clean
+        order.push('flush')
+        dirty = false
         return true
       },
-      forceExternalReload
+      forceExternalReload: () => order.push('forceExternalReload')
+    })
+    mocks.SaveFileBlocks.mockImplementation(async () => {
+      order.push('SaveFileBlocks')
     })
 
     await renderAndPreview('foo', 'qux')
     await fireEvent.click(screen.getByRole('button', { name: /^Replace/ }))
 
-    // The editor's buffer must be flushed BEFORE the replace writes.
     await waitFor(
       () => {
-        expect(flushed).toHaveBeenCalledTimes(1)
-        expect(mocks.SaveFileBlocks).toHaveBeenCalledTimes(1)
-        expect(forceExternalReload).toHaveBeenCalledTimes(1)
+        expect(order).toContain('SaveFileBlocks')
       },
       { timeout: 2000 }
     )
+    // flush runs first; forceExternalReload must precede SaveFileBlocks.
+    const flushAt = order.indexOf('flush')
+    const reloadAt = order.indexOf('forceExternalReload')
+    const saveAt = order.indexOf('SaveFileBlocks')
+    expect(flushAt).toBeLessThan(reloadAt)
+    expect(reloadAt).toBeLessThan(saveAt)
   })
 
   it('skips a page whose dirty editor cannot flush (save error) (#345)', async () => {

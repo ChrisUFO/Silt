@@ -43,6 +43,7 @@
   import TemplatePicker from './templates/TemplatePicker.svelte'
   import { matchHotkey } from './settings/hotkeys'
   import { findBarState } from './lib/editor/search/findBarState.svelte'
+  import { clearAllEditors } from './lib/editor/editorRegistry.svelte'
   import SidebarResizeHandle from './components/SidebarResizeHandle.svelte'
   import PluginModalHost from './components/PluginModalHost.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
@@ -726,6 +727,10 @@
         activeTabId = ''
         activeView = 'notes'
         showSettings = false
+        // Drop any editor reconciliation handles tied to the old vault so a
+        // teardown that bypassed Svelte $effect cleanup can't leave a stale
+        // editor buffer flushing into the new vault (#345).
+        clearAllEditors()
         loadConfig().catch((e) =>
           console.error('Post-move config reload failed:', e)
         )

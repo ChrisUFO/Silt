@@ -457,8 +457,19 @@ jobs:
           tar -xzf "$ARCHIVE"
           install -m 0755 "git-cliff-${CLIFF_VERSION}/git-cliff" /usr/local/bin/git-cliff
           rm -rf "$ARCHIVE" "git-cliff-${CLIFF_VERSION}"
-          # Current release's notes; fall back to unreleased for the first tag.
-          git cliff --latest --output release-notes.md || git cliff --unreleased --output release-notes.md
+          # Current release's notes. `--latest` emits the just-tagged release's
+          # commits; fall back to `--unreleased` only if it fails (e.g. no prior
+          # tag for the very first release). The fallback's stderr is surfaced
+          # rather than swallowed by a bare `||` so a real cliff error (bad
+          # cliff.toml, parse panic) isn't masked by a wrong-scope --unreleased.
+          if ! git cliff --latest --output release-notes.md 2>cliff-latest.err; then
+            echo "::warning::git cliff --latest failed; falling back to --unreleased. First attempt stderr:"
+            cat cliff-latest.err
+            rm -f cliff-latest.err
+            git cliff --unreleased --output release-notes.md
+          else
+            rm -f cliff-latest.err
+          fi
           echo "--- Generated release notes ---"
           cat release-notes.md
 

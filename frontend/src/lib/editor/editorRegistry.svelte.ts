@@ -53,6 +53,14 @@ export function getAllEditors(): EditorHandle[] {
   return [...editors.values()]
 }
 
+/** Drop every registered editor handle. Called on vault close/switch so a
+ *  teardown that bypasses Svelte's `$effect` cleanup can't leave handles
+ *  holding closures (and autosave buffers) over the PREVIOUS vault — a stale
+ *  handle would otherwise route a future flush into the wrong vault (#345). */
+export function clearAllEditors(): void {
+  editors.clear()
+}
+
 /** Test-only: clear the registry between tests. */
 export function _resetEditorRegistryForTests(): void {
   editors.clear()
