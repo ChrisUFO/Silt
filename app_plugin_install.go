@@ -93,6 +93,10 @@ func (a *App) UninstallPlugin(pluginID string) error {
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
+	// Close the per-plugin DB pool BEFORE the folder is removed (#213). On
+	// Windows an open file handle blocks deletion; closing first lets the
+	// RemoveAll in plugins.Uninstall succeed cleanly.
+	a.closePluginDB(pluginID)
 	if err := plugins.Uninstall(a.vaultPath, pluginID); err != nil {
 		return err
 	}

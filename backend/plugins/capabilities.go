@@ -50,6 +50,11 @@ const (
 	// always had, but gates it for plugins so a zero-capability third-party
 	// plugin cannot mutate content (#156).
 	CapContentMutate Capability = "content-mutate"
+	// CapPluginDB — open and use the per-plugin SQLite store
+	// (<vault>/.system/plugins/<id>/data/plugin.db) via ctx.pluginDb.exec /
+	// query / migrate. The connection is distinct from the core index and never
+	// ATTACH-able to it (#213).
+	CapPluginDB Capability = "plugin-db"
 )
 
 // KnownCapabilities is the set of capabilities recognized by this version of
@@ -67,6 +72,7 @@ var KnownCapabilities = map[Capability]bool{
 	CapUISurface:     true,
 	CapEditorSchema:  true,
 	CapContentMutate: true,
+	CapPluginDB:      true,
 }
 
 // Qualifier refines a capability grant's scope. The default/whole-scope

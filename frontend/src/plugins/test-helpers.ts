@@ -47,6 +47,7 @@ export const v2CtxStubs: Pick<
   | 'addAttachment'
   | 'openAttachment'
   | 'deleteAttachment'
+  | 'pluginDb'
   | 'vaultScratchDir'
   | 'resolveAsset'
   | 'readPluginAsset'
@@ -94,6 +95,11 @@ export const v2CtxStubs: Pick<
   addAttachment: () => Promise.resolve(''),
   openAttachment: () => Promise.resolve(true),
   deleteAttachment: () => Promise.resolve(true),
+  pluginDb: {
+    exec: () => Promise.resolve(),
+    query: () => Promise.resolve({ rows: [], truncated: false }),
+    migrate: () => Promise.resolve()
+  },
   vaultScratchDir: () => Promise.resolve(''),
   resolveAsset: () => Promise.resolve(''),
   readPluginAsset: () => Promise.resolve(''),

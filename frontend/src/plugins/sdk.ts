@@ -352,6 +352,35 @@ export interface PluginContext {
   openAttachment: (notebook: string, relPath: string) => Promise<boolean>
   /** Delete an attachment file (unlink-only; orphan GC is separate). #101. */
   deleteAttachment: (notebook: string, relPath: string) => Promise<boolean>
+
+  // --- Per-plugin SQLite store (#213) — capability-gated ------------------
+
+  /**
+   * The per-plugin SQLite store (gated by the 'plugin-db' capability). A
+   * distinct connection from the core index, at
+   * <vault>/.system/plugins/<id>/data/plugin.db; sqlite-vec is registered
+   * (vec0 virtual tables + vec_distance_cosine). The plugin owns its schema
+   * and chooses durability semantics. #213.
+   */
+  pluginDb: PluginDbApi
+}
+
+/**
+ * The per-plugin SQLite store API (#213). exec permits DDL/DML (ATTACH/DETACH
+ * and non-user_version PRAGMAs are blocked); query is SELECT/WITH-only with a
+ * row cap; migrate applies a forward-only schema migration stamped via
+ * PRAGMA user_version.
+ */
+export interface PluginDbApi {
+  /** Execute a write (DDL or DML). ATTACH/DETACH and escaping PRAGMAs blocked. */
+  exec: (sql: string, params?: unknown[]) => Promise<void>
+  /** Read-only query (SELECT/WITH only). Row-capped; { rows, truncated }. */
+  query: (
+    sql: string,
+    params?: unknown[]
+  ) => Promise<{ rows: Record<string, unknown>[]; truncated: boolean }>
+  /** Forward-only schema migration; stamps PRAGMA user_version = version. */
+  migrate: (version: number, sql: string) => Promise<void>
 }
 
 // --- v2 SDK typed event bus (#106) ---------------------------------------
@@ -410,6 +439,7 @@ export type Capability =
   | 'ui-surface'
   | 'editor-schema'
   | 'content-mutate'
+  | 'plugin-db'
 
 /** A capability scope qualifier (#113). 'granted' is the default whole-scope. */
 export type CapabilityQualifier = 'granted' | 'notebook' | 'vault'

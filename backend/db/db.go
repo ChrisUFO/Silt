@@ -8,6 +8,11 @@ import (
 	"path/filepath"
 
 	_ "modernc.org/sqlite"
+	// sqlite-vec: registers vec0 virtual tables + vec_distance_* on every
+	// connection opened by the modernc driver (inert on the core index —
+	// no schema change; available to per-plugin DBs, #213). Pure-Go via
+	// ccgo transpilation; no CGo.
+	_ "modernc.org/sqlite/vec"
 )
 
 // ErrNetworkFilesystem is returned when the vault index path is detected to be

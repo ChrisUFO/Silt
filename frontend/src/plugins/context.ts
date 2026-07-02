@@ -30,6 +30,10 @@ import {
   PluginNotify,
   PluginFetch,
   PluginRegisterSurface,
+  PluginDBExec,
+  PluginDBQuery,
+  PluginDBMigrate,
+  ClosePluginDB,
   RegisterPluginSession,
   UnregisterPluginSession,
   AddAttachment,
@@ -436,7 +440,27 @@ export function makePluginContext(
     openAttachment: (nb, relPath) =>
       OpenAttachment(nb, relPath).then(() => true),
     deleteAttachment: (nb, relPath) =>
-      DeleteAttachment(nb, relPath).then(() => true)
+      DeleteAttachment(nb, relPath).then(() => true),
+
+    // --- Per-plugin SQLite store (#213) — capability-gated server-side -----
+    pluginDb: {
+      exec: (sql, params) =>
+        PluginDBExec(
+          pluginID,
+          sessionToken ?? '',
+          sql,
+          (params as any[]) ?? []
+        ),
+      query: (sql, params) =>
+        PluginDBQuery(
+          pluginID,
+          sessionToken ?? '',
+          sql,
+          (params as any[]) ?? []
+        ),
+      migrate: (version, sql) =>
+        PluginDBMigrate(pluginID, sessionToken ?? '', version, sql)
+    }
   }
 }
 

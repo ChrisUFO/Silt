@@ -2,7 +2,8 @@ import {
   ReadPluginSource,
   ListPlugins,
   RegisterPluginSession,
-  UnregisterPluginSession
+  UnregisterPluginSession,
+  ClosePluginDB
 } from '../../wailsjs/go/main/App.js'
 import { EventsOn } from '../../wailsjs/runtime/runtime.js'
 import { getFirstParty, firstPartyPlugins } from './registry'
@@ -298,6 +299,9 @@ export function teardownPlugin(pluginID: string): void {
     UnregisterPluginSession(token).catch(() => {})
     sessionTokens.delete(pluginID)
   }
+  // Close the per-plugin DB pool (#213) — before onShutdown and before any
+  // folder removal on uninstall (Windows file lock).
+  ClosePluginDB(pluginID).catch(() => {})
   try {
     reg.onShutdown?.()
   } catch {
