@@ -26,7 +26,7 @@ The canonical theme schema is modes-based (`modes.dark` / `modes.light`) with hu
   "schema_version": "1.0.0",
   "id": "cyber_forest",
   "name": "Cyber Forest",
-  "author": "System Designer",
+  "author": "Chelydra Labs",
   "description": "...",
   "modes": {
     "dark": {

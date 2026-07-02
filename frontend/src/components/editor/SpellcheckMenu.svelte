@@ -145,7 +145,7 @@
     min-width: 180px;
     padding: 4px;
     background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border, #333);
+    border: 1px solid var(--color-border-muted, #333);
     border-radius: 8px;
     box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.45));
     font-size: 13px;
@@ -164,7 +164,7 @@
   }
   .menu-item:hover:not(.disabled),
   .menu-item:focus-visible {
-    background: var(--color-surface-hover, rgba(255, 255, 255, 0.08));
+    background: var(--color-hover, rgba(255, 255, 255, 0.08));
     outline: none;
   }
   .menu-item.disabled {
@@ -174,6 +174,6 @@
   .menu-separator {
     height: 1px;
     margin: 4px 0;
-    background: var(--color-border, #333);
+    background: var(--color-border-muted, #333);
   }
 </style>

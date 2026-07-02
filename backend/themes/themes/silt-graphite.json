@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "id": "silt-graphite",
   "name": "Graphite",
-  "author": "System Designer",
+  "author": "Chelydra Labs",
   "description": "A calm monochrome dark: true neutral-gray canvas with a single restrained blue accent.",
   "typography": {
     "font_family": "'Geist', sans-serif",

@@ -284,7 +284,7 @@
     gap: 0.25rem;
     padding: 0.375rem 0.5rem;
     background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border, #333);
+    border: 1px solid var(--color-border-muted, #333);
     border-radius: 8px;
     box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.35));
     font-size: 13px;
@@ -295,15 +295,15 @@
     gap: 0.375rem;
   }
   .replace-row {
-    border-top: 1px solid var(--color-border, #333);
+    border-top: 1px solid var(--color-border-muted, #333);
     padding-top: 0.25rem;
   }
   .find-input {
     width: 200px;
     padding: 0.25rem 0.5rem;
-    background: var(--color-bg, #0c0c0e);
+    background: var(--color-surface, #0c0c0e);
     color: var(--color-text-primary, #e6e6e6);
-    border: 1px solid var(--color-border, #333);
+    border: 1px solid var(--color-border-muted, #333);
     border-radius: 4px;
     font: inherit;
   }
@@ -342,12 +342,12 @@
   .toggle:hover,
   .nav-btn:hover,
   .close-btn:hover {
-    background: var(--color-surface-hover, rgba(255, 255, 255, 0.06));
+    background: var(--color-hover, rgba(255, 255, 255, 0.06));
     color: var(--color-text-primary, #e6e6e6);
   }
   .toggle.on {
     background: var(--color-accent-primary-start, #10b981);
-    color: var(--color-bg, #0c0c0e);
+    color: var(--color-surface, #0c0c0e);
     border-color: var(--color-accent-primary-start, #10b981);
   }
   .nav-btn:disabled,
@@ -366,14 +366,14 @@
     padding: 0.25rem 0.625rem;
     background: transparent;
     color: var(--color-text-primary, #e6e6e6);
-    border: 1px solid var(--color-border, #333);
+    border: 1px solid var(--color-border-muted, #333);
     border-radius: 4px;
     cursor: pointer;
     font: inherit;
     line-height: 1;
   }
   .action-btn:hover:not(:disabled) {
-    background: var(--color-surface-hover, rgba(255, 255, 255, 0.06));
+    background: var(--color-hover, rgba(255, 255, 255, 0.06));
   }
   .action-btn:disabled {
     opacity: 0.4;
