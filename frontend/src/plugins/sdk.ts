@@ -124,6 +124,13 @@ export interface PluginContext {
    */
   getSetting: (key: string) => Promise<any | undefined>
   /**
+   * Persist a SINGLE setting key to the vault-scoped config.yaml via the
+   * atomic UpdatePluginSetting binding (#120). The value is stored under
+   * `plugins.plugin_settings.<pluginID>.<key>`. No session token required —
+   * this is the same atomic path the generic SettingsForm uses.
+   */
+  updatePluginSetting: (key: string, value: any) => Promise<boolean>
+  /**
    * Subscribe to a typed host event (#106). Returns an unsubscribe function;
    * the host also auto-cleans every subscription on plugin disable/uninstall/
    * vault close, so a plugin cannot leak listeners across reloads. The

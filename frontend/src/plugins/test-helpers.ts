@@ -43,6 +43,7 @@ export const v2CtxStubs: Pick<
   | 'registerSlashCommand'
   | 'provideDecorations'
   | 'getSetting'
+  | 'updatePluginSetting'
   | 'registerSurface'
   | 'addAttachment'
   | 'openAttachment'
@@ -91,6 +92,7 @@ export const v2CtxStubs: Pick<
   registerSlashCommand: () => () => {},
   provideDecorations: () => () => {},
   getSetting: () => Promise.resolve(undefined),
+  updatePluginSetting: () => Promise.resolve(true),
   registerSurface: () => () => {},
   addAttachment: () => Promise.resolve(''),
   openAttachment: () => Promise.resolve(true),

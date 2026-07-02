@@ -2,6 +2,7 @@
   import type { RegisteredPlugin } from '../../plugins/sdk'
   import PluginSurfaceFrame from '../PluginSurfaceFrame.svelte'
   import { getSurfaces, onSurfacesChanged } from '../../plugins/surfaces'
+  import { makePluginContext } from '../../plugins/context'
 
   // PluginSettingsPanel renders a single plugin's bespoke Settings page (#214).
   // First-party plugins ship a compiled Svelte component (settingsPageComponent);
@@ -31,11 +32,10 @@
     )
   })
 
-  // Build a minimal ctx proxy for the surface frame (mirrors the sidebar/modal
-  // hosts). The real ctx is constructed per-plugin by makePluginContext; here we
-  // pass an empty proxy — PluginSurfaceFrame falls back to its own context
-  // construction via the postMessage bridge.
-  const ctxProxy = {}
+  // Build the real PluginContext for the first-party component so it can call
+  // ctx.getPluginSettings() / ctx.updatePluginSetting(). Memoized per plugin —
+  // rebuild only when the plugin id changes (not on every reactive re-render).
+  let ctx = $derived(makePluginContext(plugin.manifest.id) as any)
 </script>
 
 {#if plugin.settingsPageComponent}
@@ -43,7 +43,7 @@
        dynamic components are rendered directly via a capitalized binding) -->
   {@const Comp = plugin.settingsPageComponent}
   <Comp
-    ctx={ctxProxy}
+    {ctx}
     manifest={plugin.manifest}
     {activeNotebook}
     {activeSection}
@@ -51,7 +51,7 @@
   />
 {:else if thirdPartySurfaces.length > 0}
   <!-- Third-party: render the settings-panel iframe surface -->
-  <PluginSurfaceFrame surface={thirdPartySurfaces[0]} {ctxProxy} />
+  <PluginSurfaceFrame surface={thirdPartySurfaces[0]} ctxProxy={ctx} />
 {:else}
   <div class="p-6 text-text-muted font-body-md">
     This plugin has no configurable settings.

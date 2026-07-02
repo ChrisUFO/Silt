@@ -22,6 +22,19 @@
 
   onDestroy(() => off())
 
+  // Cache contexts per pluginID so a surfaces-list change doesn't rebuild
+  // the context for every banner on every render (avoids needless iframe
+  // srcdoc rebuilds in PluginSurfaceFrame).
+  const ctxCache = new Map<string, any>()
+  function ctxFor(pluginID: string): any {
+    let ctx = ctxCache.get(pluginID)
+    if (!ctx) {
+      ctx = makePluginContext(pluginID) as any
+      ctxCache.set(pluginID, ctx)
+    }
+    return ctx
+  }
+
   // Dismiss a banner. The surface is removed from the registry immediately so
   // the banner disappears; PERSISTENT dismissal state is the plugin's
   // responsibility (recommended: updatePluginSetting('<id>', 'dismissed_notes',
@@ -76,10 +89,7 @@
           >{surface.icon || 'campaign'}</span
         >
         <div class="banner-frame-wrapper">
-          <PluginSurfaceFrame
-            {surface}
-            ctxProxy={makePluginContext(surface.pluginID) as any}
-          />
+          <PluginSurfaceFrame {surface} ctxProxy={ctxFor(surface.pluginID)} />
         </div>
         <button
           type="button"

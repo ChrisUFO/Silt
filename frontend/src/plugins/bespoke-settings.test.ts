@@ -4,13 +4,13 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 
 // Mock the grant cache so isGranted returns true (the surface registry checks it).
-vi.mock('../grants.svelte', () => ({
+vi.mock('./grants.svelte', () => ({
   isGranted: () => true,
   grantStore: { subscribe: () => () => {} }
 }))
 
 import { registerPlugin, getFirstParty } from './registry'
-import { resetSurfacesForTests, registerSurface } from './surfaces'
+import { resetSurfacesForTests, registerSurface, getSurfaces } from './surfaces'
 import type { RegisteredPlugin } from './sdk'
 
 function makePlugin(
@@ -75,16 +75,16 @@ describe('bespoke settings pages (#214) — surface-based detection', () => {
   })
 
   it('a settings-panel surface is detectable via getSurfaces', () => {
-    const off = registerSurface({
+    registerSurface({
       id: 'third-party:settings',
       pluginID: 'third-party',
       kind: 'settings-panel',
       label: 'Third Party Settings',
       html: '<div>settings</div>'
     })
-    const surfaces = registerSurface.length // sanity
-    expect(surfaces).toBeGreaterThan(0)
-    // Cleanup
-    off()
+    const surfaces = getSurfaces('settings-panel')
+    expect(surfaces).toHaveLength(1)
+    expect(surfaces[0].pluginID).toBe('third-party')
+    expect(surfaces[0].label).toBe('Third Party Settings')
   })
 })

@@ -670,7 +670,7 @@ registerPlugin({
   let endpoint = $state('')
   // Load existing setting on mount.
   $effect(() => { ctx.getPluginSettings().then(s => { endpoint = s.endpoint ?? '' }) })
-  function save() { ctx.updateSetting('endpoint', endpoint) }
+  function save() { ctx.updatePluginSetting('endpoint', endpoint) }
 </script>
 <label for="ep">Provider endpoint</label>
 <input id="ep" bind:value={endpoint} />
@@ -722,7 +722,7 @@ recommended pattern is to record dismissed note ids in a setting:
 // On close (wired inside the banner's html via the postMessage bridge):
 const dismissed = (await ctx.getSetting('dismissed_notes')) ?? []
 if (!dismissed.includes(noteId)) {
-  await ctx.updateSetting('dismissed_notes', [...dismissed, noteId])
+  await ctx.updatePluginSetting('dismissed_notes', [...dismissed, noteId])
 }
 ```
 
