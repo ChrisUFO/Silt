@@ -22,13 +22,25 @@
   // leave the surfaces list (disable/enable issues a fresh session token).
   const ctxCache = new Map<string, any>()
 
+  // host→iframe post closures per surface.id, handed back by each
+  // PluginSurfaceFrame via onBridgeReady (#355). Used to notify a plugin its
+  // banner was dismissed so it can persist dismissal state
+  // (ctx.updatePluginSetting('dismissed_notes', [...])) BEFORE the surface is
+  // torn down. Entries are dropped when a surface leaves the list.
+  const postFns = new Map<string, (msg: any) => void>()
+
   const off = onSurfacesChanged((all) => {
     surfaces = all.filter((s) => s.kind === 'note-banner')
-    // Evict cached contexts for pluginIDs no longer present — their session
-    // tokens are revoked on teardown, so a stale ctx would fail server-side.
-    const activeIDs = new Set(surfaces.map((s) => s.pluginID))
+    // Evict cached contexts + post closures for surfaces no longer present —
+    // their session tokens are revoked on teardown, so a stale ctx would fail
+    // server-side, and a stale post closure would target a torn-down iframe.
+    const activeIDs = new Set(surfaces.map((s) => s.id))
+    for (const id of [...postFns.keys()]) {
+      if (!activeIDs.has(id)) postFns.delete(id)
+    }
+    const activePluginIDs = new Set(surfaces.map((s) => s.pluginID))
     for (const id of ctxCache.keys()) {
-      if (!activeIDs.has(id)) ctxCache.delete(id)
+      if (!activePluginIDs.has(id)) ctxCache.delete(id)
     }
   })
 
@@ -43,33 +55,65 @@
     return ctx
   }
 
-  // Dismiss a banner. The surface is removed from the registry immediately so
-  // the banner disappears; PERSISTENT dismissal state is the plugin's
-  // responsibility (recommended: updatePluginSetting('<id>', 'dismissed_notes',
-  // [...])). The close button's accessible name is derived from the banner
-  // label so a screen reader announces "Dismiss Summary" etc.
+  // Dismiss a banner. Before removing the surface we send a host→iframe
+  // 'dismiss' event (#355) so the plugin can persist its dismissal state
+  // (recommended: ctx.updatePluginSetting('dismissed_notes', [...])).
+  // updatePluginSetting is now in the surface bridge's allowedMethods, so the
+  // documented pattern is finally reachable. `persistent` is false for the
+  // default close ("Dismiss for now"); a plugin may treat the event however it
+  // likes (the protocol carries the flag for future "Don't show again" UI).
+  //
+  // A 400ms timeout fallback guarantees the surface is removed even if a
+  // plugin's dismiss handler hangs — no banner can wedge the host.
   //
   // Focus management (#215 a11y): the close button lives inside the banner, so
   // removing the banner destroys the focused element. Before removal, move
   // focus to the next banner's close button (or, if none, to the container so
   // focus doesn't fall to <body>).
+  const DISMISS_TIMEOUT_MS = 400
+  let dismissedThisTick: string | null = null
+
   function dismiss(surface: PluginSurface, closeBtn: HTMLButtonElement) {
-    const idx = surfaces.findIndex((s) => s.id === surface.id)
-    const next = surfaces[idx + 1]
-    unregisterSurface(surface.id)
-    // Defer so the DOM updates before we focus.
-    queueMicrotask(() => {
-      if (next) {
-        const nextBtn = document.querySelector<HTMLButtonElement>(
-          `[data-banner-close="${next.id}"]`
-        )
-        nextBtn?.focus()
-      } else {
-        // No more banners — return focus to the container (Tab will move into
-        // the editor on the next press).
-        containerEl?.focus()
-      }
-    })
+    if (dismissedThisTick === surface.id) return // idempotent on double-click
+    dismissedThisTick = surface.id
+
+    // Signal the plugin first (host→iframe), then tear down after a grace
+    // window so its updatePluginSetting call can land before the iframe is gone.
+    // The notify is best-effort: if the post throws (e.g. the iframe is already
+    // gone, or an environment quirk), dismissal MUST still proceed — the host
+    // never wedges on an unresponsive/unreachable plugin (#355 fallback).
+    const post = postFns.get(surface.id)
+    try {
+      post?.({
+        __siltSurface: 'event',
+        type: 'dismiss',
+        payload: { surfaceId: surface.id, persistent: false }
+      })
+    } catch {
+      /* best-effort notify — teardown below is the guarantee */
+    }
+
+    const doRemove = () => {
+      const idx = surfaces.findIndex((s) => s.id === surface.id)
+      const next = surfaces[idx + 1]
+      unregisterSurface(surface.id)
+      // Defer so the DOM updates before we focus.
+      queueMicrotask(() => {
+        if (next) {
+          const nextBtn = document.querySelector<HTMLButtonElement>(
+            `[data-banner-close="${next.id}"]`
+          )
+          nextBtn?.focus()
+        } else {
+          // No more banners — return focus to the container (Tab will move
+          // into the editor on the next press).
+          containerEl?.focus()
+        }
+      })
+    }
+
+    // Give the plugin a chance to persist, but never hang the host.
+    window.setTimeout(doRemove, DISMISS_TIMEOUT_MS)
   }
 
   let containerEl: HTMLDivElement | null = $state(null)
@@ -97,7 +141,11 @@
           >{surface.icon || 'campaign'}</span
         >
         <div class="banner-frame-wrapper">
-          <PluginSurfaceFrame {surface} ctxProxy={ctxFor(surface.pluginID)} />
+          <PluginSurfaceFrame
+            {surface}
+            ctxProxy={ctxFor(surface.pluginID)}
+            onBridgeReady={(post) => postFns.set(surface.id, post)}
+          />
         </div>
         <button
           type="button"
