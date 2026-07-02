@@ -106,6 +106,11 @@ func (a *App) closeAllPluginDBs() {
 	a.pluginDBs = nil
 	a.pluginDBsMu.Unlock()
 	for _, db := range dbs {
+		// Checkpoint the WAL into the main file so plugin.db-wal/-shm don't
+		// linger on disk after a clean close (mirrors the core index's
+		// Close, which runs TRUNCATE). Best-effort: a checkpoint failure
+		// must not block close.
+		_, _ = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 		_ = db.Close()
 	}
 }
@@ -357,7 +362,9 @@ func (a *App) PluginDBQuery(pluginID, sessionToken, sqlText string, params []any
 		}
 		out.Rows = append(out.Rows, row)
 		if len(out.Rows) >= maxPluginQueryRows {
-			out.Truncated = true
+			if rows.Next() {
+				out.Truncated = true
+			}
 			break
 		}
 	}

@@ -58,30 +58,59 @@ func (a *App) openPluginRODB() (*sql.DB, error) {
 	return ro, nil
 }
 
-// stripSQLComments removes leading SQL line ("--") and block ("/* ... */")
-// comments and surrounding whitespace. The result is then checked against
-// the SELECT/WITH prefix list. This is intentionally narrow: a real SQL
-// parser would be a heavier dependency for a defense-in-depth check, and the
-// connection-level read-only mode is the primary guarantee.
+// stripSQLComments removes SQL line ("--") and block ("/* ... */") comments
+// from anywhere in the string, preserving single-quoted string literals
+// (so a string containing "--" or "/*" is not corrupted). The result is then
+// checked against the SELECT/WITH prefix list and the statement-class blocker.
+// This is a defense-in-depth scanner, not a SQL parser — the connection-level
+// isolation (query_only on the core index; distinct file on the plugin DB)
+// is the primary guarantee.
 func stripSQLComments(s string) string {
-	for {
-		s = strings.TrimSpace(s)
-		if strings.HasPrefix(s, "--") {
-			if idx := strings.IndexByte(s, '\n'); idx >= 0 {
-				s = s[idx+1:]
+	var b strings.Builder
+	b.Grow(len(s))
+	inString := false
+	i := 0
+	for i < len(s) {
+		c := s[i]
+		// Handle single-quoted string literals (SQL escapes '' inside).
+		if c == '\'' {
+			if inString && i+1 < len(s) && s[i+1] == '\'' {
+				b.WriteByte('\'')
+				b.WriteByte('\'')
+				i += 2
 				continue
 			}
-			return ""
+			inString = !inString
+			b.WriteByte(c)
+			i++
+			continue
 		}
-		if strings.HasPrefix(s, "/*") {
-			if idx := strings.Index(s, "*/"); idx >= 0 {
-				s = s[idx+2:]
-				continue
+		if inString {
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		// Line comment: -- until end of line.
+		if c == '-' && i+1 < len(s) && s[i+1] == '-' {
+			for i < len(s) && s[i] != '\n' {
+				i++
 			}
-			return ""
+			continue
 		}
-		return s
+		// Block comment: /* until */.
+		if c == '/' && i+1 < len(s) && s[i+1] == '*' {
+			end := strings.Index(s[i+2:], "*/")
+			if end < 0 {
+				// Unterminated block comment — strip the rest.
+				break
+			}
+			i += 2 + end + 2
+			continue
+		}
+		b.WriteByte(c)
+		i++
 	}
+	return strings.TrimSpace(b.String())
 }
 
 // PluginRawQueryResult is the structured return value for PluginRawQuery.
@@ -158,9 +187,13 @@ func (a *App) PluginRawQuery(pluginID, sessionToken, sqlText string, params []an
 			out.Rows = append(out.Rows, row)
 			// Cap the result set so a malicious plugin can't exhaust memory
 			// with SELECT * FROM blocks on a large vault. Surface the cap
-			// hit to the caller via Truncated; stop scanning after.
+			// hit to the caller via Truncated only when there are actually
+			// more rows beyond the cap (avoids a false Truncated at the exact
+			// boundary where the last row fills the cap).
 			if len(out.Rows) >= maxPluginQueryRows {
-				out.Truncated = true
+				if rows.Next() {
+					out.Truncated = true
+				}
 				break
 			}
 		}
