@@ -700,9 +700,13 @@ the top of the note view (above the TipTap editor content).
 - **Rendering:** banners render in registration order; first-party as a
   compiled Svelte component, third-party via the iframe bridge. Stacking is
   predictable (order, `max-height`, overflow) so several banners coexist.
-- **Dismissal:** each banner exposes a close affordance; dismissal state is the
-  plugin's responsibility (recommended: `updatePluginSetting('<id>',
-  'dismissed_notes', [...])`).
+- **Dismissal:** each banner exposes a close affordance; the host sends a
+  host→iframe `dismiss` event so the plugin can persist dismissal state
+  (recommended: `updatePluginSetting('<id>', 'dismissed_notes', [...])` —
+  `updatePluginSetting` is proxied through the surface bridge). The host
+  removes the surface after a short grace window regardless of plugin
+  response. When more than two banners stack, they collapse into a single
+  expandable summary (#358).
 - **Transient chrome:** banners do not capture editor focus on mount and are
   removed cleanly on `teardownPlugin`.
 
