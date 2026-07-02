@@ -39,9 +39,10 @@
 </script>
 
 {#if plugin.settingsPageComponent}
-  <!-- First-party: render the compiled Svelte component -->
-  <svelte:component
-    this={plugin.settingsPageComponent}
+  <!-- First-party: render the compiled Svelte component (Svelte 5 runes mode:
+       dynamic components are rendered directly via a capitalized binding) -->
+  {@const Comp = plugin.settingsPageComponent}
+  <Comp
     ctx={ctxProxy}
     manifest={plugin.manifest}
     {activeNotebook}
