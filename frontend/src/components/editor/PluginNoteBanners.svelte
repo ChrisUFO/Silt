@@ -46,6 +46,13 @@
 
   onDestroy(() => off())
 
+  // Pending dismiss grace-timer (window.setTimeout handle). Tracked so onDestroy
+  // can clear it: if the note view unmounts within the grace window (switch
+  // note, close app) the timeout must not fire doRemove against torn-down DOM.
+  // Single-surface guard — only one dismiss can be in flight at a time (the
+  // dismissedThisTick debounce) so one handle is sufficient.
+  let dismissTimer: number | null = null
+
   function ctxFor(pluginID: string): any {
     let ctx = ctxCache.get(pluginID)
     if (!ctx) {
@@ -94,6 +101,7 @@
     }
 
     const doRemove = () => {
+      dismissTimer = null
       // Reset the debounce guard so a plugin re-enabled and re-registered with
       // the same surface.id can be dismissed again (the guard is only meant to
       // debounce a single click during the grace window).
@@ -117,8 +125,16 @@
     }
 
     // Give the plugin a chance to persist, but never hang the host.
-    window.setTimeout(doRemove, DISMISS_TIMEOUT_MS)
+    dismissTimer = window.setTimeout(doRemove, DISMISS_TIMEOUT_MS)
   }
+
+  onDestroy(() => {
+    off()
+    if (dismissTimer) {
+      window.clearTimeout(dismissTimer)
+      dismissTimer = null
+    }
+  })
 
   let containerEl: HTMLDivElement | null = $state(null)
 

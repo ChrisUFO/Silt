@@ -119,6 +119,40 @@ describe('PluginNoteBanners dismiss (#355)', () => {
       vi.useRealTimers()
     }
   })
+
+  it('clears the pending dismiss timer on unmount (no stale doRemove)', () => {
+    // If the note view unmounts within the grace window, onDestroy must clear
+    // the pending timeout so doRemove never runs against torn-down DOM.
+    registerSurface({
+      id: 'p:unmount',
+      pluginID: 'p',
+      kind: 'note-banner',
+      label: 'Transient',
+      html: '<div>1</div>'
+    })
+
+    vi.useFakeTimers()
+    try {
+      const { unmount } = render(PluginNoteBanners)
+      fireEvent.click(
+        screen.getByRole('button', { name: /dismiss transient/i })
+      )
+      // Surface still present (within grace window).
+      expect(
+        getSurfaces('note-banner').find((s) => s.id === 'p:unmount')
+      ).toBeTruthy()
+
+      unmount()
+      // Advancing past the grace window must NOT fire doRemove — the surface
+      // remains registered because the timer was cleared on teardown.
+      vi.advanceTimersByTime(1000)
+      expect(
+        getSurfaces('note-banner').find((s) => s.id === 'p:unmount')
+      ).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('PluginNoteBanners stacking collapse (#358)', () => {
@@ -237,16 +271,24 @@ describe('PluginNoteBanners host a11y + focus (#215)', () => {
     })
     const { container } = render(PluginNoteBanners)
 
-    // Dismiss buttons appear in registration order, and each carries the
-    // data-banner-close attribute the focus-handoff code queries by id. (The
-    // focus-handoff itself runs inside doRemove, exercised by the
-    // grace-timeout test above; its actual focus() call is timing-fragile in
-    // jsdom due to Svelte's microtask flush ordering, so the contract is
-    // verified at the attribute + doRemove-run level, matching the original
-    // suite's approach.)
+    // Banners render top-to-bottom in registration order.
+    const banners = container.querySelectorAll('[role="status"]')
+    expect(banners.length).toBe(2)
+    expect(banners[0].getAttribute('aria-label')).toBe('First')
+    expect(banners[1].getAttribute('aria-label')).toBe('Second')
+
+    // Each close button carries the data-banner-close id the focus-handoff
+    // queries, and a title tooltip (load-bearing for mouse users — the close
+    // button's only hover affordance). (The focus-handoff itself runs inside
+    // doRemove, exercised by the grace-timeout test above; its actual focus()
+    // call is timing-fragile in jsdom due to Svelte's microtask flush ordering,
+    // so the contract is verified at the attribute + doRemove-run level,
+    // matching the original suite's approach.)
     const closeBtns = container.querySelectorAll('[data-banner-close]')
     expect(closeBtns.length).toBe(2)
     expect(closeBtns[0].getAttribute('data-banner-close')).toBe('p:b1')
     expect(closeBtns[1].getAttribute('data-banner-close')).toBe('p:b2')
+    expect(closeBtns[0].getAttribute('title')).toBe('Dismiss First')
+    expect(closeBtns[1].getAttribute('title')).toBe('Dismiss Second')
   })
 })
