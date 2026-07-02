@@ -60,7 +60,7 @@
     "@fontsource/source-serif-4": "^5.2.9",
     "@fontsource/space-mono": "^5.2.9",
     "@fontsource/work-sans": "^5.2.8",
-    "@tailwindcss/vite": "^4.3.1",
+    "@tailwindcss/vite": "^4.3.2",
     "@tiptap/core": "^3.26.1",
     "@tiptap/extension-bubble-menu": "^3.26.1",
     "@tiptap/extension-color": "^3.26.1",
