@@ -117,49 +117,79 @@
   }
 
   let containerEl: HTMLDivElement | null = $state(null)
+
+  // Collapse affordance (#358): when more than 2 banners stack, the default
+  // collapses them into a single summary to avoid pushing the editor down.
+  // The user expands to see all; dismissing one while expanded drops back
+  // below the threshold automatically.
+  const COLLAPSE_THRESHOLD = 2
+  let collapsed = $state(true)
+  let showCollapse = $derived(surfaces.length > COLLAPSE_THRESHOLD)
+  // Visible banners: none while collapsed (the summary takes their place);
+  // all of them when expanded or when under the threshold.
+  let visibleSurfaces = $derived(showCollapse && collapsed ? [] : surfaces)
 </script>
 
 {#if surfaces.length > 0}
   <!-- Stacking: predictable order (registration order), max-height + overflow
-       so several banners coexist without pushing the editor out of view. -->
+       so several banners coexist without pushing the editor out of view. The
+       custom-scrollbar class styles the overflow per the app convention. -->
   <div
     bind:this={containerEl}
-    class="plugin-note-banners"
+    class="plugin-note-banners custom-scrollbar"
     role="region"
     aria-label="Plugin banners"
     tabindex="-1"
-    style="max-height: 30vh; overflow-y: auto;"
   >
-    {#each surfaces as surface (surface.id)}
-      <div
-        class="note-banner"
-        role="status"
-        aria-live="polite"
-        aria-label={surface.label}
+    {#if showCollapse}
+      <button
+        type="button"
+        class="banner-collapse-toggle"
+        aria-expanded={!collapsed}
+        aria-controls="banner-stack"
+        onclick={() => (collapsed = !collapsed)}
       >
-        <span class="material-symbols-outlined banner-icon" aria-hidden="true"
-          >{surface.icon || 'campaign'}</span
+        <span class="material-symbols-outlined" aria-hidden="true"
+          >{collapsed ? 'expand' : 'compress'}</span
         >
-        <div class="banner-frame-wrapper">
-          <PluginSurfaceFrame
-            {surface}
-            ctxProxy={ctxFor(surface.pluginID)}
-            onBridgeReady={(post) => postFns.set(surface.id, post)}
-          />
-        </div>
-        <button
-          type="button"
-          class="banner-dismiss"
-          data-banner-close={surface.id}
-          onclick={(e) => dismiss(surface, e.currentTarget)}
-          aria-label="Dismiss {surface.label}"
-          title="Dismiss {surface.label}"
+        {surfaces.length} plugin {surfaces.length === 1 ? 'banner' : 'banners'} —
+        {collapsed ? 'show' : 'hide'}
+      </button>
+    {/if}
+
+    <div id="banner-stack" class="banner-stack">
+      {#each visibleSurfaces as surface (surface.id)}
+        <div
+          class="note-banner"
+          role="status"
+          aria-live="polite"
+          aria-label={surface.label}
         >
-          <span class="material-symbols-outlined" aria-hidden="true">close</span
+          <span class="material-symbols-outlined banner-icon" aria-hidden="true"
+            >{surface.icon || 'campaign'}</span
           >
-        </button>
-      </div>
-    {/each}
+          <div class="banner-frame-wrapper">
+            <PluginSurfaceFrame
+              {surface}
+              ctxProxy={ctxFor(surface.pluginID)}
+              onBridgeReady={(post) => postFns.set(surface.id, post)}
+            />
+          </div>
+          <button
+            type="button"
+            class="banner-dismiss"
+            data-banner-close={surface.id}
+            onclick={(e) => dismiss(surface, e.currentTarget)}
+            aria-label="Dismiss {surface.label}"
+            title="Dismiss {surface.label}"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true"
+              >close</span
+            >
+          </button>
+        </div>
+      {/each}
+    </div>
   </div>
 {/if}
 
@@ -169,8 +199,19 @@
     flex-direction: column;
     gap: 4px;
     margin-bottom: 4px;
+    max-height: 30vh;
+    overflow-y: auto;
   }
 
+  .banner-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  /* Banner chrome theming is aligned with FormattingFirstRunTip (12% / 30%
+     accent-glow mixes) so dismissible highlight regions share a look. The
+     ratios live here as the single source for the note-banner variant. */
   .note-banner {
     display: flex;
     align-items: stretch;
@@ -179,15 +220,52 @@
     border-radius: 8px;
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-glow, #6fa3ff) 10%,
+      var(--color-accent-primary-glow, #6fa3ff) 12%,
       var(--color-surface, #1a1d24)
     );
     border: 1px solid
       color-mix(
         in srgb,
-        var(--color-accent-primary-glow, #6fa3ff) 25%,
+        var(--color-accent-primary-glow, #6fa3ff) 30%,
         transparent
       );
+  }
+
+  .banner-collapse-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid
+      color-mix(
+        in srgb,
+        var(--color-accent-primary-glow, #6fa3ff) 30%,
+        transparent
+      );
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-glow, #6fa3ff) 12%,
+      var(--color-surface, #1a1d24)
+    );
+    color: var(--color-text-primary, #e6e6e6);
+    font-size: 12px;
+    cursor: pointer;
+    transition:
+      background 0.1s,
+      color 0.1s;
+  }
+
+  .banner-collapse-toggle:hover {
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-glow, #6fa3ff) 18%,
+      var(--color-surface, #1a1d24)
+    );
+  }
+
+  .banner-collapse-toggle .material-symbols-outlined {
+    font-size: 16px;
   }
 
   .banner-icon {
@@ -202,9 +280,10 @@
     flex: 1;
     min-width: 0;
     /* The iframe content is sandboxed; constrain its height so it doesn't
-       blow out the banner's compact layout. */
+       blow out the banner's compact layout. Truncated banner text is
+       scrollable (hidden auto) rather than silently clipped (#358). */
     max-height: 120px;
-    overflow: hidden;
+    overflow: hidden auto;
     border-radius: 4px;
   }
 

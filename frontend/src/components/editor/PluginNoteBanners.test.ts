@@ -81,3 +81,65 @@ describe('PluginNoteBanners dismiss (#355)', () => {
     }
   })
 })
+
+describe('PluginNoteBanners stacking collapse (#358)', () => {
+  beforeEach(() => {
+    cleanup()
+    resetSurfacesForTests()
+  })
+
+  function registerN(n: number) {
+    for (let i = 1; i <= n; i++) {
+      registerSurface({
+        id: `p:b${i}`,
+        pluginID: 'p',
+        kind: 'note-banner',
+        label: `Banner ${i}`,
+        html: `<div>${i}</div>`
+      })
+    }
+  }
+
+  it('renders all banners directly when at or under the threshold (1 and 2)', () => {
+    registerN(1)
+    const { unmount } = render(PluginNoteBanners)
+    expect(
+      screen.queryByRole('button', { name: /dismiss banner 1/i })
+    ).toBeTruthy()
+    expect(screen.queryByText(/plugin banners/i)).toBeNull() // no collapse toggle
+    unmount()
+
+    resetSurfacesForTests()
+    registerN(2)
+    render(PluginNoteBanners)
+    expect(
+      screen.queryByRole('button', { name: /dismiss banner 1/i })
+    ).toBeTruthy()
+    expect(
+      screen.queryByRole('button', { name: /dismiss banner 2/i })
+    ).toBeTruthy()
+    expect(screen.queryByText(/2 plugin banners/i)).toBeNull()
+  })
+
+  it('collapses into a summary when more than 2 banners stack, and expands on click', async () => {
+    registerN(3)
+    render(PluginNoteBanners)
+
+    // Collapsed by default: the summary is shown, individual banners hidden.
+    const toggle = screen.getByRole('button', { name: /3 plugin banners/i })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(
+      screen.queryByRole('button', { name: /dismiss banner 1/i })
+    ).toBeNull()
+
+    // Expand reveals all banners.
+    await fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(
+      screen.queryByRole('button', { name: /dismiss banner 1/i })
+    ).toBeTruthy()
+    expect(
+      screen.queryByRole('button', { name: /dismiss banner 3/i })
+    ).toBeTruthy()
+  })
+})
