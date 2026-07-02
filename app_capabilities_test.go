@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -404,4 +405,131 @@ func mustReadFile(t *testing.T, path string) []byte {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return data
+}
+
+// =========================================================================
+// #359: disabled-plugin state enforced at the binding layer
+// =========================================================================
+
+// requireGrant rejects a first-party plugin that is in the config.yaml
+// plugins.disabled list — even though seedFirstPartyGrants gave it every
+// capability. This closes the loader↔binding TOCTOU window for first-party
+// plugins disabled via the config list.
+func TestRequireGrant_DisabledFirstPartyRejected(t *testing.T) {
+	app := newTestApp(t)
+	const pid = "silt-kanban"
+	// Sanity: granted by default.
+	if err := app.requireGrant(pid, plugins.CapWriteFiles); err != nil {
+		t.Fatalf("baseline first-party grant: %v", err)
+	}
+
+	// Disable via the config list (the first-party path).
+	app.configMu.Lock()
+	app.cfg.Plugins.Disabled = append(app.cfg.Plugins.Disabled, pid)
+	app.configMu.Unlock()
+
+	if err := app.requireGrant(pid, plugins.CapWriteFiles); err == nil {
+		t.Fatal("disabled first-party plugin must be rejected at the binding layer")
+	}
+
+	// Re-enable: still denied while the entry lingers (this is a direct
+	// mutation mirroring what applyConfigLocked would replace wholesale).
+	app.configMu.Lock()
+	app.cfg.Plugins.Disabled = []string{}
+	app.configMu.Unlock()
+	if err := app.requireGrant(pid, plugins.CapWriteFiles); err != nil {
+		t.Fatalf("re-enabled first-party should pass again: %v", err)
+	}
+}
+
+// requireGrant rejects a disk (installed) plugin once the .disabled sentinel
+// file is present, even when the capability is granted. The sentinel is
+// re-read on every call so DisablePlugin's write is visible immediately.
+func TestRequireGrant_DisabledDiskPluginSentinelRejected(t *testing.T) {
+	app := newTestApp(t)
+	const pid = "test-disk-plugin"
+	pluginDir := filepath.Join(app.vaultPath, ".system", "plugins", pid)
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+	if err := app.RequestCapability(pid, string(plugins.CapNetwork), ""); err != nil {
+		t.Fatalf("RequestCapability: %v", err)
+	}
+	// Granted + enabled → passes.
+	if err := app.requireGrant(pid, plugins.CapNetwork); err != nil {
+		t.Fatalf("baseline granted disk plugin: %v", err)
+	}
+
+	// Drop the sentinel (the DisablePlugin path).
+	f, err := os.Create(filepath.Join(pluginDir, ".disabled"))
+	if err != nil {
+		t.Fatalf("create sentinel: %v", err)
+	}
+	f.Close()
+	if err := app.requireGrant(pid, plugins.CapNetwork); err == nil {
+		t.Fatal("plugin with .disabled sentinel must be rejected at the binding layer")
+	}
+
+	// Remove the sentinel (the EnablePlugin path).
+	if err := os.Remove(filepath.Join(pluginDir, ".disabled")); err != nil {
+		t.Fatalf("remove sentinel: %v", err)
+	}
+	if err := app.requireGrant(pid, plugins.CapNetwork); err != nil {
+		t.Fatalf("re-enabled disk plugin should pass again: %v", err)
+	}
+}
+
+// The TOCTOU scenario from #359: a plugin is granted a capability and holds a
+// valid session token, then the user disables it. Between DisablePlugin writing
+// the sentinel and the loader calling UnregisterPluginSession, the token is
+// still valid. requireGrant must still reject the call because the disabled
+// state is now consulted at the binding layer.
+func TestRequireGrant_TOCTOUStaleTokenAfterDisableRejected(t *testing.T) {
+	app := newTestApp(t)
+	const pid = "stale-token-plugin"
+	pluginDir := filepath.Join(app.vaultPath, ".system", "plugins", pid)
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+	if err := app.RequestCapability(pid, string(plugins.CapPluginDB), ""); err != nil {
+		t.Fatalf("RequestCapability: %v", err)
+	}
+	token, err := app.RegisterPluginSession(pid)
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+	// Token is valid and identity matches.
+	if err := app.validatePluginSession(pid, token); err != nil {
+		t.Fatalf("baseline session: %v", err)
+	}
+
+	// User disables the plugin. The loader has NOT called
+	// UnregisterPluginSession yet (the TOCTOU window), so the token is still
+	// live — but the privileged binding must still be blocked.
+	sentinel, err := os.Create(filepath.Join(pluginDir, ".disabled"))
+	if err != nil {
+		t.Fatalf("create sentinel: %v", err)
+	}
+	sentinel.Close()
+
+	// validatePluginSession still passes (identity check is intentionally
+	// separate — it is not the privilege gate), but requireGrant must deny.
+	if err := app.validatePluginSession(pid, token); err != nil {
+		t.Fatalf("token identity should still be valid in the TOCTOU window: %v", err)
+	}
+	if err := app.requireGrant(pid, plugins.CapPluginDB); err == nil {
+		t.Fatal("requireGrant must deny a disabled plugin even with a still-valid token (#359 TOCTOU)")
+	}
+}
+
+// isPluginDisabled reports false pre-vault (no plugin can be loaded yet) and
+// false for an empty/unknown id (defensive — never blocks the empty case).
+func TestIsPluginDisabled_EmptyAndPreVault(t *testing.T) {
+	app := newTestApp(t)
+	if app.isPluginDisabled("") {
+		t.Fatal("empty id should not be disabled")
+	}
+	if app.isPluginDisabled("never-heard-of-this") {
+		t.Fatal("unknown enabled plugin should not be disabled")
+	}
 }

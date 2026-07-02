@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"path/filepath"
 	"silt/backend/parser"
 	"silt/backend/plugins"
 	"silt/backend/semver"
@@ -21,6 +22,46 @@ func isFirstPartyPlugin(pluginID string) bool {
 	return plugins.IsFirstPartyID(pluginID)
 }
 
+// isPluginDisabled reports whether pluginID is currently disabled, consulting
+// BOTH disabled sources so the binding layer closes the TOCTOU window where a
+// stale session token + a freshly-disabled plugin could still exercise
+// privileged bindings (#359). The disabled state was previously enforced only
+// at the loader layer; a leak there (vault switch, missed teardown) let a
+// disabled plugin's privileged bindings — including PluginDBExec writes to its
+// private DB — keep running.
+//
+// Sources:
+//   - first-party / config-tracked plugins: a.cfg.Plugins.Disabled (the
+//     vault-scoped config.yaml list, applied via applyConfigLocked).
+//   - disk (installed) plugins: the .disabled sentinel file inside the
+//     plugin folder (plugins.IsDisabled), re-checked on every call so the
+//     sentinel DisablePlugin writes is visible the instant it lands.
+//
+// requireGrant is the authoritative gate: every privileged binding calls it,
+// so consulting disabled state here (rather than only at load time) closes the
+// race for all 23 privileged call sites at once. validatePluginSession stays
+// identity-only — it has 42 call sites including non-privileged reads, and the
+// privilege boundary is requireGrant's job.
+//
+// vaultPath is read under the caller's configMu.RLock — the same precedent as
+// RequestCapability (which reads vaultPath under configMu.Lock). An empty
+// vaultPath (pre-vault) reports false: no plugin can be loaded before a vault
+// is open, so there is nothing to disable.
+func (a *App) isPluginDisabled(pluginID string) bool {
+	if pluginID == "" {
+		return false
+	}
+	for _, id := range a.cfg.Plugins.Disabled {
+		if id == pluginID {
+			return true
+		}
+	}
+	if a.vaultPath == "" {
+		return false
+	}
+	return plugins.IsDisabled(filepath.Join(a.vaultPath, ".system", "plugins", pluginID))
+}
+
 // requireGrant is the single server-side enforcement point for every privileged
 // v2 SDK binding (#113). It returns nil if the plugin may use the capability,
 // or a structured *plugins.CapabilityDeniedError (never a panic) the frontend
@@ -31,6 +72,11 @@ func isFirstPartyPlugin(pluginID string) bool {
 // plugins receive their grants via seedFirstPartyGrants at config-load time,
 // so there is NO special-case bypass here — a third-party plugin cannot
 // spoof a first-party ID to bypass capability checks.
+//
+// Disabled plugins are rejected before the grant lookup (#359): even a plugin
+// whose grants are still in the table cannot exercise a privileged binding once
+// it is disabled, regardless of whether its session token has been torn down
+// yet. This closes the loader↔binding TOCTOU window.
 //
 // Callers that need the qualifier (e.g. to enforce notebook vs vault scope on
 // file writes) read it via grantedQualifier after a successful requireGrant.
@@ -44,6 +90,12 @@ func (a *App) requireGrant(pluginID string, cap plugins.Capability) error {
 	}
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()
+	// #359: a disabled plugin is blocked at the binding layer even if its
+	// grants and session token are still live. Checked under configMu (which
+	// guards a.cfg) — see isPluginDisabled for the sentinel re-read rationale.
+	if a.isPluginDisabled(pluginID) {
+		return fmt.Errorf("plugin %q is disabled; capability %q denied at the binding layer", pluginID, string(cap))
+	}
 	// F4: grants now live in the per-host store (a.grants), not vault-scoped
 	// config.yaml. A synced vault's legacy grants block is ignored on load.
 	if a.grants != nil {
