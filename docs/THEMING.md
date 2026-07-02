@@ -36,7 +36,7 @@ Each accent is a **triple**: `start` / `end` (a gradient pair) plus `glow` (a tr
 | :--- | :--- | :--- |
 | **Cyber Forest** *(the default, "Refined Cyber-Ink")* | Shipped | Ink-rich dark slate canvas, surgical teal primary, indigo secondary. Embedded in the app as the guaranteed fallback. |
 | Terra Noir | Shipped (Sprint 8) | Warm dark earth palette: clay primary, moss secondary. |
-| Linen | Shipped (Sprint 8) | Clean, easy-on-the-eyes paper palette: desaturated slate-blue + muted lilac. |
+| Linen | Shipped (Sprint 8) | Clean, easy-on-the-eyes paper palette: desaturated slate-blue + muted lilac. Includes a woven paper-grain texture overlay (see §2 `texture`). |
 | Stark | Shipped (Sprint 8) | High-contrast / accessibility (WCAG AAA): pure black/white extremes, gold + cyan. |
 | Graphite | Shipped (Sprint 8) | Calm monochrome dark: cool near-blacks, a single restrained blue accent. |
 
@@ -49,6 +49,8 @@ Each accent is a **triple**: `start` / `end` (a gradient pair) plus `glow` (a tr
 Every theme is a JSON object. The table below lists **every token the validator requires** (both `modes.dark` and `modes.light` must define the full set), plus the optional typography fields. The "JSON path" is relative to a `mode` object (e.g. `modes.dark.bg.void`).
 
 > This table mirrors `requiredTokens` in `backend/themes/validate.go`. The two are kept in sync by hand: when you add a token to the schema, add a row here **and** an entry there. (There is no automated coupling today — the doc is the author-facing reference, the Go slice is the enforcement.)
+>
+> **These are the ONLY `--color-*` custom properties the theme engine emits.** If you are authoring a Svelte component or CSS rule, use only the CSS variables listed below. A reference to a token not in this table (e.g. `--color-surface-elevated`, `--color-bg`) will silently fall back to its hardcoded default — which is always dark-mode-tuned and will render invisible in light themes.
 
 ### Identity (top-level, not per-mode)
 
@@ -98,12 +100,33 @@ Every theme is a JSON object. The table below lists **every token the validator 
 | `accent.secondary.end` | `--color-accent-secondary-end` | "in-progress" gradient end. | color |
 | `accent.secondary.glow` | `--color-accent-secondary-glow` | "in-progress" soft halo. | color |
 
-### `status` — warn / danger
+### `status` — warn / danger / success
 
-| JSON path | CSS variable | Meaning | Format |
-| :--- | :--- | :--- | :--- |
-| `status.warn` | `--color-status-warn` | Warnings. | color |
-| `status.danger` | `--color-status-danger` | Errors / destructive. | color |
+| JSON path | Required | CSS variable | Meaning | Format |
+| :--- | :--- | :--- | :--- | :--- |
+| `status.warn` | yes | `--color-status-warn` | Warnings. | color |
+| `status.danger` | yes | `--color-status-danger` | Errors / destructive. | color |
+| `status.success` | no | `--color-status-success` | Success / confirmed. When absent, falls through to the `@theme` static fallback (`#22c55e`). | color |
+
+### `texture` (optional, per-mode)
+
+A decorative surface overlay rendered behind the page writing area (the scroll container, not the full app). When a mode declares a `texture` block, the theme engine emits three CSS custom properties that a scoped `::before` pseudo-element renders. Themes without a `texture` block are completely unaffected — no compositing layer, no performance cost.
+
+Only Linen ships a texture today (a woven paper grain). The texture is purely decorative: the WCAG contrast harness tests token pairs, not the rendered overlay.
+
+| JSON path | CSS variable | Required | Meaning | Format |
+| :--- | :--- | :--- | :--- | :--- |
+| `texture.image` | `--silt-texture-image` | yes | A CSS `background-image` value: one or more comma-separated `repeating-linear-gradient(...)` and/or `url(...)` layers (inline SVG data URLs are the norm for noise). | background-image |
+| `texture.opacity` | `--silt-texture-opacity` | no | Overall overlay strength. Defaults to `0` (invisible) if absent. | string, number in `[0,1]` |
+| `texture.blend` | `--silt-texture-blend` | no | CSS `mix-blend-mode` keyword controlling how the texture composites with the background beneath it. Defaults to `normal`. | one of: `normal`, `multiply`, `screen`, `overlay`, `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`, `soft-light`, `difference`, `exclusion`, `hue`, `saturation`, `color`, `luminosity` |
+
+**Sandbox:** the `image` value flows verbatim into a CSS `background-image`, so the validator rejects any value containing `;`, `{`, `}`, `<`, `>`, or `\` — preventing breakout from the `:root{--name:value;}` injection context. Use inline SVG data URLs (`url("data:image/svg+xml,...")`) for noise patterns; external `url(...)` references are accepted syntactically but won't resolve in the sandboxed webview (no network fetch from CSS).
+
+**Authoring tips:**
+- Keep `opacity` low (`0.04`–`0.12`). The texture is a subtle grain, not a foreground element.
+- Use `multiply` or `overlay` for dark-ish grain on a light canvas; `screen` or `soft-light` for light grain on a dark canvas.
+- The SVG `feTurbulence` filter generates fractal noise — pair it with `feColorMatrix type="saturate" values="0"` for a desaturated grain that adapts to any palette.
+- Combine two `repeating-linear-gradient`s (one horizontal, one vertical) with a noise SVG for a woven/fabric effect (see Linen's definition for a reference).
 
 ### `typography` (optional, theme-level — not per-mode)
 
@@ -285,13 +308,17 @@ Click **Export active** in **Settings → Appearance** to save the currently-act
 | **"id … is invalid after sanitization"** | Your `id` consisted entirely of invalid characters. Use lowercase letters, digits, hyphens, and underscores. |
 | **Theme not appearing in the list** | (a) The file isn't a `.json` in `<vault>/.system/themes/`. (b) It failed validation — check the load errors surfaced in the picker. (c) You're looking before the `themes:changed` event fired — reopen Settings. |
 | **Typography fonts not applying** | The `typography` section is optional and theme-level. If you omitted it, the config `editor.*` fonts remain in effect. If you set a field but see no change, confirm the font is installed on your system (themes reference fonts by name; they don't bundle them). |
+| **Texture not visible** | The `texture` block is optional and per-mode. Check that `opacity` is non-zero (default is `0` = invisible). The texture renders only on the page writing surface (the scroll container), not the full app. Confirm `blend` is appropriate for your palette (`multiply` for light modes, `overlay`/`screen` for dark). |
+| **"not a safe texture.image value"** | The `texture.image` field must not contain `;`, `{`, `}`, `<`, `>`, or `\`. Use URL-encoded inline SVG data URLs (`url("data:image/svg+xml,%3Csvg...")`) for noise patterns. |
+| **"texture.opacity must be a number in [0,1]"** | `opacity` is a string holding a decimal between `0` and `1` (e.g. `"0.08"`). Values outside that range are rejected. |
+| **"texture.blend … is not a recognized mix-blend-mode"** | `blend` must be one of the standard CSS `mix-blend-mode` keywords (see the table in §2). Custom strings are rejected. |
 | **First-paint flash of the wrong color on restart** | The native window background is seeded from the active theme's `bg.void` at launch via an mtime-aware cache. If you hand-edited the on-disk file, touch its mtime or re-import so the cache refreshes. |
 
 ---
 
 ## 9. Appendix: blank theme template
 
-Copy-paste this and fill in the `…` placeholders. Both modes are required; the `typography` block is optional (delete it to inherit config fonts).
+Copy-paste this and fill in the `…` placeholders. Both modes are required; `typography`, `status.success`, and `texture` are optional (delete what you don't need).
 
 ```json
 {
@@ -314,7 +341,12 @@ Copy-paste this and fill in the `…` placeholders. Both modes are required; the
         "primary":   { "start": "#………", "end": "#………", "glow": "rgba(…,…,…,0.15)" },
         "secondary": { "start": "#………", "end": "#………", "glow": "rgba(…,…,…,0.12)" }
       },
-      "status":  { "warn": "#………", "danger": "#………" }
+      "status":  { "warn": "#………", "danger": "#………", "success": "#………" },
+      "texture": {
+        "image": "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+        "opacity": "0.06",
+        "blend": "overlay"
+      }
     },
     "light": {
       "bg":      { "void": "#………", "surface": "#………", "panel": "#………", "hover": "#………", "active": "#………" },
@@ -324,8 +356,15 @@ Copy-paste this and fill in the `…` placeholders. Both modes are required; the
         "primary":   { "start": "#………", "end": "#………", "glow": "rgba(…,…,…,0.10)" },
         "secondary": { "start": "#………", "end": "#………", "glow": "rgba(…,…,…,0.08)" }
       },
-      "status":  { "warn": "#………", "danger": "#………" }
+      "status":  { "warn": "#………", "danger": "#………" },
+      "texture": {
+        "image": "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+        "opacity": "0.08",
+        "blend": "multiply"
+      }
     }
   }
 }
 ```
+
+> **Delete `texture` entirely** if you don't want a surface overlay. A mode without a `texture` block pays zero compositing cost. Omit `status.success` to fall through to the built-in `#22c55e` green.
