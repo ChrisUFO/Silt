@@ -199,6 +199,10 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
+          # Full history is required for git-cliff to find the previous tag
+          # and enumerate commits between tags. The default (fetch-depth: 1)
+          # produces a shallow clone that yields empty release notes.
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v6
