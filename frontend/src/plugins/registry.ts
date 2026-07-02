@@ -73,6 +73,15 @@ registerPlugin({
 })
 
 export function registerPlugin(plugin: RegisteredPlugin): void {
+  // #214: a plugin declares EITHER a bespoke settings page
+  // (settingsPageComponent) OR the generic settings schema (manifest.settings),
+  // NOT both. Registering both is a configuration error — fail loudly rather
+  // than silently preferring one.
+  if (plugin.settingsPageComponent && plugin.manifest.settings?.length) {
+    throw new Error(
+      `plugin ${plugin.manifest.id}: cannot declare both settingsPageComponent and manifest.settings (choose one settings UI)`
+    )
+  }
   registry.set(plugin.manifest.id, plugin)
 }
 

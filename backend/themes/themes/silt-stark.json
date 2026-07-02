@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "id": "silt-stark",
   "name": "Stark",
-  "author": "System Designer",
+  "author": "Chelydra Labs",
   "description": "High-contrast / accessibility theme (WCAG AAA): pure black/white extremes with gold and cyan accents.",
   "typography": {
     "font_family": "'Atkinson Hyperlegible', sans-serif",

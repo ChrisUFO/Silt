@@ -649,6 +649,63 @@ The `silt-attachments` plugin lets users attach arbitrary files to notes.
 - **Kanban travel:** An attachment embedBlock inserted as a CHILD of a task block (indented under it) automatically travels with its parent when the task is reordered. This is inherent to the block hierarchy — no explicit association model is needed.
 - **Copy-in semantics:** The source file is copied (not linked/moved) into `attachments/`. Filename collisions are resolved with a counter suffix (`report-1.pdf`, `report-2.pdf`). A 100 MB size limit and an executable filetype blocklist (`.exe`, `.bat`, `.sh`, etc.) prevent the attachment folder from becoming an unbounded executable drop zone.
 
+8.6 Per-plugin SQLite Store (#213)
+
+Each plugin MAY carry its own SQLite file at
+`<vault>/.system/plugins/<id>/data/plugin.db`, opened lazily on a **distinct**
+connection from the core index (`<vault>/.system/index.sqlite*`). This is the
+**plugin-owned storage tier**: the plugin owns its schema and chooses
+durability semantics — working memory *or* durable storage at its discretion.
+
+- **Capability:** gated by the `plugin-db` capability (`ctx.pluginDb.exec` /
+  `query` / `migrate`); first-use prompted like the other v2 capabilities.
+- **sqlite-vec:** the connection has `sqlite-vec` registered, exposing `vec0`
+  virtual tables and `vec_distance_cosine` / `vec_distance_L2`. Used by the AI
+  Q&A plugin (Sprint 21) for vector indexes and by the summary plugin for
+  content-hash caches.
+- **Boundary with core:** the plugin DB is never `ATTACH`-able to the core
+  index (and vice-versa). Cardinal rule #4 (SQLite is working-memory-only)
+  governs the **core index only**; the plugin DB is a separate, plugin-owned
+  tier.
+- **Durability guidance:** data that must survive uninstall or be portable
+  across vaults MUST round-trip through markdown; plugin-private caches
+  (embeddings, hashes, agent memory) may live only in the plugin DB.
+- **Lifecycle:** the connection is closed on `teardownPlugin(id)` and on vault
+  close; the file is deleted on uninstall (the whole `.system/plugins/<id>/`
+  folder is removed).
+- See ARCHITECTURE.md §0 (rule 4 plugin carve-out) and ADR
+  `docs/decisions/0001-plugin-storage-tier.md`.
+
+8.7 Bespoke Plugin Settings Pages (#214)
+
+A plugin with non-trivial configuration may declare a **bespoke Settings page**
+instead of the generic `SettingSchema[]` form (#103).
+
+- **Manifest:** a plugin declares *either* a bespoke settings page *or* the
+  generic `settings` schema — not both (single source of truth per plugin).
+  Migrating generic → bespoke is supported (old `plugin_settings.<id>.*` keys
+  remain valid).
+- **Rendering:** first-party plugins render a compiled Svelte component;
+  third-party plugins render via the sandboxed `settings-panel` iframe surface.
+  The page appears as a dynamic tab in the Settings shell; disabled plugins'
+  tabs are hidden.
+- **Persistence:** bespoke pages call the existing `updatePluginSetting` /
+  `getPluginSettings` plumbing — no new storage path.
+
+8.8 `note-banner` Plugin Surface (#215)
+
+A new `SurfaceKind = 'note-banner'` — a dismissible highlight region mounted at
+the top of the note view (above the TipTap editor content).
+
+- **Rendering:** banners render in registration order; first-party as a
+  compiled Svelte component, third-party via the iframe bridge. Stacking is
+  predictable (order, `max-height`, overflow) so several banners coexist.
+- **Dismissal:** each banner exposes a close affordance; dismissal state is the
+  plugin's responsibility (recommended: `updatePluginSetting('<id>',
+  'dismissed_notes', [...])`).
+- **Transient chrome:** banners do not capture editor focus on mount and are
+  removed cleanly on `teardownPlugin`.
+
 9. System Configuration Engine
 
 Global settings are managed locally in a human-readable file located at Notebooks/.system/config.yaml. The schema defines global application defaults, plugin configurations, hotkeys, and parsing logic.

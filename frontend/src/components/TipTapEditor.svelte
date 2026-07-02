@@ -63,6 +63,7 @@
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
   import FormattingFirstRunTip from './editor/FormattingFirstRunTip.svelte'
+  import PluginNoteBanners from './editor/PluginNoteBanners.svelte'
   import SelectionBubble from './editor/SelectionBubble.svelte'
   import TableContextToolbar from './editor/TableContextToolbar.svelte'
   import TableSizePicker from './editor/TableSizePicker.svelte'
@@ -1419,6 +1420,7 @@
   oncontextmenu={handleContextMenu}
 >
   {#if editorReady}
+    <PluginNoteBanners />
     <FormattingFirstRunTip
       dismissed={formatTipDismissed}
       onDismiss={dismissFormatTip}

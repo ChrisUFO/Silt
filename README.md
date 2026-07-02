@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="ARCHITECTURE.md"><img src="https://img.shields.io/badge/Architecture-Go%20%2B%20Wails%20%2B%20Svelte%205-blueviolet" alt="Engine Architecture"></a>
-  <a href="SPECS.md"><img src="https://img.shields.io/badge/Storage-Plaintext%20Markdown%20%2B%20SQLite%20Cache-blue" alt="Storage Schema"></a>
+  <a href="SPECS.md"><img src="https://img.shields.io/badge/Storage-Markdown%20%2B%20SQLite%20Cache%20%2B%20Plugin%20Stores-blue" alt="Storage Schema"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="License"></a>
 </p>
 
@@ -37,7 +37,7 @@ Silt is built on the belief that your notes belong to you.
   - [/] Critical workstream [priority:: 1] [due:: 2026-08-03] [owner:: Bob] #work/sprint-4
   ```
 - **Built-in & Custom Themes** – Styled with a "Cyber-Ink" design language. Ships with 5 premium themes (Cyber Forest, Terra Noir, Linen, Stark, Graphite). Import or export your own palettes as simple JSON files.
-- **Flexible Plugin SDK** – Dynamic viewports like Agenda, Calendar, and Kanban are decoupled as plugins. You can extend Silt using native ES Modules running in a secure runtime sandbox.
+- **Flexible Plugin SDK** – Dynamic viewports like Agenda, Calendar, and Kanban are decoupled as plugins. Extend Silt using native ES Modules in a secure runtime sandbox; plugins may carry their own per-plugin data store (including vector search) without touching the core Markdown index.
 - **Linked Notebooks** – Mount external folders (e.g., a synced OneDrive/SharePoint or Obsidian directory) directly without importing them. They are watched and edited in place.
 
 ---

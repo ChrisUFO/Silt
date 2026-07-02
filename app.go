@@ -93,6 +93,16 @@ type App struct {
 	pluginRODBMu sync.Mutex
 	pluginRODB   *sql.DB
 
+	// pluginDBs holds the per-plugin SQLite store connections (#213). Each
+	// plugin that exercises the plugin-db capability gets its own *sql.DB
+	// pool (MaxOpenConns=1) at <vault>/.system/plugins/<id>/data/plugin.db —
+	// a distinct file from the core index, never ATTACH-able to it. Opened
+	// lazily by openPluginDB; closed on teardownPlugin(id), on uninstall
+	// (before the folder is removed — Windows file lock), and on vault close.
+	// Guarded by pluginDBsMu.
+	pluginDBsMu sync.Mutex
+	pluginDBs   map[string]*sql.DB
+
 	// rateLimiter caps per-plugin PluginFetch RPS so a network-granted plugin
 	// cannot hammer external services (#153). Guarded by its own internal
 	// mutex; eviction happens on uninstall.
@@ -326,6 +336,11 @@ func (a *App) teardownVaultServices() {
 		a.pluginRODB = nil
 	}
 	a.pluginRODBMu.Unlock()
+	// Close every per-plugin DB pool (#213). These point at files under the
+	// closing vault's .system/plugins/<id>/data/, so they must be released
+	// before the vault path goes away (and before any folder removal on a
+	// vault move — Windows file lock).
+	a.closeAllPluginDBs()
 	if a.db != nil {
 		// Close runs PRAGMA wal_checkpoint(TRUNCATE) so the WAL is merged
 		// into the main index file on a clean close (#29).

@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "id": "cyber_forest",
   "name": "Cyber Forest",
-  "author": "System Designer",
+  "author": "Chelydra Labs",
   "description": "The default Silt dark theme: ink-rich slate canvas with surgical teal primary and indigo secondary accents.",
   "typography": {
     "font_family": "'Plus Jakarta Sans', sans-serif",

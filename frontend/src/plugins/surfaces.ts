@@ -22,6 +22,7 @@ export type SurfaceKind =
   | 'status-bar-item'
   | 'command-palette-entry'
   | 'settings-panel'
+  | 'note-banner'
 
 export interface PluginSurface {
   /** Unique surface id (<pluginID>:<surfaceId>). */

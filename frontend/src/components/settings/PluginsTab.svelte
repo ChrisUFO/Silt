@@ -18,6 +18,7 @@
   import { loadPlugins, teardownPlugin } from '../../plugins/loader'
   import { firstPartyPlugins } from '../../plugins/registry'
   import { loadedPlugins } from '../../plugins/store.svelte'
+  import { getSurfaces } from '../../plugins/surfaces'
   import { settings, saveConfig } from '../../settings/store.svelte'
   import SettingsForm from './SettingsForm.svelte'
   import NetworkAuditViewer from './NetworkAuditViewer.svelte'
@@ -27,8 +28,10 @@
     activeNotebook: string
     activeSection: string
     activePage: string
+    onSwitchTab?: (tabId: string) => void
   }
-  let { activeNotebook, activeSection, activePage }: Props = $props()
+  let { activeNotebook, activeSection, activePage, onSwitchTab }: Props =
+    $props()
 
   interface Card {
     id: string
@@ -309,6 +312,22 @@
     return settings.config?.plugins.plugin_settings?.[id]
   }
 
+  // #214: Hoist the surface lookup so the per-card check is O(1), not O(N²).
+  // A single $derived set of pluginIDs that have a registered settings-panel
+  // surface, recomputed only when the surfaces list changes.
+  let settingsPanelPluginIDs = $derived(
+    new Set(getSurfaces('settings-panel').map((s) => s.pluginID))
+  )
+
+  // #214: hasBespokeSettings reports whether a plugin renders its settings via a
+  // dedicated tab (first-party settingsPageComponent or a registered
+  // 'settings-panel' surface) rather than the generic schema form. When true,
+  // the card shows a redirect note instead of the generic form (either/or).
+  function hasBespokeSettings(id: string): boolean {
+    if (loadedPlugins.plugins.get(id)?.settingsPageComponent) return true
+    return settingsPanelPluginIDs.has(id)
+  }
+
   function openPluginView(id: string) {
     // First-party view ids map to activeView (silt-agenda → agenda, etc.).
     const viewId = id.replace(/^silt-/, '')
@@ -578,7 +597,31 @@
                 </dd>
               </dl>
 
-              {#if card.settingsSchema && card.settingsSchema.length > 0}
+              {#if hasBespokeSettings(card.id)}
+                <!-- #214: this plugin renders settings via a dedicated tab;
+                     offer a one-click switch instead of dead text. -->
+                <div>
+                  <div
+                    class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
+                  >
+                    Plugin settings
+                  </div>
+                  {#if onSwitchTab}
+                    <button
+                      type="button"
+                      class="text-[12px] text-accent-primary-start hover:underline bg-transparent border-none cursor-pointer p-0 font-body-md"
+                      onclick={() => onSwitchTab(`plugin:${card.id}`)}
+                    >
+                      Open the {card.name} settings tab
+                    </button>
+                  {:else}
+                    <p class="text-[12px] text-text-muted font-body-md">
+                      This plugin has a dedicated settings page — open the
+                      <strong>{card.name}</strong> tab on the left.
+                    </p>
+                  {/if}
+                </div>
+              {:else if card.settingsSchema && card.settingsSchema.length > 0}
                 <div>
                   <div
                     class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"

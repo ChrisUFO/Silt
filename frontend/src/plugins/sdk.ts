@@ -124,6 +124,13 @@ export interface PluginContext {
    */
   getSetting: (key: string) => Promise<any | undefined>
   /**
+   * Persist a SINGLE setting key to the vault-scoped config.yaml via the
+   * atomic UpdatePluginSetting binding (#120). The value is stored under
+   * `plugins.plugin_settings.<pluginID>.<key>`. No session token required —
+   * this is the same atomic path the generic SettingsForm uses.
+   */
+  updatePluginSetting: (key: string, value: any) => Promise<boolean>
+  /**
    * Subscribe to a typed host event (#106). Returns an unsubscribe function;
    * the host also auto-cleans every subscription on plugin disable/uninstall/
    * vault close, so a plugin cannot leak listeners across reloads. The
@@ -334,6 +341,7 @@ export interface PluginContext {
       | 'status-bar-item'
       | 'command-palette-entry'
       | 'settings-panel'
+      | 'note-banner'
     label: string
     icon?: string
     html: string
@@ -352,6 +360,35 @@ export interface PluginContext {
   openAttachment: (notebook: string, relPath: string) => Promise<boolean>
   /** Delete an attachment file (unlink-only; orphan GC is separate). #101. */
   deleteAttachment: (notebook: string, relPath: string) => Promise<boolean>
+
+  // --- Per-plugin SQLite store (#213) — capability-gated ------------------
+
+  /**
+   * The per-plugin SQLite store (gated by the 'plugin-db' capability). A
+   * distinct connection from the core index, at
+   * <vault>/.system/plugins/<id>/data/plugin.db; sqlite-vec is registered
+   * (vec0 virtual tables + vec_distance_cosine). The plugin owns its schema
+   * and chooses durability semantics. #213.
+   */
+  pluginDb: PluginDbApi
+}
+
+/**
+ * The per-plugin SQLite store API (#213). exec permits DDL/DML (ATTACH/DETACH
+ * and non-user_version PRAGMAs are blocked); query is SELECT/WITH-only with a
+ * row cap; migrate applies a forward-only schema migration stamped via
+ * PRAGMA user_version.
+ */
+export interface PluginDbApi {
+  /** Execute a write (DDL or DML). ATTACH/DETACH and escaping PRAGMAs blocked. */
+  exec: (sql: string, params?: unknown[]) => Promise<void>
+  /** Read-only query (SELECT/WITH only). Row-capped; { rows, truncated }. */
+  query: (
+    sql: string,
+    params?: unknown[]
+  ) => Promise<{ rows: Record<string, unknown>[]; truncated: boolean }>
+  /** Forward-only schema migration; stamps PRAGMA user_version = version. */
+  migrate: (version: number, sql: string) => Promise<void>
 }
 
 // --- v2 SDK typed event bus (#106) ---------------------------------------
@@ -410,6 +447,7 @@ export type Capability =
   | 'ui-surface'
   | 'editor-schema'
   | 'content-mutate'
+  | 'plugin-db'
 
 /** A capability scope qualifier (#113). 'granted' is the default whole-scope. */
 export type CapabilityQualifier = 'granted' | 'notebook' | 'vault'
@@ -500,6 +538,21 @@ export interface RegisteredPlugin {
    * way to render untrusted code in the host webview today.
    */
   sidebarComponent?: any
+  /**
+   * Optional bespoke Settings page component (#214). When present, the plugin
+   * contributes a dedicated tab to the Settings shell rendered from this
+   * compiled Svelte component (instead of the generic SettingSchema[] form).
+   * The component receives `{ ctx, manifest }` as props, the same as
+   * sidebarComponent.
+   *
+   * A plugin declares EITHER settingsPageComponent OR manifest.settings
+   * (the generic schema), NOT both — registering both is a configuration
+   * error rejected by the registry. Third-party plugins render a bespoke
+   * page via the existing `settings-panel` iframe surface
+   * (registerSurface({ kind: 'settings-panel', ... })); they do not use
+   * this field.
+   */
+  settingsPageComponent?: any
   /** Optional init hook invoked with the live PluginContext. */
   init?: (ctx: PluginContext) => void
   /** v2 lifecycle hooks (#106) — invoked by the host loader. */

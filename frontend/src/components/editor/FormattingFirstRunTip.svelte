@@ -14,12 +14,19 @@
 
 {#if !dismissed}
   <div class="first-run-tip" role="status" aria-live="polite">
-    <span class="material-symbols-outlined tip-icon" aria-hidden="true">tips_and_updates</span>
+    <span class="material-symbols-outlined tip-icon" aria-hidden="true"
+      >tips_and_updates</span
+    >
     <span class="tip-text">
       Tip: select text and press <kbd>Ctrl+B</kbd> to make it bold. Type
       <kbd>/</kbd> for more options.
     </span>
-    <button type="button" class="tip-dismiss" onclick={onDismiss} aria-label="Dismiss tip">
+    <button
+      type="button"
+      class="tip-dismiss"
+      onclick={onDismiss}
+      aria-label="Dismiss tip"
+    >
       Got it
     </button>
   </div>
@@ -38,11 +45,12 @@
       var(--color-accent-primary-glow, #6fa3ff) 12%,
       var(--color-surface, #1a1d24)
     );
-    border: 1px solid color-mix(
-      in srgb,
-      var(--color-accent-primary-glow, #6fa3ff) 30%,
-      transparent
-    );
+    border: 1px solid
+      color-mix(
+        in srgb,
+        var(--color-accent-primary-glow, #6fa3ff) 30%,
+        transparent
+      );
     color: var(--color-text-primary, #e6e6e6);
     font-size: 0.8rem;
   }
@@ -62,8 +70,9 @@
     display: inline-block;
     padding: 1px 5px;
     border-radius: 4px;
-    background: var(--color-surface-elevated, #252830);
+    background: var(--color-panel, #252830);
     border: 1px solid var(--color-border-muted, #3a3f4b);
+    color: var(--color-text-primary, #e6e6e6);
     font-family: var(--font-mono, monospace);
     font-size: 0.7rem;
   }
@@ -77,11 +86,17 @@
     color: var(--color-text-muted, #8b95a3);
     font-size: 0.75rem;
     cursor: pointer;
-    transition: background 0.1s, color 0.1s;
+    transition:
+      background 0.1s,
+      color 0.1s;
   }
 
   .tip-dismiss:hover {
-    background: color-mix(in srgb, var(--color-accent-primary-start, #4f7cff) 15%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-start, #4f7cff) 15%,
+      transparent
+    );
     color: var(--color-text-primary, #e6e6e6);
   }
 </style>

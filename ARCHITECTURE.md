@@ -16,6 +16,7 @@ correctness regression, not a style choice.
 | **Per-linked-notebook overrides** | YAML | `<linkedRoot>/.system/config.yaml` | Per-notebook plugin setting overrides for a linked (external) notebook (#133). Read-only to Silt (user-authored); deep-merged over the vault defaults (linked wins per-key). See §3.1. | `plugins.plugin_settings.silt-kanban.columns: [Backlog, Done]` |
 | **User-global, pre-vault** | JSON | `<config>/silt/settings.json` | Settings that must be known before any vault is open: active theme id, dark/light/system mode, non-vault font preferences | `{"active_theme": "silt-graphite", "mode": "dark"}` |
 | **Working memory** | SQLite (WAL) | `<vault>/.system/index.sqlite*` | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (comments/links counts, pin, progress — all re-derived from markdown on re-index), file mtime/size for incremental re-index | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache |
+| **Plugin-owned storage** | SQLite (WAL) | `<vault>/.system/plugins/<id>/data/plugin.db` | Per-plugin private data the plugin owns the schema for: working memory OR durable storage at the plugin's discretion (embeddings, content-hash caches, agent memory). The plugin decides durability semantics; data that must survive uninstall or be portable MUST round-trip through markdown (#213). | A plugin's `vec0` vector index, a content-hash cache table |
 
 **The cardinal rules:**
 
@@ -36,21 +37,35 @@ correctness regression, not a style choice.
    cannot wait for a vault to be loaded; it must live in user-global
    JSON.
 
-4. **SQLite is working memory, not a system of record.** Every row in
-   the index MUST be reproducible from the markdown + YAML above. The
-   recovery path for any SQLite corruption is *delete the index file
-   and relaunch* — that is the documented, supported operation. SQLite
-   is allowed to hold the block↔location projection, FTS5, file
-   mtime/size caches, and re-derived per-task caches (comments/links
-   counts, pin, progress — re-derived from markdown `[pin:: true]` /
-   `[progress:: N]` tokens on every re-index, exactly like the counts).
-   It is **forbidden** to hold user intent *as the source of truth*:
-   pin state, progress, custom column names, filter state, theme id,
-   hotkey bindings must round-trip through the markdown inline task
+4. **SQLite is working memory, not a system of record.** Every row in the
+   **core index** (`<vault>/.system/index.sqlite*`) MUST be reproducible from
+   the markdown + YAML above. The recovery path for any core-index SQLite
+   corruption is *delete the index file and relaunch* — that is the
+   documented, supported operation. SQLite is allowed to hold the
+   block↔location projection, FTS5, file mtime/size caches, and re-derived
+   per-task caches (comments/links counts, pin, progress — re-derived from
+   markdown `[pin:: true]` / `[progress:: N]` tokens on every re-index,
+   exactly like the counts). It is **forbidden** to hold user intent *as the
+   source of truth*: pin state, progress, custom column names, filter state,
+   theme id, hotkey bindings must round-trip through the markdown inline task
    syntax (per-block) or YAML/JSON (per-vault/per-user). The cached
    pin/progress columns in the `tasks` table are projections for query
    speed, not authoritative — delete the index and they rebuild from
    markdown.
+
+   **Plugin-owned storage carve-out (#213).** Cardinal rule #4 governs the
+   **core index only**. Each plugin MAY carry its own separate SQLite file at
+   `<vault>/.system/plugins/<id>/data/plugin.db`, opened on a **distinct**
+   connection that is never addressable from the core index (no `ATTACH`
+   between them). The plugin owns its schema and chooses durability
+   semantics — it may use the file for working memory *or* durable storage
+   (vector indexes, content-hash caches, agent memory). The boundary:
+   data that must survive uninstall or be portable across vaults MUST still
+   round-trip through markdown; plugin-private caches are free to live only
+   in the plugin DB. The plugin DB is deleted on uninstall (see ADR
+   `docs/decisions/0001-plugin-storage-tier.md`). This does not weaken the
+   local-first contract for core — it adds a separate, plugin-isolated tier
+   for the durable substrate the AI sprints build on.
 
 5. **Settings can be stored in JSON** (the pre-vault / user-global
    tier), but only when the data must be available before a vault is
@@ -290,6 +305,24 @@ persistent per-task state must extend the markdown inline task syntax
 + renderer; if the data is per-user/per-vault, it goes in YAML config.
 This is what "local-first" means: the user's files on disk *are* the
 product.
+
+**Plugin-owned storage tier (#213).** The working-memory-only rule above
+governs the **core index** (`<vault>/.system/index.sqlite*`). Each plugin
+MAY carry a separate SQLite file at
+`<vault>/.system/plugins/<id>/data/plugin.db`, opened lazily on a
+**distinct** connection (`App.pluginDBs`, one `*sql.DB` per plugin) that
+is never `ATTACH`-able to the core index. The plugin owns its schema and
+chooses durability semantics (working memory *or* durable storage) — the
+"re-derivable from markdown" requirement is core-only and does not apply
+to the plugin DB. Boundaries: data that must survive uninstall or be
+portable across vaults round-trips through markdown; plugin-private caches
+(embeddings, content-hash caches, agent memory) may live only in the
+plugin DB. The plugin DB connection is closed on `teardownPlugin(id)` and
+on vault close, and the file is deleted on uninstall (the whole
+`.system/plugins/<id>/` folder is removed). Deleting the core
+`index.sqlite*` files remains the documented core recovery path; plugin
+DBs are a separate, plugin-owned tier, deleted separately. See ADR
+`docs/decisions/0001-plugin-storage-tier.md`.
 
 The on-disk SQLite lives in WAL mode at `<vault>/.system/index.sqlite`
 (+ `.sqlite-wal` + `.sqlite-shm`). On restart only files whose
@@ -1049,7 +1082,8 @@ requested vs. granted with revoke. First-party plugins are implicitly granted.
 
 Capabilities: `read-files`, `write-files`, `network`, `os-open`,
 `os-clipboard`, `os-notify`, `ui-surface`, `editor-schema`,
-`content-mutate` (#156 — gates block CRUD).
+`content-mutate` (#156 — gates block CRUD), `plugin-db` (#213 — gates the
+per-plugin SQLite store: `ctx.pluginDb.exec` / `query` / `migrate`).
 
 **Binding identity (#151).** High-risk bindings (fetch, file write/delete,
 block CRUD) also validate a session token: the loader calls
@@ -1105,9 +1139,28 @@ via `crypto.subtle.digest` before Blob import. A tampered `index.js` is refused.
 - Editor extension points (#110): slash-command registry; generic embedBlock
   node (round-trips through <!-- silt-embed: {json} --> markers).
 - Rendered UI surfaces (#117): sandboxed <iframe srcdoc> + postMessage bridge;
-  sidebar panel / modal / status-bar surfaces; theme tokens injected.
-- Settings schema (#103): declarative SettingSchema[] on the manifest;
-  generic form renderer replaces bespoke panels.
+  sidebar panel / modal / status-bar / `note-banner` surfaces; theme tokens
+  injected. The `note-banner` kind (#215) mounts a dismissible banner host at
+  the top of the note view (above the TipTap editor); first-party banners
+  render a compiled Svelte component, third-party via the iframe bridge.
+  Dismissal state is the plugin's responsibility (e.g.
+  `updatePluginSetting('<id>', 'dismissed_notes', [...])`).
+- Settings schema (#103): declarative `SettingSchema[]` on the manifest;
+  generic form renderer is the default. A plugin may instead declare a
+  **bespoke settings page** (#214) — first-party as a compiled Svelte
+  component, third-party via the `settings-panel` iframe surface — rendered
+  as a dynamic tab in the Settings shell. A plugin declares *either* the
+  bespoke page *or* the generic schema form, not both; bespoke pages persist
+  through the same `updatePluginSetting` / `getPluginSettings` plumbing (no
+  new storage path).
+- Per-plugin SQLite store (#213): `plugin-db` capability gates
+  `ctx.pluginDb.exec` / `query` / `migrate` against
+  `<vault>/.system/plugins/<id>/data/plugin.db` — a distinct connection from
+  the core index (never `ATTACH`-able). `sqlite-vec` is registered on every
+  plugin connection (`vec0` virtual tables + `vec_distance_cosine`) via the
+  pure-Go `modernc.org/sqlite/vec` blank import. The plugin owns its schema
+  and chooses durability semantics (working memory or durable). See §0 rule
+  4 plugin carve-out and ADR `docs/decisions/0001-plugin-storage-tier.md`.
 
 See `frontend/src/plugins/sdk.ts` for the full typed contract and
 `docs/PLUGIN_DEVELOPMENT.md` §8 for the author guide.

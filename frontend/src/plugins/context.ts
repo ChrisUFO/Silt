@@ -6,6 +6,7 @@ import {
   PluginUpdateBlockState,
   PluginUpdateTaskMeta,
   GetPluginSettingsForNotebook,
+  UpdatePluginSetting,
   PluginCreateBlock,
   PluginDeleteBlock,
   PluginMoveBlock,
@@ -30,6 +31,10 @@ import {
   PluginNotify,
   PluginFetch,
   PluginRegisterSurface,
+  PluginDBExec,
+  PluginDBQuery,
+  PluginDBMigrate,
+  ClosePluginDB,
   RegisterPluginSession,
   UnregisterPluginSession,
   AddAttachment,
@@ -173,6 +178,11 @@ export function makePluginContext(
         const schema = getPluginSchemaDefault(pluginID, key)
         return schema
       }),
+    // Persist a single setting key atomically (#120). No session token —
+    // UpdatePluginSetting is the same atomic read-modify-write the generic
+    // SettingsForm uses; bespoke pages call it to save their controls.
+    updatePluginSetting: (key, value) =>
+      UpdatePluginSetting(pluginID, key, value).then(() => true),
     // v2 typed event bus (#106). Delegates to the module-scoped bus so
     // subscriptions are auto-cleaned on disable/uninstall/vault-close.
     on: (event, cb) => subscribe(pluginID, event, cb),
@@ -436,7 +446,27 @@ export function makePluginContext(
     openAttachment: (nb, relPath) =>
       OpenAttachment(nb, relPath).then(() => true),
     deleteAttachment: (nb, relPath) =>
-      DeleteAttachment(nb, relPath).then(() => true)
+      DeleteAttachment(nb, relPath).then(() => true),
+
+    // --- Per-plugin SQLite store (#213) — capability-gated server-side -----
+    pluginDb: {
+      exec: (sql, params) =>
+        PluginDBExec(
+          pluginID,
+          sessionToken ?? '',
+          sql,
+          (params as any[]) ?? []
+        ),
+      query: (sql, params) =>
+        PluginDBQuery(
+          pluginID,
+          sessionToken ?? '',
+          sql,
+          (params as any[]) ?? []
+        ),
+      migrate: (version, sql) =>
+        PluginDBMigrate(pluginID, sessionToken ?? '', version, sql)
+    }
   }
 }
 

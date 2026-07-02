@@ -554,3 +554,186 @@ Settings → Plugins renders the form generically. Read merged values:
 ```ts
 const key = await ctx.getSetting('apiKey')  // schema-default-aware
 ```
+
+### 8.11 Per-plugin SQLite store (#213)
+
+A plugin that needs queryable private data — vector indexes, content-hash
+caches, agent memory — gets its **own** SQLite file at
+`<vault>/.system/plugins/<id>/data/plugin.db`. This is a **distinct**
+connection from the core index; it is never `ATTACH`-able to
+`<vault>/.system/index.sqlite`. The plugin owns its schema and chooses
+durability semantics.
+
+Gated by the `plugin-db` capability. The API is deliberately minimal:
+
+```ts
+// Write (DDL or DML). Comment-stripped; ATTACH/DETACH and escaping PRAGMAs
+// are blocked (the version-tracking PRAGMA user_version used by migrate()
+// is internal-only).
+await ctx.pluginDb.exec(
+  'CREATE TABLE IF NOT EXISTS cache (hash TEXT PRIMARY KEY, ts INTEGER)'
+)
+await ctx.pluginDb.exec(
+  'INSERT OR REPLACE INTO cache (hash, ts) VALUES (?, ?)',
+  [contentHash, Date.now()]
+)
+
+// Read (SELECT/WITH only). Row-capped; { rows, truncated } mirrors the
+// core PluginRawQuery contract.
+const { rows, truncated } = await ctx.pluginDb.query(
+  'SELECT hash FROM cache WHERE ts > ? ORDER BY ts DESC LIMIT 100',
+  [since]
+)
+
+// Forward-only schema migration. Runs the SQL in a transaction and stamps
+// PRAGMA user_version = <version> on success; re-running the same version
+// is a no-op. Design migrations to be idempotent.
+await ctx.pluginDb.migrate(1, `
+  CREATE TABLE notes (
+    id TEXT PRIMARY KEY,
+    summary TEXT NOT NULL
+  );
+`)
+```
+
+**sqlite-vec (vector search).** Every plugin connection has `sqlite-vec`
+registered, exposing `vec0` virtual tables and `vec_distance_cosine` /
+`vec_distance_L2`. Useful for semantic search, dedup, and RAG:
+
+```sql
+-- Cosine distance index (384-dim embeddings, e.g. a MiniLM model).
+-- distance_metric=cosine makes MATCH use cosine distance.
+CREATE VIRTUAL TABLE IF NOT EXISTS embeddings USING vec0(
+  id INTEGER PRIMARY KEY,
+  embedding float[384] distance_metric=cosine
+);
+
+-- Insert (vec_f32 parses a JSON array into a compact BLOB).
+INSERT INTO embeddings (id, embedding) VALUES
+  (1, vec_f32('[0.12, 0.45, ...]'));
+
+-- KNN: top-5 nearest by cosine distance.
+SELECT id, distance
+FROM embeddings
+WHERE embedding MATCH vec_f32('[0.13, 0.44, ...]')
+  AND k = 5
+ORDER BY distance;
+```
+
+**Working memory vs durable storage.** The "re-derivable from markdown"
+rule is **core-only** — it does not apply to the plugin DB. You decide:
+
+- **Durable** (survives relaunch within the vault): embeddings, content-hash
+  caches, agent memory. Fine — they're plugin-private.
+- **Must survive uninstall / be portable across vaults:** round-trip through
+  markdown. The plugin DB file is **deleted on uninstall** (the whole
+  `.system/plugins/<id>/` folder is removed).
+
+**Lifecycle.** The connection is closed automatically on `teardownPlugin(id)`
+and on vault close; you do not manage it.
+
+### 8.12 Bespoke plugin settings pages (#214)
+
+The generic `SettingSchema[]` form (§8.10) is the default and is right for
+simple string/bool/select knobs. A plugin with non-trivial configuration
+(provider endpoints, action toggles, custom prompts, connection tests) may
+declare a **bespoke settings page** instead — a purpose-built UI rendered as a
+dynamic tab in Settings.
+
+A plugin declares *either* a bespoke settings page *or* the generic
+`settings` schema — **not both**. Migrating generic → bespoke is supported:
+existing `plugin_settings.<id>.*` keys remain valid and are read through the
+same `getPluginSettings` / `updatePluginSetting` plumbing (no new storage
+path).
+
+**First-party (compiled Svelte).** Register a `settingsPageComponent` on the
+`RegisteredPlugin` (parallel to `sidebarComponent`). The component receives
+`{ ctx, manifest }` props:
+
+```ts
+// registry.ts
+import MyPluginSettings from './first-party/my-plugin/Settings.svelte'
+registerPlugin({
+  manifest: { id: 'my-plugin', name: 'My Plugin', version: '1.0.0' },
+  component: MyPlugin,
+  settingsPageComponent: MyPluginSettings,
+  source: 'first-party'
+})
+```
+
+```svelte
+<!-- Settings.svelte -->
+<script lang="ts">
+  import type { PluginContext, PluginManifest } from '../../sdk'
+  interface Props { ctx: PluginContext; manifest?: PluginManifest }
+  let { ctx, manifest }: Props = $props()
+  let endpoint = $state('')
+  // Load existing setting on mount.
+  $effect(() => { ctx.getPluginSettings().then(s => { endpoint = s.endpoint ?? '' }) })
+  function save() { ctx.updatePluginSetting('endpoint', endpoint) }
+</script>
+<label for="ep">Provider endpoint</label>
+<input id="ep" bind:value={endpoint} />
+<button onclick={save}>Save</button>
+```
+
+**Third-party (iframe surface).** Register a `settings-panel` surface; the
+Settings shell renders it in the sandboxed iframe via `PluginSurfaceFrame`:
+
+```ts
+ctx.registerSurface({
+  id: 'settings',
+  kind: 'settings-panel',
+  label: 'My Plugin Settings',
+  html: '<div id="app">...</div>'
+})
+```
+
+**When to prefer the generic form.** Use the generic `SettingSchema[]` form
+when your settings are flat key/value pairs (strings, bools, selects, colors,
+keymaps, lists). It is less code, automatically a11y-compliant, and renders
+consistently with the rest of Settings. Reserve the bespoke page for rich UI
+that the generic form cannot express: connection-test buttons, multi-step
+wizards, prompt editors, action catalogs. The AI Provider page (Sprint 20)
+and each AI plugin's page (Sprints 21–23) are the first consumers.
+
+### 8.13 Surfaces: `note-banner` (#215)
+
+A `note-banner` is a dismissible highlight region mounted at the top of the
+note view, above the editor content. Use it to surface per-note information
+inline where the user reads (e.g. an AI-generated summary), with a consistent
+close affordance.
+
+```ts
+const off = ctx.registerSurface({
+  id: 'summary-banner',
+  kind: 'note-banner',
+  label: 'Summary',
+  html: '<div id="banner">This note covers …</div>'
+})
+```
+
+Banners render in **registration order**; several can coexist (predictable
+stacking with `max-height` + overflow). Each banner exposes a close
+affordance. **Dismissal state is the plugin's responsibility** — the
+recommended pattern is to record dismissed note ids in a setting:
+
+```ts
+// On close (wired inside the banner's html via the postMessage bridge):
+const dismissed = (await ctx.getSetting('dismissed_notes')) ?? []
+if (!dismissed.includes(noteId)) {
+  await ctx.updatePluginSetting('dismissed_notes', [...dismissed, noteId])
+}
+```
+
+Banners are transient chrome: they do not capture editor focus on mount and
+are removed cleanly on `teardownPlugin`.
+
+**a11y contract.** The banner host (`PluginNoteBanners.svelte`) wraps banners
+in a labelled `role="region" aria-label="Plugin banners"`; each banner is a
+`role="status"` element with `aria-live="polite"` so dynamic content updates
+are announced; the close button has an accessible name derived from the banner
+label (`aria-label="Dismiss <label>"`). Banner content that is an alert rather
+than a status should set `role="alert"` inside the surface HTML for an
+assertive announcement.
+

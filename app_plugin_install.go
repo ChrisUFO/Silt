@@ -88,11 +88,19 @@ func (a *App) InstallPlugin(archivePath string) (parser.PluginManifest, error) {
 // revokes every capability grant for the plugin so a later reinstall re-prompts
 // rather than inheriting the prior trust decision (#113).
 func (a *App) UninstallPlugin(pluginID string) error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
+	// Take the exclusive write lock so concurrent PluginDBExec/Query calls
+	// (which hold RLock) cannot race the closePluginDB + Uninstall folder
+	// removal (use-after-close on the DB pool). Uninstall is a rare user
+	// action; serializing IPC for its duration is acceptable.
+	a.vaultMu.Lock()
+	defer a.vaultMu.Unlock()
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
+	// Close the per-plugin DB pool BEFORE the folder is removed (#213). On
+	// Windows an open file handle blocks deletion; closing first lets the
+	// RemoveAll in plugins.Uninstall succeed cleanly.
+	a.closePluginDB(pluginID)
 	if err := plugins.Uninstall(a.vaultPath, pluginID); err != nil {
 		return err
 	}

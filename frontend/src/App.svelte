@@ -1539,14 +1539,14 @@
     padding: 28px 32px;
     border-radius: 12px;
     background: var(--color-surface, #1a1a1e);
-    border: 1px solid var(--color-border, rgba(255, 255, 255, 0.1));
+    border: 1px solid var(--color-border-muted, rgba(255, 255, 255, 0.1));
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
   }
 
   .settings-mismatch-modal h2 {
     margin: 0 0 12px;
     font-size: 1.15rem;
-    color: var(--color-text, #e0e0e0);
+    color: var(--color-text-primary, #e0e0e0);
   }
 
   .settings-mismatch-modal p {
@@ -1586,7 +1586,7 @@
   .settings-mismatch-actions .secondary {
     background: transparent;
     color: var(--color-text-muted, #999);
-    border: 1px solid var(--color-border, rgba(255, 255, 255, 0.15));
+    border: 1px solid var(--color-border-muted, rgba(255, 255, 255, 0.15));
   }
 
   .settings-mismatch-actions .primary {
