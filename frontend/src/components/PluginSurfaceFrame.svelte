@@ -16,10 +16,27 @@
     surface: PluginSurface
     /** A context proxy the bridge calls into (the live PluginContext). */
     ctxProxy?: Record<string, (...args: any[]) => any>
+    /**
+     * Called once on mount with a `postToSurface` closure the parent can use
+     * to push host→iframe messages into the sandboxed surface (#355). The
+     * bridge is otherwise one-directional (iframe→host requests only); this
+     * opens the symmetric host→iframe channel for events like banner dismiss.
+     * The closure is invalidated on destroy (becomes a no-op) so a stale
+     * parent ref cannot post into a torn-down iframe.
+     */
+    onBridgeReady?: (postToSurface: (msg: SurfaceHostMessage) => void) => void
   }
-  let { surface, ctxProxy = {} }: Props = $props()
+  let { surface, ctxProxy = {}, onBridgeReady }: Props = $props()
+
+  /** A host→iframe event envelope (the dismiss bridge, #355). */
+  interface SurfaceHostMessage {
+    __siltSurface: 'event'
+    type: string
+    payload?: unknown
+  }
 
   let iframeEl: HTMLIFrameElement | undefined = $state()
+  let alive = true
 
   // Build the srcdoc: the plugin's HTML + a small bridge script that listens
   // for requests, posts them to the parent, and relays the response. This is
@@ -31,12 +48,23 @@
       let seq = 0;
       window.addEventListener('message', (ev) => {
         const msg = ev.data;
-        if (!msg || msg.__siltSurface !== 'response') return;
-        const resolver = pending.get(msg.seq);
-        if (resolver) {
-          resolver(msg.ok ? msg.result : Promise.reject(new Error(msg.error)));
-          pending.delete(msg.seq);
+        if (!msg || msg.__siltSurface !== 'response' && msg.__siltSurface !== 'event') return;
+        if (msg.__siltSurface === 'response') {
+          const resolver = pending.get(msg.seq);
+          if (resolver) {
+            resolver(msg.ok ? msg.result : Promise.reject(new Error(msg.error)));
+            pending.delete(msg.seq);
+          }
+          return;
         }
+        // Host→iframe event (#355): e.g. a banner dismiss notification so the
+        // plugin can persist dismissal state (ctx.updatePluginSetting) before
+        // the surface is torn down. Dispatched as a CustomEvent plugin HTML
+        // subscribes to (silt:surface:event). Origin/source gating is the host
+        // side's job — the iframe trusts its parent by construction.
+        window.dispatchEvent(new CustomEvent('silt:surface:event', {
+          detail: { type: msg.type, payload: msg.payload }
+        }));
       });
       // PluginContext proxy: every method becomes a postMessage request.
       // targetOrigin '*' here is intentional: the sandboxed iframe cannot read
@@ -89,6 +117,7 @@
     'updateTaskMeta',
     'getPluginSettings',
     'getSetting',
+    'updatePluginSetting',
     'on',
     'queryByTag',
     'queryByDateRange',
@@ -185,10 +214,20 @@
       })
   }
 
+  function postToSurface(msg: SurfaceHostMessage) {
+    if (!alive) return // torn down — ignore stale parent ref (#355)
+    // targetOrigin 'null': same rationale as the response path (a sandboxed
+    // iframe without allow-same-origin reports 'null' as its origin).
+    iframeEl?.contentWindow?.postMessage(msg, 'null')
+  }
+
   onMount(() => {
     window.addEventListener('message', handleRequest)
+    // Hand the parent a closure it can use to push host→iframe events (#355).
+    onBridgeReady?.(postToSurface)
   })
   onDestroy(() => {
+    alive = false
     window.removeEventListener('message', handleRequest)
   })
 </script>

@@ -63,6 +63,7 @@ describe('PluginSurfaceFrame CSP (#149)', () => {
       'updateTaskMeta',
       'getPluginSettings',
       'getSetting',
+      'updatePluginSetting',
       'on',
       'queryByTag',
       'queryByDateRange',
@@ -100,6 +101,10 @@ describe('PluginSurfaceFrame CSP (#149)', () => {
       'readPluginAsset'
     ])
     expect(allowedMethods.has('fetch')).toBe(true)
+    // updatePluginSetting must be proxiable so banner dismissal state is
+    // reachable (#355): the documented ctx.updatePluginSetting('dismissed_notes',
+    // [...]) pattern runs through this bridge for sandboxed third-party banners.
+    expect(allowedMethods.has('updatePluginSetting')).toBe(true)
   })
 })
 
@@ -156,5 +161,42 @@ describe('PluginSurfaceFrame postMessage targetOrigin (#248)', () => {
     //   parent.postMessage({ ... }, '*');
     expect(bridge).toContain('parent.postMessage(')
     expect(bridge).toContain("}, '*');")
+  })
+})
+
+describe('PluginSurfaceFrame host→iframe dismiss bridge (#355)', () => {
+  // The bridge was one-directional (iframe→host). The dismiss bridge adds a
+  // symmetric host→iframe 'event' channel so a banner host can tell a plugin
+  // its surface was dismissed, letting the plugin persist dismissal state
+  // (ctx.updatePluginSetting('dismissed_notes', [...])) before teardown.
+
+  it('the iframe bridge dispatches host→iframe events as silt:surface:event', () => {
+    // The bridge message listener must branch on __siltSurface === 'event' and
+    // re-dispatch as a CustomEvent plugin code can subscribe to.
+    const declStart = componentSource.indexOf('const bridgeScript =')
+    const openingBacktick = componentSource.indexOf('`', declStart)
+    const closingBacktick = componentSource.indexOf('`', openingBacktick + 1)
+    const bridge = componentSource.slice(openingBacktick + 1, closingBacktick)
+
+    expect(bridge).toContain("'event'")
+    expect(bridge).toContain('silt:surface:event')
+    expect(bridge).toContain('CustomEvent')
+  })
+
+  it('exposes a host→iframe post closure via onBridgeReady', () => {
+    // The parent hands a postToSurface closure to onBridgeReady; it posts into
+    // the iframe contentWindow with targetOrigin 'null' (sandboxed iframe
+    // origin) and no-ops once destroyed.
+    expect(componentSource).toContain('onBridgeReady')
+    expect(componentSource).toContain('postToSurface')
+    // The event post pins targetOrigin to 'null' (defense in depth, matching
+    // the response direction).
+    expect(componentSource).toContain("postMessage(msg, 'null')")
+  })
+
+  it('the dismiss event envelope carries __siltSurface=event', () => {
+    // The host posts { __siltSurface: 'event', type, payload }; the iframe
+    // bridge filters on that discriminant.
+    expect(componentSource).toContain("__siltSurface: 'event'")
   })
 })

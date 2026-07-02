@@ -715,16 +715,29 @@ const off = ctx.registerSurface({
 
 Banners render in **registration order**; several can coexist (predictable
 stacking with `max-height` + overflow). Each banner exposes a close
-affordance. **Dismissal state is the plugin's responsibility** — the
-recommended pattern is to record dismissed note ids in a setting:
+affordance. **Dismissal state is the plugin's responsibility** — the host
+sends a host→iframe `dismiss` event when the user closes the banner, and the
+plugin persists the dismissal in a setting:
 
 ```ts
-// On close (wired inside the banner's html via the postMessage bridge):
-const dismissed = (await ctx.getSetting('dismissed_notes')) ?? []
-if (!dismissed.includes(noteId)) {
-  await ctx.updatePluginSetting('dismissed_notes', [...dismissed, noteId])
-}
+// The host posts a dismiss event before tearing the surface down. Listen for
+// it inside the banner's HTML and persist which notes the user dismissed:
+window.addEventListener('silt:surface:event', async (ev) => {
+  const { type, payload } = ev.detail
+  if (type !== 'dismiss') return
+  // payload.persistent is false for "Dismiss for now" (the default close).
+  // Treat it as a permanent dismissal for this note:
+  const dismissed = (await ctx.getSetting('dismissed_notes')) ?? []
+  if (!dismissed.includes(noteId)) {
+    await ctx.updatePluginSetting('dismissed_notes', [...dismissed, noteId])
+  }
+})
 ```
+
+`ctx.updatePluginSetting` is proxied through the surface bridge, so the
+documented pattern is reachable from a sandboxed third-party banner. The host
+removes the surface after a short grace window even if the plugin's handler
+does not respond — dismissal never wedges the host.
 
 Banners are transient chrome: they do not capture editor focus on mount and
 are removed cleanly on `teardownPlugin`.

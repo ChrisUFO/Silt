@@ -231,18 +231,25 @@
     class="relative z-10 w-full max-w-4xl h-[80vh] glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex"
     style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 94%, transparent);"
   >
-    <!-- Left rail: tab list -->
-    <nav
+    <!-- Left rail: tab list. A div (not <nav>) carries role="tablist" because a
+         tablist is not a navigation landmark — the WAI-ARIA tab pattern uses a
+         generic container, mirroring the main TabStrip. Delegated keyboard nav
+         (Arrow/Home/End) lives here with roving tabindex on the buttons. -->
+    <div
       class="w-52 flex-shrink-0 border-r border-border-muted bg-surface/40 flex flex-col py-3"
       aria-label="Settings sections"
+      role="tablist"
+      tabindex="-1"
+      onkeydown={handleRailKeydown}
     >
       {#each tabs as tab, i (tab.id)}
         <button
           bind:this={railRefs[i]}
           onclick={() => selectTab(tab.id)}
-          onkeydown={handleRailKeydown}
           role="tab"
+          id="silt-settings-tab-{tab.id}"
           aria-selected={activeTab === tab.id}
+          aria-controls="silt-settings-panel"
           tabindex={activeTab === tab.id ? 0 : -1}
           class="relative flex items-center gap-3 pl-5 pr-4 py-2.5 mx-2 rounded-lg font-label-sm text-label-sm transition-all border-none cursor-pointer text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 {activeTab ===
           tab.id
@@ -259,7 +266,7 @@
           {tab.label}
         </button>
       {/each}
-    </nav>
+    </div>
 
     <!-- Right: active panel -->
     <div class="flex-1 min-w-0 flex flex-col overflow-hidden bg-void/5">
@@ -281,8 +288,15 @@
         </button>
       </div>
 
+      <!-- Active panel. role="tabpanel" + aria-labelledby + tabindex give the
+           panel the WAI-ARIA tabpanel contract (labelled by the active tab,
+           keyboard-focusable so screen-reader users can move into it). -->
       <div
-        class="flex-1 min-h-0"
+        id="silt-settings-panel"
+        role="tabpanel"
+        aria-labelledby="silt-settings-tab-{activeTab}"
+        tabindex="0"
+        class="flex-1 min-h-0 focus:outline-none"
         class:overflow-y-auto={['appearance', 'plugins', 'about'].includes(
           activeTab
         ) || activeTab.startsWith('plugin:')}

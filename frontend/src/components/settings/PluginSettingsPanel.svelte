@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { RegisteredPlugin } from '../../plugins/sdk'
   import PluginSurfaceFrame from '../PluginSurfaceFrame.svelte'
+  import PluginMountFallback from '../plugins/PluginMountFallback.svelte'
   import { getSurfaces, onSurfacesChanged } from '../../plugins/surfaces'
   import { makePluginContext } from '../../plugins/context'
   import { onDestroy } from 'svelte'
@@ -42,15 +43,30 @@
 
 {#if plugin.settingsPageComponent}
   <!-- First-party: render the compiled Svelte component (Svelte 5 runes mode:
-       dynamic components are rendered directly via a capitalized binding) -->
+       dynamic components are rendered directly via a capitalized binding).
+
+       Wrapped in <svelte:boundary> (#357): a plugin component that throws on
+       mount (bad manifest shape, missing prop, SDK misuse) would otherwise
+       crash the whole Settings dialog and trap the user. The boundary renders
+       the shared PluginMountFallback, whose "Retry" button calls reset() to
+       re-mount. NOTE: svelte:boundary catches render-phase errors only — async
+       onMount failures must be caught by the plugin component itself. -->
   {@const Comp = plugin.settingsPageComponent}
-  <Comp
-    {ctx}
-    manifest={plugin.manifest}
-    {activeNotebook}
-    {activeSection}
-    {activePage}
-  />
+  <svelte:boundary
+    onerror={(e) =>
+      console.error(`[plugin:${plugin.manifest.id}] settings page crashed`, e)}
+  >
+    <Comp
+      {ctx}
+      manifest={plugin.manifest}
+      {activeNotebook}
+      {activeSection}
+      {activePage}
+    />
+    {#snippet failed(error, reset)}
+      <PluginMountFallback name={plugin.manifest.name} {error} {reset} />
+    {/snippet}
+  </svelte:boundary>
 {:else if thirdPartySurfaces.length === 1}
   <!-- Third-party: render the settings-panel iframe surface (one per plugin) -->
   <PluginSurfaceFrame surface={thirdPartySurfaces[0]} ctxProxy={ctx} />

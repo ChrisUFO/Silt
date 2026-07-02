@@ -1142,9 +1142,16 @@ via `crypto.subtle.digest` before Blob import. A tampered `index.js` is refused.
   sidebar panel / modal / status-bar / `note-banner` surfaces; theme tokens
   injected. The `note-banner` kind (#215) mounts a dismissible banner host at
   the top of the note view (above the TipTap editor); first-party banners
-  render a compiled Svelte component, third-party via the iframe bridge.
-  Dismissal state is the plugin's responsibility (e.g.
-  `updatePluginSetting('<id>', 'dismissed_notes', [...])`).
+  render a compiled Svelte component, third-party via the iframe bridge. The
+  bridge is bidirectional: iframe→host requests (PluginContext proxy) AND
+  host→iframe events. The close affordance sends a `dismiss` event so the
+  plugin can persist dismissal state (`updatePluginSetting('<id>',
+  'dismissed_notes', [...])`) — `updatePluginSetting` is in the bridge's
+  `allowedMethods` so the documented pattern is reachable from a sandboxed
+  banner. When more than two banners stack, the host collapses them into a
+  single expandable summary (#358). Bespoke plugin settings pages (#214)
+  mount inside a `<svelte:boundary>` so a component that throws on render
+  cannot crash the focus-trapped Settings dialog (#357).
 - Settings schema (#103): declarative `SettingSchema[]` on the manifest;
   generic form renderer is the default. A plugin may instead declare a
   **bespoke settings page** (#214) — first-party as a compiled Svelte

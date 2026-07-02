@@ -1,40 +1,233 @@
-// #215: PluginNoteBanners host component test — verifies the host renders
-// registered banners, exposes the correct a11y attributes, and removes a
-// banner on close (calling unregisterSurface) with focus management.
+// #215/#355: PluginNoteBanners host component. Covers the dismiss host
+// contract (#355 grace-timeout teardown), the stacking collapse (#358), and the
+// a11y/focus/ordering contracts from #215 that must survive the bridge work.
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
 vi.mock('../../plugins/grants.svelte', () => ({
   isGranted: vi.fn(() => true),
-  grantStore: { subscribe: () => () => {} }
+  initGrants: vi.fn(),
+  refreshGrants: vi.fn(),
+  resetGrantsForTests: vi.fn(),
+  setGrantsForTests: vi.fn()
 }))
 
-// Mock PluginSurfaceFrame so we don't need the full iframe bridge in jsdom.
-vi.mock('../PluginSurfaceFrame.svelte', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    $$render: () => '<div data-testid="mock-frame"></div>',
-    render: () => {}
-  }))
-}))
-
-// Mock makePluginContext so we don't hit wailsjs bindings.
 vi.mock('../../plugins/context', () => ({
   makePluginContext: vi.fn(() => ({}))
 }))
 
-import PluginNoteBanners from './PluginNoteBanners.svelte'
+vi.mock('../../../wailsjs/go/main/App.js', () => ({
+  GetPluginSettingsForNotebook: vi.fn().mockResolvedValue({}),
+  UpdatePluginSetting: vi.fn().mockResolvedValue(undefined),
+  PluginRawQuery: vi.fn()
+}))
+
 import {
   registerSurface,
   resetSurfacesForTests,
   getSurfaces
 } from '../../plugins/surfaces'
+import PluginNoteBanners from './PluginNoteBanners.svelte'
 
-describe('PluginNoteBanners host component (#215)', () => {
+describe('PluginNoteBanners dismiss (#355)', () => {
   beforeEach(() => {
+    cleanup()
     resetSurfacesForTests()
   })
 
-  it('renders a registered note-banner with correct a11y attributes', async () => {
+  it('renders an accessible dismiss button per banner', () => {
+    registerSurface({
+      id: 'p:b1',
+      pluginID: 'p',
+      kind: 'note-banner',
+      label: 'Summary',
+      html: '<div>summary</div>'
+    })
+    render(PluginNoteBanners)
+    expect(
+      screen.getByRole('button', { name: /dismiss summary/i })
+    ).toBeTruthy()
+  })
+
+  it('tears the surface down after the dismiss grace timeout', () => {
+    registerSurface({
+      id: 'p:b1',
+      pluginID: 'p',
+      kind: 'note-banner',
+      label: 'One',
+      html: '<div>1</div>'
+    })
+
+    vi.useFakeTimers()
+    try {
+      render(PluginNoteBanners)
+      const closeBtn = screen.getByRole('button', { name: /dismiss one/i })
+      fireEvent.click(closeBtn)
+
+      // Grace window: the surface is still present immediately after click.
+      expect(
+        getSurfaces('note-banner').find((s) => s.id === 'p:b1')
+      ).toBeTruthy()
+
+      // After the timeout, the host removes it regardless of plugin response.
+      vi.advanceTimersByTime(500)
+      expect(
+        getSurfaces('note-banner').find((s) => s.id === 'p:b1')
+      ).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('can re-dismiss a banner that re-registers with the same id (#355)', () => {
+    // The dismissedThisTick debounce guard must reset after teardown so a
+    // plugin re-enabled and re-registered with the same surface.id is not
+    // silently undismissable on its second appearance.
+    registerSurface({
+      id: 'p:re',
+      pluginID: 'p',
+      kind: 'note-banner',
+      label: 'Repeater',
+      html: '<div>1</div>'
+    })
+
+    vi.useFakeTimers()
+    try {
+      render(PluginNoteBanners)
+      // First dismissal.
+      fireEvent.click(screen.getByRole('button', { name: /dismiss repeater/i }))
+      vi.advanceTimersByTime(500)
+      expect(
+        getSurfaces('note-banner').find((s) => s.id === 'p:re')
+      ).toBeUndefined()
+
+      // Plugin re-registers the same id (e.g. after re-enable).
+      registerSurface({
+        id: 'p:re',
+        pluginID: 'p',
+        kind: 'note-banner',
+        label: 'Repeater',
+        html: '<div>2</div>'
+      })
+      const closeBtn = screen.getByRole('button', { name: /dismiss repeater/i })
+      fireEvent.click(closeBtn)
+      vi.advanceTimersByTime(500)
+      expect(
+        getSurfaces('note-banner').find((s) => s.id === 'p:re')
+      ).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears the pending dismiss timer on unmount (no stale doRemove)', () => {
+    // If the note view unmounts within the grace window, onDestroy must clear
+    // the pending timeout so doRemove never runs against torn-down DOM.
+    registerSurface({
+      id: 'p:unmount',
+      pluginID: 'p',
+      kind: 'note-banner',
+      label: 'Transient',
+      html: '<div>1</div>'
+    })
+
+    vi.useFakeTimers()
+    try {
+      const { unmount } = render(PluginNoteBanners)
+      fireEvent.click(
+        screen.getByRole('button', { name: /dismiss transient/i })
+      )
+      // Surface still present (within grace window).
+      expect(
+        getSurfaces('note-banner').find((s) => s.id === 'p:unmount')
+      ).toBeTruthy()
+
+      unmount()
+      // Advancing past the grace window must NOT fire doRemove — the surface
+      // remains registered because the timer was cleared on teardown.
+      vi.advanceTimersByTime(1000)
+      expect(
+        getSurfaces('note-banner').find((s) => s.id === 'p:unmount')
+      ).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('PluginNoteBanners stacking collapse (#358)', () => {
+  beforeEach(() => {
+    cleanup()
+    resetSurfacesForTests()
+  })
+
+  function registerN(n: number) {
+    for (let i = 1; i <= n; i++) {
+      registerSurface({
+        id: `p:b${i}`,
+        pluginID: 'p',
+        kind: 'note-banner',
+        label: `Banner ${i}`,
+        html: `<div>${i}</div>`
+      })
+    }
+  }
+
+  it('renders all banners directly when at or under the threshold (1 and 2)', () => {
+    registerN(1)
+    const { unmount } = render(PluginNoteBanners)
+    expect(
+      screen.queryByRole('button', { name: /dismiss banner 1/i })
+    ).toBeTruthy()
+    expect(screen.queryByText(/plugin banners/i)).toBeNull() // no collapse toggle
+    unmount()
+
+    resetSurfacesForTests()
+    registerN(2)
+    render(PluginNoteBanners)
+    expect(
+      screen.queryByRole('button', { name: /dismiss banner 1/i })
+    ).toBeTruthy()
+    expect(
+      screen.queryByRole('button', { name: /dismiss banner 2/i })
+    ).toBeTruthy()
+    expect(screen.queryByText(/2 plugin banners/i)).toBeNull()
+  })
+
+  it('collapses into a summary when more than 2 banners stack, and expands on click', async () => {
+    registerN(3)
+    render(PluginNoteBanners)
+
+    // Collapsed by default: the summary is shown, individual banners hidden.
+    const toggle = screen.getByRole('button', { name: /3 plugin banners/i })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(
+      screen.queryByRole('button', { name: /dismiss banner 1/i })
+    ).toBeNull()
+
+    // Expand reveals all banners.
+    await fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(
+      screen.queryByRole('button', { name: /dismiss banner 1/i })
+    ).toBeTruthy()
+    expect(
+      screen.queryByRole('button', { name: /dismiss banner 3/i })
+    ).toBeTruthy()
+  })
+})
+
+// #215: restored host-component coverage — a11y attributes, empty state,
+// registration order, the data-banner-close hook, and the focus-handoff path
+// in dismiss(). These were deleted in the bridge rewrite and must stay covered
+// since dismiss() retains non-trivial focus management.
+describe('PluginNoteBanners host a11y + focus (#215)', () => {
+  beforeEach(() => {
+    cleanup()
+    resetSurfacesForTests()
+  })
+
+  it('renders a registered banner with correct a11y attributes', () => {
     registerSurface({
       id: 'test:banner',
       pluginID: 'test',
@@ -61,26 +254,7 @@ describe('PluginNoteBanners host component (#215)', () => {
     expect(container.querySelector('[role="region"]')).toBeNull()
   })
 
-  it('removes the banner when the close button is clicked', async () => {
-    registerSurface({
-      id: 'test:banner',
-      pluginID: 'test',
-      kind: 'note-banner',
-      label: 'Summary',
-      html: '<div>summary</div>'
-    })
-    render(PluginNoteBanners)
-
-    // The close button exists with an accessible name derived from the label.
-    const closeBtn = screen.getByRole('button', { name: /dismiss summary/i })
-    expect(closeBtn).toBeTruthy()
-
-    // Clicking it removes the banner from the surface registry.
-    await fireEvent.click(closeBtn)
-    expect(getSurfaces('note-banner')).toHaveLength(0)
-  })
-
-  it('renders multiple banners in registration order', () => {
+  it('renders multiple banners in registration order and tags each close button', () => {
     registerSurface({
       id: 'p:b1',
       pluginID: 'p',
@@ -96,25 +270,25 @@ describe('PluginNoteBanners host component (#215)', () => {
       html: '<div>2</div>'
     })
     const { container } = render(PluginNoteBanners)
+
+    // Banners render top-to-bottom in registration order.
     const banners = container.querySelectorAll('[role="status"]')
-    expect(banners).toHaveLength(2)
+    expect(banners.length).toBe(2)
     expect(banners[0].getAttribute('aria-label')).toBe('First')
     expect(banners[1].getAttribute('aria-label')).toBe('Second')
-  })
 
-  it('close button has accessible name and data attribute for focus management', () => {
-    registerSurface({
-      id: 'test:focus',
-      pluginID: 'test',
-      kind: 'note-banner',
-      label: 'Alert Banner',
-      html: '<div>alert</div>'
-    })
-    render(PluginNoteBanners)
-    const closeBtn = screen.getByRole('button', {
-      name: /dismiss alert banner/i
-    })
-    expect(closeBtn.getAttribute('data-banner-close')).toBe('test:focus')
-    expect(closeBtn.getAttribute('title')).toBe('Dismiss Alert Banner')
+    // Each close button carries the data-banner-close id the focus-handoff
+    // queries, and a title tooltip (load-bearing for mouse users — the close
+    // button's only hover affordance). (The focus-handoff itself runs inside
+    // doRemove, exercised by the grace-timeout test above; its actual focus()
+    // call is timing-fragile in jsdom due to Svelte's microtask flush ordering,
+    // so the contract is verified at the attribute + doRemove-run level,
+    // matching the original suite's approach.)
+    const closeBtns = container.querySelectorAll('[data-banner-close]')
+    expect(closeBtns.length).toBe(2)
+    expect(closeBtns[0].getAttribute('data-banner-close')).toBe('p:b1')
+    expect(closeBtns[1].getAttribute('data-banner-close')).toBe('p:b2')
+    expect(closeBtns[0].getAttribute('title')).toBe('Dismiss First')
+    expect(closeBtns[1].getAttribute('title')).toBe('Dismiss Second')
   })
 })
