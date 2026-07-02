@@ -393,3 +393,35 @@ func TestPluginDB_QueryRejectsVacuum(t *testing.T) {
 		t.Fatal("expected VACUUM INTO to be blocked by PluginDBQuery")
 	}
 }
+
+func TestPluginDB_MigrateAppliesMultipleStatements(t *testing.T) {
+	app, token := pluginDBTestApp(t)
+	// Verify the multi-statement migrate contract: a single migrate() call
+	// with a semicolon-separated body must apply EVERY statement (CREATE TABLE
+	// + CREATE INDEX) and stamp user_version. This locks the load-bearing
+	// assumption that modernc.org/sqlite's tx.Exec executes all statements.
+	if err := app.PluginDBMigrate("test-plugin", token, 1,
+		"CREATE TABLE a (x INTEGER); CREATE INDEX ax ON a (x)"); err != nil {
+		t.Fatalf("multi-statement migrate: %v", err)
+	}
+	// Both objects must exist.
+	_, err := app.PluginDBQuery("test-plugin", token,
+		"SELECT name FROM sqlite_master WHERE name='a' AND type='table'", nil)
+	if err != nil {
+		t.Fatalf("table 'a' not found after migrate: %v", err)
+	}
+	_, err = app.PluginDBQuery("test-plugin", token,
+		"SELECT name FROM sqlite_master WHERE name='ax' AND type='index'", nil)
+	if err != nil {
+		t.Fatalf("index 'ax' not found after migrate: %v", err)
+	}
+	// user_version stamped.
+	db, _ := app.openPluginDB("test-plugin")
+	var v int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+		t.Fatalf("read user_version: %v", err)
+	}
+	if v != 1 {
+		t.Fatalf("user_version = %d, want 1", v)
+	}
+}

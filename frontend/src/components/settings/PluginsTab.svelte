@@ -312,16 +312,20 @@
     return settings.config?.plugins.plugin_settings?.[id]
   }
 
+  // #214: Hoist the surface lookup so the per-card check is O(1), not O(N²).
+  // A single $derived set of pluginIDs that have a registered settings-panel
+  // surface, recomputed only when the surfaces list changes.
+  let settingsPanelPluginIDs = $derived(
+    new Set(getSurfaces('settings-panel').map((s) => s.pluginID))
+  )
+
   // #214: hasBespokeSettings reports whether a plugin renders its settings via a
   // dedicated tab (first-party settingsPageComponent or a registered
   // 'settings-panel' surface) rather than the generic schema form. When true,
   // the card shows a redirect note instead of the generic form (either/or).
   function hasBespokeSettings(id: string): boolean {
-    const reg = loadedPlugins.plugins.get(id)
-    if (reg?.settingsPageComponent) return true
-    if (getSurfaces('settings-panel').some((s) => s.pluginID === id))
-      return true
-    return false
+    if (loadedPlugins.plugins.get(id)?.settingsPageComponent) return true
+    return settingsPanelPluginIDs.has(id)
   }
 
   function openPluginView(id: string) {

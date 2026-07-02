@@ -51,9 +51,15 @@
     {activeSection}
     {activePage}
   />
-{:else if thirdPartySurfaces.length > 0}
-  <!-- Third-party: render the settings-panel iframe surface -->
+{:else if thirdPartySurfaces.length === 1}
+  <!-- Third-party: render the settings-panel iframe surface (one per plugin) -->
   <PluginSurfaceFrame surface={thirdPartySurfaces[0]} ctxProxy={ctx} />
+{:else if thirdPartySurfaces.length > 1}
+  <!-- Misbehaving plugin registered multiple settings surfaces -->
+  <div class="p-6 text-status-danger font-body-md text-[13px]">
+    This plugin registered {thirdPartySurfaces.length} settings surfaces. Only one
+    settings surface per plugin is supported.
+  </div>
 {:else}
   <div class="p-6 text-text-muted font-body-md">
     This plugin has no configurable settings.
