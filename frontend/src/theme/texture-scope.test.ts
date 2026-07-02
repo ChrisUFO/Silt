@@ -60,4 +60,17 @@ describe('texture scope guard (#261)', () => {
     // in its own stacking context.
     expect(svelte).toMatch(/relative z-\[1\][^"]*flex flex-col/)
   })
+
+  it('texture ::before uses viewport units for height/margin (not %)', () => {
+    const css = readFile('index.css')
+
+    // CSS spec resolves margin-bottom percentages against the container's
+    // WIDTH, not height. So "height:100%; margin-bottom:-100%" over-cancels
+    // on wide containers, pulling the content wrapper above the visible area
+    // and hiding all text. Viewport units (vh) are real lengths that cancel
+    // exactly regardless of aspect ratio.
+    // Check the actual property declarations (not the explanatory comment).
+    expect(css).toMatch(/^\s+height:\s*100vh;/m)
+    expect(css).toMatch(/^\s+margin-bottom:\s*-100vh;/m)
+  })
 })

@@ -162,8 +162,14 @@ body {
   top: 0;
   left: 0;
   width: 100%;
-  height: 100%;
-  margin-bottom: -100%;
+  /* Use viewport-relative units, NOT percentage. CSS spec resolves
+     margin-bottom percentages against the container's WIDTH (inline
+     size), not its height — so "height:100%; margin-bottom:-100%"
+     over-cancels on wide containers, pulling the content wrapper
+     above the visible area and hiding all text (#texture-bug). 100vh
+     is a real length that cancels exactly regardless of aspect ratio. */
+  height: 100vh;
+  margin-bottom: -100vh;
   z-index: 0;
   pointer-events: none;
   background-image: var(--silt-texture-image, none);
