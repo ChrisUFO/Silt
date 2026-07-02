@@ -5,7 +5,7 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
-import CrashingSettings from './CrashingSettings.svelte'
+import CrashingSettings from './__fixtures__/CrashingSettings.svelte'
 import PluginSettingsPanel from './PluginSettingsPanel.svelte'
 import type { RegisteredPlugin } from '../../plugins/sdk'
 

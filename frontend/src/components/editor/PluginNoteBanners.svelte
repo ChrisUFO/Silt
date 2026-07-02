@@ -94,6 +94,10 @@
     }
 
     const doRemove = () => {
+      // Reset the debounce guard so a plugin re-enabled and re-registered with
+      // the same surface.id can be dismissed again (the guard is only meant to
+      // debounce a single click during the grace window).
+      if (dismissedThisTick === surface.id) dismissedThisTick = null
       const idx = surfaces.findIndex((s) => s.id === surface.id)
       const next = surfaces[idx + 1]
       unregisterSurface(surface.id)
@@ -157,6 +161,18 @@
       </button>
     {/if}
 
+    {#if showCollapse && collapsed}
+      <!-- Collapsed state removes the per-banner role=status live regions, so a
+           screen reader would not learn when a new banner arrives (the toggle
+           button text change is not itself announced). This visually-hidden
+           polite region announces the count + the latest label so arrivals and
+           departures are spoken without a visible affordance. -->
+      <div class="sr-only" aria-live="polite" aria-atomic="true">
+        {surfaces.length} plugin {surfaces.length === 1 ? 'banner' : 'banners'} active.
+        Latest: {surfaces[surfaces.length - 1]?.label ?? 'unknown'}.
+      </div>
+    {/if}
+
     <div id="banner-stack" class="banner-stack">
       {#each visibleSurfaces as surface (surface.id)}
         <div
@@ -194,6 +210,21 @@
 {/if}
 
 <style>
+  /* Visually hidden but available to assistive tech (the collapsed-stack live
+     region). Standard visually-hidden pattern; not globalized because no other
+     component needs it yet. */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
   .plugin-note-banners {
     display: flex;
     flex-direction: column;

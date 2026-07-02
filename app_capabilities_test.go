@@ -428,8 +428,22 @@ func TestRequireGrant_DisabledFirstPartyRejected(t *testing.T) {
 	app.cfg.Plugins.Disabled = append(app.cfg.Plugins.Disabled, pid)
 	app.configMu.Unlock()
 
-	if err := app.requireGrant(pid, plugins.CapWriteFiles); err == nil {
+	err := app.requireGrant(pid, plugins.CapWriteFiles)
+	if err == nil {
 		t.Fatal("disabled first-party plugin must be rejected at the binding layer")
+	}
+	// #359: the denial MUST be a structured CapabilityDeniedError with the
+	// Disabled discriminator (not a generic fmt.Errorf) so the frontend SDK
+	// can show "re-enable the plugin" rather than a grant prompt.
+	derr, ok := err.(*plugins.CapabilityDeniedError)
+	if !ok {
+		t.Fatalf("disabled denial: want *CapabilityDeniedError, got %T (%v)", err, err)
+	}
+	if !derr.Disabled {
+		t.Errorf("disabled denial: Disabled discriminator = false, want true")
+	}
+	if derr.Plugin != pid || derr.Capability != string(plugins.CapWriteFiles) {
+		t.Errorf("disabled denial fields = %+v", derr)
 	}
 
 	// Re-enable: still denied while the entry lingers (this is a direct
@@ -466,8 +480,16 @@ func TestRequireGrant_DisabledDiskPluginSentinelRejected(t *testing.T) {
 		t.Fatalf("create sentinel: %v", err)
 	}
 	f.Close()
-	if err := app.requireGrant(pid, plugins.CapNetwork); err == nil {
+	denied := app.requireGrant(pid, plugins.CapNetwork)
+	if denied == nil {
 		t.Fatal("plugin with .disabled sentinel must be rejected at the binding layer")
+	}
+	derr, ok := denied.(*plugins.CapabilityDeniedError)
+	if !ok {
+		t.Fatalf("disabled disk-plugin denial: want *CapabilityDeniedError, got %T (%v)", denied, denied)
+	}
+	if !derr.Disabled {
+		t.Errorf("disabled disk-plugin denial: Disabled discriminator = false, want true")
 	}
 
 	// Remove the sentinel (the EnablePlugin path).

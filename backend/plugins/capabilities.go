@@ -167,14 +167,23 @@ func ListCapabilities() string {
 // plugin attempts a privileged operation it has not been granted. It is
 // JSON-serializable so the frontend SDK can surface a specific, actionable
 // message (and a re-prompt) rather than a generic string.
+//
+// Disabled (omitempty, zero-value false) discriminates the binding-layer
+// disabled-plugin denial (#359) from a plain ungranted capability so callers
+// can show the right message ("plugin is disabled, re-enable it" vs. "grant
+// this capability?") without parsing the error string.
 type CapabilityDeniedError struct {
 	Plugin     string `json:"plugin"`
 	Capability string `json:"capability"`
 	Requested  string `json:"requested"` // qualifier the plugin asked for ("" if N/A)
 	Granted    string `json:"granted"`   // qualifier currently granted ("" if none)
+	Disabled   bool   `json:"disabled,omitempty"`
 }
 
 func (e *CapabilityDeniedError) Error() string {
+	if e.Disabled {
+		return fmt.Sprintf("plugin %q is disabled; capability %q denied at the binding layer", e.Plugin, e.Capability)
+	}
 	if e.Granted == "" {
 		return fmt.Sprintf("plugin %q has not been granted %q", e.Plugin, e.Capability)
 	}

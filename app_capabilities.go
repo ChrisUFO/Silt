@@ -93,8 +93,16 @@ func (a *App) requireGrant(pluginID string, cap plugins.Capability) error {
 	// #359: a disabled plugin is blocked at the binding layer even if its
 	// grants and session token are still live. Checked under configMu (which
 	// guards a.cfg) — see isPluginDisabled for the sentinel re-read rationale.
+	// Returns the structured CapabilityDeniedError (Disabled=true) so callers
+	// and the frontend SDK can distinguish "disabled" from "ungranted" and
+	// show the right message without parsing the error string.
 	if a.isPluginDisabled(pluginID) {
-		return fmt.Errorf("plugin %q is disabled; capability %q denied at the binding layer", pluginID, string(cap))
+		return &plugins.CapabilityDeniedError{
+			Plugin:     pluginID,
+			Capability: string(cap),
+			Requested:  plugins.QualGranted,
+			Disabled:   true,
+		}
 	}
 	// F4: grants now live in the per-host store (a.grants), not vault-scoped
 	// config.yaml. A synced vault's legacy grants block is ignored on load.
