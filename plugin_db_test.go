@@ -328,3 +328,68 @@ func TestPluginDB_MigrateRejectsBlockedStatements(t *testing.T) {
 		t.Fatal("expected migration with smuggled PRAGMA to be blocked")
 	}
 }
+
+// --- Security regression: VACUUM INTO sandbox escape + Query DML gate ---
+
+func TestPluginDB_ExecRejectsVacuumInto(t *testing.T) {
+	app, token := pluginDBTestApp(t)
+	// VACUUM INTO writes a DB snapshot to an arbitrary path — a vault escape
+	// the path sanitizer never sees (the path is in the SQL text).
+	escapePath := filepath.Join(app.vaultPath, "..", "escaped.db")
+	err := app.PluginDBExec("test-plugin", token, "VACUUM INTO '"+escapePath+"'", nil)
+	if err == nil {
+		t.Fatal("expected VACUUM INTO to be blocked (filesystem sandbox escape)")
+	}
+	// Plain VACUUM is also blocked (close-time wal_checkpoint covers compaction).
+	err = app.PluginDBExec("test-plugin", token, "VACUUM", nil)
+	if err == nil {
+		t.Fatal("expected VACUUM to be blocked")
+	}
+	// Verify no file was created outside the vault.
+	if _, err := os.Stat(escapePath); !os.IsNotExist(err) {
+		t.Fatalf("escaped file should not exist (stat err=%v)", err)
+	}
+}
+
+func TestPluginDB_QueryRejectsWithDML(t *testing.T) {
+	app, token := pluginDBTestApp(t)
+	if err := app.PluginDBExec("test-plugin", token, "CREATE TABLE t (c INTEGER)", nil); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	// WITH-prefixed INSERT passes the SELECT/WITH prefix check but must be
+	// rejected by the write-statement gate.
+	_, err := app.PluginDBQuery("test-plugin", token,
+		"WITH x AS (SELECT 999 v) INSERT INTO t SELECT v FROM x RETURNING c", nil)
+	if err == nil {
+		t.Fatal("expected WITH...INSERT to be blocked by PluginDBQuery")
+	}
+	// Direct UPDATE/DELETE also blocked.
+	_, err = app.PluginDBQuery("test-plugin", token, "UPDATE t SET c = 1", nil)
+	if err == nil {
+		t.Fatal("expected UPDATE to be blocked by PluginDBQuery")
+	}
+	_, err = app.PluginDBQuery("test-plugin", token, "DELETE FROM t", nil)
+	if err == nil {
+		t.Fatal("expected DELETE to be blocked by PluginDBQuery")
+	}
+	// Plain WITH...SELECT must still work (not a false positive).
+	if err := app.PluginDBExec("test-plugin", token, "INSERT INTO t VALUES (42)", nil); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	res, err := app.PluginDBQuery("test-plugin", token, "WITH x AS (SELECT c FROM t) SELECT c FROM x", nil)
+	if err != nil {
+		t.Fatalf("WITH...SELECT should be allowed: %v", err)
+	}
+	if len(res.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(res.Rows))
+	}
+}
+
+func TestPluginDB_QueryRejectsVacuum(t *testing.T) {
+	app, token := pluginDBTestApp(t)
+	// VACUUM must be blocked via Query too (not just Exec).
+	_, err := app.PluginDBQuery("test-plugin", token, "VACUUM INTO '../../../tmp/evil.db'", nil)
+	if err == nil {
+		t.Fatal("expected VACUUM INTO to be blocked by PluginDBQuery")
+	}
+}

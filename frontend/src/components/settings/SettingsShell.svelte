@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
   import WorkspaceTab from './WorkspaceTab.svelte'
   import EditorTab from './EditorTab.svelte'
   import HotkeysTab from './HotkeysTab.svelte'
@@ -38,9 +38,10 @@
   // (third-party). Disabled plugins are excluded: they are not in
   // loadedPlugins.plugins and their surfaces are not registered.
   let settingsPanelSurfaces = $state(getSurfaces('settings-panel'))
-  onSurfacesChanged((all) => {
+  const offSurfacesChanged = onSurfacesChanged((all) => {
     settingsPanelSurfaces = all.filter((s) => s.kind === 'settings-panel')
   })
+  onDestroy(() => offSurfacesChanged())
 
   // Plugins with a bespoke settings page (first-party via component, third-party
   // via surface). Tab id is `plugin:<id>` so it never collides with core tabs.

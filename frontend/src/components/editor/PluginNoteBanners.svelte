@@ -16,16 +16,24 @@
 
   let surfaces = $state<PluginSurface[]>(getSurfaces('note-banner'))
 
+  // Cache contexts per pluginID so a surfaces-list change doesn't rebuild
+  // the context for every banner on every render (avoids needless iframe
+  // srcdoc rebuilds in PluginSurfaceFrame). Invalidated for pluginIDs that
+  // leave the surfaces list (disable/enable issues a fresh session token).
+  const ctxCache = new Map<string, any>()
+
   const off = onSurfacesChanged((all) => {
     surfaces = all.filter((s) => s.kind === 'note-banner')
+    // Evict cached contexts for pluginIDs no longer present — their session
+    // tokens are revoked on teardown, so a stale ctx would fail server-side.
+    const activeIDs = new Set(surfaces.map((s) => s.pluginID))
+    for (const id of ctxCache.keys()) {
+      if (!activeIDs.has(id)) ctxCache.delete(id)
+    }
   })
 
   onDestroy(() => off())
 
-  // Cache contexts per pluginID so a surfaces-list change doesn't rebuild
-  // the context for every banner on every render (avoids needless iframe
-  // srcdoc rebuilds in PluginSurfaceFrame).
-  const ctxCache = new Map<string, any>()
   function ctxFor(pluginID: string): any {
     let ctx = ctxCache.get(pluginID)
     if (!ctx) {

@@ -3,6 +3,7 @@
   import PluginSurfaceFrame from '../PluginSurfaceFrame.svelte'
   import { getSurfaces, onSurfacesChanged } from '../../plugins/surfaces'
   import { makePluginContext } from '../../plugins/context'
+  import { onDestroy } from 'svelte'
 
   // PluginSettingsPanel renders a single plugin's bespoke Settings page (#214).
   // First-party plugins ship a compiled Svelte component (settingsPageComponent);
@@ -26,11 +27,12 @@
       (s) => s.pluginID === plugin.manifest.id
     )
   )
-  onSurfacesChanged((all) => {
+  const offSurfacesChanged = onSurfacesChanged((all) => {
     thirdPartySurfaces = all.filter(
       (s) => s.kind === 'settings-panel' && s.pluginID === plugin.manifest.id
     )
   })
+  onDestroy(() => offSurfacesChanged())
 
   // Build the real PluginContext for the first-party component so it can call
   // ctx.getPluginSettings() / ctx.updatePluginSetting(). Memoized per plugin —

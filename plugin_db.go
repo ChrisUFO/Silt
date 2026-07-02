@@ -136,10 +136,15 @@ var pluginDBAllowedPragmas = map[string]bool{
 
 // containsBlockedStatement reports whether sqlText contains a statement that
 // could let the plugin escape its isolated file. ATTACH/DETACH would let it
-// reach the core index or arbitrary files; an unguarded PRAGMA could weaken
-// the connection's safety properties. This is a defense-in-depth check on top
-// of the connection-level isolation (the plugin connection has no handle to
-// the core index and ATTACH of the core path is structurally separate).
+// reach the core index or arbitrary files; VACUUM (incl. VACUUM INTO 'path')
+// writes a DB snapshot to an arbitrary filesystem path the path sanitizer
+// never sees; an unguarded PRAGMA could weaken the connection's safety
+// properties. This is a defense-in-depth denylist on top of the
+// connection-level isolation.
+//
+// MAINTAINABILITY: this denylist must be audited against the SQLite
+// "statements that write files" surface on driver upgrades. New file-writing
+// statements (e.g. a future BACKUP DATABASE) must be added here.
 func containsBlockedStatement(sqlText string) (blocked string, found bool) {
 	upper := strings.ToUpper(sqlText)
 	// ATTACH / DETACH as standalone statement keywords. stmtContainsKeyword
@@ -149,6 +154,13 @@ func containsBlockedStatement(sqlText string) (blocked string, found bool) {
 	}
 	if stmtContainsKeyword(upper, "DETACH") {
 		return "DETACH", true
+	}
+	// VACUUM (incl. VACUUM INTO 'path') writes the entire DB to a path
+	// embedded in the SQL text — a vault-escape the path sanitizer never
+	// sees. Benign same-file VACUUM is covered by the close-time
+	// wal_checkpoint(TRUNCATE), so reject VACUUM outright.
+	if stmtContainsKeyword(upper, "VACUUM") {
+		return "VACUUM", true
 	}
 	// PRAGMA: allow only user_version (used internally by migrate). Any other
 	// PRAGMA is rejected — a plugin has no legitimate need to reconfigure its
@@ -208,8 +220,9 @@ func containsBlockedStatement(sqlText string) (blocked string, found bool) {
 // single-quoted string literal. This prevents stacked queries in Exec/Query:
 // (1) the modernc driver only binds params to the first statement, so a stacked
 // query silently drops params for subsequent statements; (2) a second statement
-// could be attacker-controlled text. The migrate path (no params, inside a tx)
-// is exempt — it splits and applies each statement individually.
+// could be attacker-controlled text. The migrate path is exempt — it takes no
+// params and runs the multi-statement body in one tx.Exec; containsBlockedStatement
+// still scans the whole body, so escape vectors (ATTACH/VACUUM/PRAGMA) remain blocked.
 func containsUnquotedSemicolon(sqlText string) bool {
 	inString := false
 	for i := 0; i < len(sqlText); i++ {
@@ -258,6 +271,22 @@ func stmtContainsKeyword(upper, keyword string) bool {
 		// Advance past this occurrence and keep searching.
 		upper = upper[afterIdx:]
 	}
+}
+
+// containsWriteStatement checks for DML/DDL keywords (INSERT, UPDATE, DELETE,
+// CREATE, DROP, ALTER, REPLACE) as standalone tokens anywhere in the SQL.
+// Used by PluginDBQuery to enforce the read-only contract — SQLite allows
+// WITH-prefixed DML (e.g. "WITH x AS (...) INSERT INTO t ...") which passes
+// the SELECT/WITH prefix check. Fail-safe: a false positive (e.g. a column
+// literally named "update") blocks the query rather than allowing a write.
+func containsWriteStatement(sqlText string) (keyword string, found bool) {
+	upper := strings.ToUpper(sqlText)
+	for _, kw := range []string{"INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "REPLACE"} {
+		if stmtContainsKeyword(upper, kw) {
+			return kw, true
+		}
+	}
+	return "", false
 }
 
 // PluginDBExec executes a write (DDL or DML) against the plugin's own SQLite
@@ -323,6 +352,18 @@ func (a *App) PluginDBQuery(pluginID, sessionToken, sqlText string, params []any
 	upper := strings.ToUpper(trimmed)
 	if !strings.HasPrefix(upper, "SELECT") && !strings.HasPrefix(upper, "WITH") {
 		return PluginRawQueryResult{}, fmt.Errorf("PluginDBQuery permits only SELECT/WITH statements")
+	}
+	// Run the same statement-class denylist as Exec (ATTACH/DETACH/VACUUM/PRAGMA)
+	// so a read query cannot smuggle a file-escape statement.
+	if blocked, found := containsBlockedStatement(trimmed); found {
+		return PluginRawQueryResult{}, fmt.Errorf("PluginDBQuery blocks %s statements", blocked)
+	}
+	// Reject DML/DDL: SQLite allows WITH-prefixed writes (WITH x AS (...) INSERT
+	// INTO t ...) that pass the prefix check. The plugin DB connection has no
+	// query_only guarantee (unlike the core index's read-only handle), so this
+	// gate is the sole read-only enforcement.
+	if kw, found := containsWriteStatement(trimmed); found {
+		return PluginRawQueryResult{}, fmt.Errorf("PluginDBQuery does not permit %s statements", kw)
 	}
 	// Reject stacked queries: the driver only binds params to the first
 	// statement; a "SELECT 1; INSERT ..." payload would silently execute the
